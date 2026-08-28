@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from pathlib import Path
 
+from .domain import REPLAY_STATUSES
+from .persistence import atomic_json
 from .schema import validate_json
 
-TERMINAL_STATUSES = {"passed", "test_failed", "infra_failed", "timeout", "invalid"}
+TERMINAL_STATUSES = REPLAY_STATUSES
 
 
 def sha256_file(path: Path) -> str:
@@ -32,29 +32,38 @@ def artifact_hashes_valid(root: Path, expected: dict[str, str]) -> bool:
     return bool(expected) and all((root / name).is_file() and sha256_file(root / name) == digest for name, digest in expected.items())
 
 
-def _atomic_json(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            json.dump(value, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+def _tree_manifest(directory: Path, trees: list[str]) -> dict:
+    files = []
+    for tree in sorted(trees):
+        root = directory / tree
+        if not root.is_dir():
+            raise FileNotFoundError(root)
+        for path in sorted(item for item in root.rglob("*") if item.is_file()):
+            files.append({"path": path.relative_to(directory).as_posix(), "sha256": sha256_file(path), "bytes": path.stat().st_size})
+    return {"schema_version": "1.0", "files": files}
 
 
-def write_completed_run(directory: Path, result: dict, input_fingerprint: str, key_artifacts: list[str]) -> dict:
+def _tree_manifest_valid(directory: Path) -> bool:
+    path = directory / "harness-manifest.json"
+    if not path.is_file():
+        return True
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    trees = sorted({entry["path"].split("/", 1)[0] for entry in manifest["files"]})
+    return _tree_manifest(directory, trees) == manifest
+
+
+def write_completed_run(directory: Path, result: dict, input_fingerprint: str, key_artifacts: list[str], *, artifact_trees: list[str] | None = None) -> dict:
     validate_json(result, "replay-result")
     directory.mkdir(parents=True, exist_ok=True)
-    _atomic_json(directory / "result.json", result)
-    artifacts = {name: sha256_file(directory / name) for name in sorted(set(key_artifacts + ["result.json"]))}
+    atomic_json(directory / "result.json", result)
+    names = list(key_artifacts) + ["result.json"]
+    if artifact_trees:
+        atomic_json(directory / "harness-manifest.json", _tree_manifest(directory, artifact_trees))
+        names.append("harness-manifest.json")
+    artifacts = {name: sha256_file(directory / name) for name in sorted(set(names))}
     marker = {"schema_version": "1.0", "input_fingerprint": input_fingerprint, "result": "result.json", "artifacts": artifacts}
     validate_json(marker, "completion")
-    _atomic_json(directory / "COMPLETE", marker)
+    atomic_json(directory / "COMPLETE", marker)
     return marker
 
 
@@ -64,13 +73,10 @@ def load_reusable_run(directory: Path, expected_fingerprint: str) -> dict | None
             return None
         marker = json.loads((directory / "COMPLETE").read_text(encoding="utf-8"))
         validate_json(marker, "completion")
-        if marker["input_fingerprint"] != expected_fingerprint or not artifact_hashes_valid(directory, marker["artifacts"]):
+        if marker["input_fingerprint"] != expected_fingerprint or not artifact_hashes_valid(directory, marker["artifacts"]) or not _tree_manifest_valid(directory):
             return None
         result = json.loads((directory / marker["result"]).read_text(encoding="utf-8"))
         validate_json(result, "replay-result")
-        if result["status"] not in TERMINAL_STATUSES:
-            return None
-        return result
+        return result if result["status"] in TERMINAL_STATUSES else None
     except Exception:
-        # Schema errors, missing files, and corruption are cache misses; callers rerun.
         return None

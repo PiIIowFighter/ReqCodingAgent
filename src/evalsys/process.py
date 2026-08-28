@@ -27,7 +27,10 @@ class CommandResult:
 
 def run_process(argv: Sequence[str], *, cwd: Path | None = None, timeout_s: int, env: Mapping[str, str] | None = None) -> CommandResult:
     command = [str(part) for part in argv]
-    kwargs = {"cwd": cwd, "env": dict(env) if env is not None else None, "text": True, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    process_env = dict(os.environ if env is None else env)
+    if command and Path(command[0]).name.lower() in {"wsl", "wsl.exe"}:
+        process_env["MSYS_NO_PATHCONV"] = "1"
+    kwargs = {"cwd": cwd, "env": process_env, "text": True, "encoding": "utf-8", "errors": "replace", "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:

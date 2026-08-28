@@ -20,6 +20,7 @@ class Settings:
     project_root: Path
     cache_root: Path
     artifact_root: Path
+    wsl_python: str = "python3.11"
 
     def __post_init__(self) -> None:
         if _inside(self.cache_root, self.project_root):
@@ -30,4 +31,8 @@ class Settings:
         root = (project_root or Path.cwd()).resolve()
         cache = Path(os.environ.get("EVALSYS_CACHE_ROOT", "~/.cache/reqcodingagent")).expanduser().resolve()
         artifacts = Path(os.environ.get("EVALSYS_ARTIFACT_ROOT", root / "artifacts")).expanduser().resolve()
-        return cls(root, cache, artifacts)
+        return cls(root, cache, artifacts, os.environ.get("EVALSYS_WSL_PYTHON", "python3.11"))
+
+    @staticmethod
+    def docker_prefix(platform_name: str) -> list[str]:
+        return ["wsl.exe", "--", "docker"] if platform_name == "win32" else ["docker"]

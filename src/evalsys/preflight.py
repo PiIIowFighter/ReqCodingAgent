@@ -35,18 +35,28 @@ def _docker_prefix(platform_name: str) -> list[str]:
     return ["wsl.exe", "--", "docker"] if platform_name == "win32" else ["docker"]
 
 
-def _docker_source(path: Path, platform_name: str, runner: CommandRunner) -> str:
-    if platform_name != "win32":
-        return str(path)
+def resolve_wsl_path(path: Path, runner: CommandRunner) -> str:
     converted = _checked(
         runner,
         ["wsl.exe", "--", "wslpath", "-a", path.as_posix()],
-        "WSL2 could not translate the Docker bind path",
+        "WSL2 could not translate the path",
         "Enable WSL integration for the drive containing the project and cache",
     ).stdout.strip()
     if not converted:
-        raise EvalError("WSL2 returned an empty bind path", hint="Run wsl.exe -- wslpath -a <path>", category="infra_failed")
+        raise EvalError("WSL2 returned an empty path", hint="Run wsl.exe -- wslpath -a <path>", category="infra_failed")
     return converted
+
+
+def validate_wsl_python(command: str, runner: CommandRunner) -> str:
+    result = _checked(runner, ["wsl.exe", "--", command, "--version"], "WSL Python is unavailable", "Set EVALSYS_WSL_PYTHON to an external Python 3.11 environment")
+    version = (result.stdout or result.stderr).strip()
+    if not version.startswith("Python 3.11."):
+        raise EvalError(f"WSL Python 3.11 is required; found {version}", hint="Set EVALSYS_WSL_PYTHON to Python 3.11", category="infra_failed")
+    return command
+
+
+def _docker_source(path: Path, platform_name: str, runner: CommandRunner) -> str:
+    return resolve_wsl_path(path, runner) if platform_name == "win32" else str(path)
 
 
 def _bind_probe(settings: Settings, runner: CommandRunner, platform_name: str) -> dict[str, bool]:
@@ -93,6 +103,7 @@ def run_preflight(
         raise EvalError(f"Python 3.11 is required; found {version[0]}.{version[1]}", hint="Run with py -3.11 or a Python 3.11 virtual environment", category="infra_failed")
     if current_platform == "win32":
         _checked(runner, ["wsl.exe", "--status"], "WSL2 is unavailable", "Install/enable WSL2 and Docker Desktop WSL integration")
+        validate_wsl_python(settings.wsl_python, runner)
     settings.cache_root.mkdir(parents=True, exist_ok=True)
     try:
         marker = settings.cache_root / ".evalsys-write-test"
@@ -120,6 +131,7 @@ def run_preflight(
         "schema_version": "1.0",
         "status": "passed",
         "python": ".".join(map(str, version)),
+        "wsl_python": settings.wsl_python if current_platform == "win32" else None,
         "host_architecture": platform.machine(),
         "docker": {"os": docker_os, "architecture": docker_arch, "version": docker_version, "probe_image": PROBE_IMAGE},
         "docker_transport": "wsl2" if current_platform == "win32" else "native",

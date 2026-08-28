@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .persistence import atomic_json as _atomic_json, utf8_lf as _lf_bytes, write_text_lf as _write_text_lf
 from .recovery import fingerprint, sha256_file
 
 _REQUIRED_AUDIT = ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json")
@@ -25,21 +26,6 @@ _SSH = re.compile(r"(?i)(ssh-(?:rsa|ed25519))\s+\S+")
 _WINDOWS_ABS = re.compile(r"[A-Za-z]:\\[^\r\n\t\"]+")
 _WSL_ABS = re.compile(r"/mnt/[a-z]/[^\r\n\t\"]+")
 
-
-def _lf_bytes(text: str) -> bytes:
-    return text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
-
-
-def _write_text_lf(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_lf_bytes(text))
-
-
-def _atomic_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_bytes(_lf_bytes(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"))
-    temporary.replace(path)
 
 
 def sanitize(value: Any, *, project_root: Path) -> Any:

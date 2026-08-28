@@ -1,0 +1,10 @@
+{
+  "classification": null,
+  "duration": null,
+  "exit_code": null,
+  "failed": 3,
+  "passed": 0,
+  "reason": null,
+  "skipped": 0,
+  "status": "failed"
+}

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import tempfile
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +11,9 @@ from typing import Callable, Sequence
 from .config import Settings
 from .errors import EvalError
 from .harness import HarnessInvocation, build_harness_command, extract_test_outcomes
+from .evidence import EvidenceRecorder
+from .persistence import atomic_json, write_text_lf
+from .preflight import CommandRunner, resolve_wsl_path
 from .process import ProcessTimeout, run_process
 from .recovery import compute_input_fingerprint, load_reusable_run, write_completed_run
 from .schema import validate_json
@@ -28,17 +29,20 @@ def _docker_output(argv: Sequence[str]) -> str:
     return result.stdout
 
 
-def cleanup_run_resources(run_id: str, *, runner: Callable[[Sequence[str]], str] = _docker_output) -> dict[str, list[str]]:
-    if not RUN_ID.fullmatch(run_id):
-        raise ValueError("unsafe run_id")
-    label = f"evalsys.run_id={run_id}"
+def cleanup_run_resources(run_id: str, *, case_id: str | None = None, runner: Callable[[Sequence[str]], str] = _docker_output, docker_prefix: list[str] | None = None) -> dict[str, list[str]]:
+    if not RUN_ID.fullmatch(run_id) or (case_id is not None and not RUN_ID.fullmatch(case_id)):
+        raise ValueError("unsafe run_id or case_id")
+    filters = ["--filter", f"label=evalsys.run_id={run_id}"]
+    if case_id is not None:
+        filters += ["--filter", f"label=evalsys.case_id={case_id}"]
+    prefix = docker_prefix or ["docker"]
     queries = {
-        "containers": ["docker", "ps", "-aq", "--filter", f"label={label}"],
-        "networks": ["docker", "network", "ls", "-q", "--filter", f"label={label}"],
-        "volumes": ["docker", "volume", "ls", "-q", "--filter", f"label={label}"],
-        "images": ["docker", "image", "ls", "-q", "--filter", f"label={label}"],
+        "containers": [*prefix, "ps", "-aq", *filters],
+        "networks": [*prefix, "network", "ls", "-q", *filters],
+        "volumes": [*prefix, "volume", "ls", "-q", *filters],
+        "images": [*prefix, "image", "ls", "-q", *filters],
     }
-    removals = {"containers": ["docker", "rm", "-f"], "networks": ["docker", "network", "rm"], "volumes": ["docker", "volume", "rm"], "images": ["docker", "image", "rm"]}
+    removals = {"containers": [*prefix, "rm", "-f"], "networks": [*prefix, "network", "rm"], "volumes": [*prefix, "volume", "rm"], "images": [*prefix, "image", "rm"]}
     found: dict[str, list[str]] = {}
     for kind, query in queries.items():
         identifiers = [line for line in runner(query).splitlines() if line]
@@ -46,6 +50,20 @@ def cleanup_run_resources(run_id: str, *, runner: Callable[[Sequence[str]], str]
         if identifiers:
             runner(removals[kind] + identifiers)
     return found
+
+
+def create_run_directory(root: Path, run_id: str, *, resume: bool) -> Path:
+    if not RUN_ID.fullmatch(run_id):
+        raise ValueError("unsafe run_id")
+    directory = root / run_id
+    if resume:
+        if not directory.is_dir():
+            raise FileNotFoundError(f"resume run does not exist: {run_id}")
+        if (directory / "RUNNING").exists():
+            raise RuntimeError(f"run is occupied: {run_id}")
+        return directory
+    directory.mkdir(parents=True, exist_ok=False)
+    return directory
 
 
 class EventWriter:
@@ -65,7 +83,9 @@ def _case_dataset(source_row: dict, destination: Path) -> None:
 
 
 def _prediction(instance_id: str, destination: Path) -> None:
-    destination.write_text(json.dumps({"instance_id": instance_id, "model_name_or_path": "evalsys-noop", "model_patch": ""}) + "\n", encoding="utf-8")
+    # Upstream filters empty model_patch records before run_instances. This sentinel
+    # is never applied because the pinned adapter forces official skip_patch=True.
+    destination.write_text(json.dumps({"instance_id": instance_id, "model_name_or_path": "evalsys-noop", "model_patch": "EVALSYS_SKIP_PATCH_SENTINEL"}) + "\n", encoding="utf-8")
 
 
 def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: str, *, run_id: str, timeout_s: int, workers: int, resume: bool) -> dict:
@@ -77,8 +97,9 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     if resume and unit.exists() and (cached := load_reusable_run(unit, input_fingerprint)) is not None:
         return cached
     if unit.exists():
-        shutil.rmtree(unit)
-    unit.mkdir(parents=True)
+        stale = unit.with_name(unit.name + ".invalid-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+        unit.rename(stale)
+    unit.mkdir(parents=True, exist_ok=False)
     events = EventWriter(unit / "events.jsonl", run_id)
     dataset = unit / "dataset.json"
     prediction = unit / "prediction.jsonl"
@@ -86,8 +107,10 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     _prediction(public_case["instance_id"], prediction)
     report_dir = unit / "harness"
     report_dir.mkdir()
-    invocation = HarnessInvocation(settings.cache_root / "swe-bench", settings.project_root / "scripts" / "official_harness_adapter.py", dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers)
-    command = build_harness_command(invocation)
+    invocation = HarnessInvocation(settings.cache_root / "swe-bench", settings.project_root / "scripts" / "official_harness_adapter.py", dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers, public_case["case_id"])
+    runner = CommandRunner()
+    converter = (lambda path: resolve_wsl_path(path, runner)) if sys.platform == "win32" else str
+    command = build_harness_command(invocation, wsl_python=settings.wsl_python, path_converter=converter)
     started = datetime.now(timezone.utc)
     began = time.monotonic()
     events.write("stage_started", "harness", {"mode": mode})
@@ -97,15 +120,21 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     tests_executed = False
     try:
         result = run_process(command, timeout_s=timeout_s + 120)
-        stdout, stderr = result.stdout, result.stderr
+        stdout, stderr = result.stdout or "", result.stderr or ""
         raw_path = report_dir / "adapter-result.json"
         if result.returncode != 0 or not raw_path.is_file():
             raise EvalError(f"Official harness failed with exit {result.returncode}: {stderr[-1000:]}", category="infra_failed")
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
+        if raw.get("status") in {"timeout", "infra_failed", "invalid"}:
+            status, classification = raw["status"], raw.get("classification", "harness_failure")
+            error = {"category": status, "message": raw.get("message", classification), "stage": raw.get("stage", "harness")}
+            raise StopIteration
         tests_executed = bool(raw.get("tests_executed"))
         outcomes = extract_test_outcomes(raw, public_case["FAIL_TO_PASS"], public_case["PASS_TO_PASS"], tests_executed=tests_executed)
         verdict = decide_verdict(mode, outcomes, public_case["FAIL_TO_PASS"], public_case["PASS_TO_PASS"])
         status, classification = verdict["status"], verdict["classification"]
+    except StopIteration:
+        pass
     except ProcessTimeout as exc:
         stdout, stderr, status, classification = exc.stdout, exc.stderr, "timeout", "process_tree_timeout"
         error = {"category": "timeout", "message": str(exc), "stage": "harness"}
@@ -116,7 +145,7 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         error = {"category": category, "message": str(exc), "stage": "harness"}
     finally:
         try:
-            cleanup_run_resources(run_id)
+            cleanup_run_resources(run_id, case_id=public_case["case_id"], docker_prefix=settings.docker_prefix(sys.platform))
         except EvalError as cleanup_error:
             if status != "timeout":
                 status, classification = "infra_failed", "cleanup_failure"
@@ -134,21 +163,37 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         "fail_to_pass": {name: outcomes[name] for name in public_case["FAIL_TO_PASS"] if name in outcomes}, "pass_to_pass": {name: outcomes[name] for name in public_case["PASS_TO_PASS"] if name in outcomes},
         "logs": {"stdout": "stdout.log", "stderr": "stderr.log", "harness": "harness"}, "error": error,
     }
-    write_completed_run(unit, result_record, input_fingerprint, ["stdout.log", "stderr.log", "events.jsonl"])
+    write_completed_run(unit, result_record, input_fingerprint, ["stdout.log", "stderr.log", "events.jsonl"], artifact_trees=["harness"])
     return result_record
 
 
-def replay_cases(settings: Settings, public_cases: list[dict], source_rows: dict[str, dict], mode: str, *, timeout_s: int = 1800, workers: int = 1, resume: bool = False) -> dict:
-    if workers < 1 or workers > 4:
-        raise EvalError("Replay workers must be between 1 and 4", hint="Use the serial default unless resources were reviewed")
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"_replay_{mode}_{compute_input_fingerprint({'mode': mode, 'cases': [case['instance_id'] for case in public_cases], 'timeout': timeout_s})[:10]}"
+def replay_cases(settings: Settings, public_cases: list[dict], source_rows: dict[str, dict], mode: str, *, harness_revision: str, timeout_s: int = 1800, workers: int = 1, resume: bool = False, run_id: str | None = None) -> dict:
+    if workers != 1:
+        raise EvalError("Replay currently requires --workers 1", hint="Bounded parallel execution is not enabled in this checkpoint")
+    if resume != bool(run_id):
+        raise EvalError("--resume and --run-id must be supplied together")
+    generated = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + f"_replay_{mode}_{compute_input_fingerprint({'mode': mode, 'cases': [case['instance_id'] for case in public_cases], 'timeout': timeout_s})[:10]}"
+    invocation_id = run_id or generated
+    root = create_run_directory(settings.artifact_root / "runs" / "iteration1", invocation_id, resume=resume)
+    lease = root / "RUNNING"
+    lease.mkdir(exist_ok=False)
+    recorder = EvidenceRecorder(settings.project_root, iteration=1)
+    evidence = recorder.start(f"replay_{mode}", {"run_id": invocation_id, "harness_revision": harness_revision, "cases": [c["instance_id"] for c in public_cases]}, ["python", "-m", "evalsys.cli", "replay", "--mode", mode])
     results = []
-    for case in public_cases:
-        row = dict(source_rows[case["instance_id"]])
-        row["harness_revision"] = "7a21e05772954cc81471ae19d56f436cecf43c54"
-        results.append(replay_case(settings, case, row, mode, run_id=run_id, timeout_s=timeout_s, workers=workers, resume=resume))
-    summary = {"schema_version": "1.0", "run_id": run_id, "status": "passed" if all(result["status"] == "passed" for result in results) else "failed", "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"{result['instance_id']}/{mode}/result.json"} for result in results]}
-    validate_json(summary, "validation-summary")
-    root = settings.artifact_root / "runs" / "iteration1" / run_id
-    (root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"run_id": run_id, "run_directory": str(root), "status": summary["status"], "results": results}
+    try:
+        for case in public_cases:
+            row = dict(source_rows[case["instance_id"]])
+            row["harness_revision"] = harness_revision
+            results.append(replay_case(settings, case, row, mode, run_id=invocation_id, timeout_s=timeout_s, workers=1, resume=resume))
+        summary = {"schema_version": "1.0", "run_id": invocation_id, "status": "passed" if all(result["status"] == "passed" for result in results) else "failed", "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"{result['instance_id']}/{mode}/result.json"} for result in results]}
+        validate_json(summary, "validation-summary")
+        atomic_json(root / "summary.json", summary)
+        evidence.finish({"status": summary["status"], "passed": sum(r["status"] == "passed" for r in results), "failed": sum(r["status"] != "passed" for r in results)})
+        return {"run_id": invocation_id, "run_directory": str(root), "status": summary["status"], "results": results}
+    finally:
+        try:
+            cleanup_run_resources(invocation_id, docker_prefix=settings.docker_prefix(sys.platform))
+        except Exception as cleanup_error:
+            evidence.record_event("cleanup_failed", {"message": str(cleanup_error)})
+        finally:
+            lease.rmdir()

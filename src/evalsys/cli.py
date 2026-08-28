@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--timeout", type=int, default=1800)
     replay.add_argument("--workers", type=int, default=1)
     replay.add_argument("--resume", action="store_true")
+    replay.add_argument("--run-id", help="existing run id required with --resume")
+    replay.add_argument("--instance-id", help="run one frozen instance (smoke/recovery)")
     return parser
 
 
@@ -50,8 +52,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "replay":
             prepared = load_prepared(settings)
             records = validate_jsonl(prepared.public_manifest, "public-case")
-            cases = [record for record in records if record["prompt_variant"] == "full" and (args.split == "all" or record["split"] == args.split)]
-            report = replay_cases(settings, cases, prepared.source_rows, args.mode, timeout_s=args.timeout, workers=args.workers, resume=args.resume)
+            cases = [record for record in records if record["prompt_variant"] == "full" and (args.split == "all" or record["split"] == args.split) and (not args.instance_id or record["instance_id"] == args.instance_id)]
+            if args.instance_id and not cases:
+                raise EvalError(f"Instance is not in the selected frozen split: {args.instance_id}")
+            report = replay_cases(settings, cases, prepared.source_rows, args.mode, harness_revision=prepared.lock_heads["harness"], timeout_s=args.timeout, workers=args.workers, resume=args.resume, run_id=args.run_id)
         else:
             try:
                 public_case = json.loads(args.public_case.read_text(encoding="utf-8"))
@@ -61,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.output:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps({"status": "passed", "command": args.command, **report}, ensure_ascii=False, sort_keys=True))
+        print(json.dumps({"status": "passed", "command": args.command, **report}, ensure_ascii=True, sort_keys=True))
         return 0
     except EvalError as exc:
         print(f"ERROR [{exc.category}]: {exc}", file=sys.stderr)
