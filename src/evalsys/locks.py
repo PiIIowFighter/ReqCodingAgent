@@ -30,6 +30,10 @@ def verify_source_locks(settings: Settings, lock_path: Path | None = None) -> di
         checkout = settings.cache_root / ({"harness": "swe-bench"}.get(name, name))
         if not (checkout / ".git").exists():
             raise EvalError(f"Locked {name} checkout is missing: {checkout}", hint=f"Clone {source['url']} outside the project and checkout {source['revision']}")
+        remote = _git(checkout, "remote", "get-url", "origin").rstrip("/")
+        expected_remote = source["url"].rstrip("/")
+        if remote != expected_remote:
+            raise EvalError(f"Locked {name} remote mismatch: expected {expected_remote}, got {remote}", hint="Use the source repository named by source-lock.json")
         head = _git(checkout, "rev-parse", "HEAD")
         if head != source["revision"]:
             raise EvalError(f"Locked {name} HEAD mismatch: expected {source['revision']}, got {head}", hint="Checkout the exact locked commit; branches are not accepted")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+import re
 
 from .errors import EvalError
 
@@ -11,11 +12,6 @@ _DEFINITIONS = Path(__file__).resolve().parents[2] / "benchmark" / "manifests" /
 
 def case_definitions() -> list[dict]:
     cases = json.loads(_DEFINITIONS.read_text(encoding="utf-8"))["cases"]
-    # A self-contained harmless prompt lets tests construct tiny source fixtures.
-    for case in cases:
-        case["fixture_prompt"] = f"{case['instance_id']}\n{case['source_evidence']}"
-        case["fixture_fail_to_pass"] = [f"{case['instance_id']}::fails"]
-        case["fixture_pass_to_pass"] = [f"{case['instance_id']}::stable"]
     return cases
 
 
@@ -37,8 +33,6 @@ def _replace(text: str, old: str, new: str, instance_id: str) -> str:
 
 
 def transform_prompt(instance_id: str, original: str) -> str:
-    if original.startswith(instance_id + "\n"):
-        return original + "\n[FROZEN FUZZY FIXTURE]"
     if instance_id in _CORE:
         return _CORE[instance_id]
     if instance_id == "astropy__astropy-14995":
@@ -56,12 +50,15 @@ def transform_prompt(instance_id: str, original: str) -> str:
         return text[:pstart] + "#### Problem Description\n需要先堆叠一组变量，之后再还原，但该 roundtrip 会触发上述 MergeError。\n\n" + text[pend:]
     if instance_id == "pytest-dev__pytest-7432":
         text = original.replace("--runxfail", "一个与 xfail 相关的额外执行选项").replace("skipping: 一个与 xfail 相关的额外执行选项 breaks", "skipping: an additional execution option breaks")
-        hint = text.find("\n---\n")
-        return text[:hint].rstrip() + "\n" if hint >= 0 else text
+        hint = re.search(r"(?m)^---\r?$", text)
+        return text[:hint.start()].rstrip() + "\n" if hint else text
     if instance_id == "matplotlib__matplotlib-25311":
         text = original.replace("[Bug]: Unable to pickle figure with draggable legend", "[Bug]: Unable to pickle figure after enabling an interactive legend behavior")
         text = _replace(text, "I am unable to pickle figure with draggable legend. Same error comes for draggable annotations.", "启用一种交互式 legend 行为后无法序列化 Figure；draggable annotation 也会出现类似问题。", instance_id)
-        return text.replace("leg.set_draggable(True) #pickling works after removing this line \r\n", "")
+        line = r"(?m)^leg\.set_draggable\(True\)[^\r\n]*(?:\r?\n|$)"
+        if not re.search(line, text):
+            raise EvalError(f"Frozen transformation anchor missing for {instance_id}", hint="Expected the draggable trigger line")
+        return re.sub(line, "", text, count=1)
     if instance_id == "django__django-10914":
         return original.replace("Set default FILE_UPLOAD_PERMISSION to 0o644.", "Set a consistent default FILE_UPLOAD_PERMISSIONS value。", 1)
     if instance_id == "matplotlib__matplotlib-23476":
@@ -93,10 +90,7 @@ def transform_prompt(instance_id: str, original: str) -> str:
         text = original.replace("[Bug]: Unable to pickle figure with aligned labels", "A figure fails after combining label alignment and serialization", 1)
         text = text.replace("Unable to pickle figure after calling `align_labels()`", "A Figure performs label alignment and serialization; together they raise the reported error.", 1)
         return text.replace(" ##pickling works after removing this line ", "")
-    # Tiny test fixtures still exercise generation without pretending to be official data.
-    if instance_id in CASE_IDS:
-        return original + "\n[FROZEN FUZZY FIXTURE]"
-    raise EvalError(f"Unknown frozen instance_id: {instance_id}")
+    raise EvalError(f"No frozen transformation is implemented for instance_id: {instance_id}")
 
 
 def build_oracles() -> list[dict]:
