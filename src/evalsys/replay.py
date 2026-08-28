@@ -96,9 +96,10 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
             raise EvalError(f"Unsafe replay path component: {component}")
     unit = settings.artifact_root / "runs" / "iteration1" / run_id / "cases" / public_case["case_id"] / mode
     replay_input = {"case": public_case, "mode": mode, "harness_revision": source_row["harness_revision"], "data_revision": public_case["source_revision"], "timeout_s": timeout_s}
-    if unit.exists() and not resume:
+    existed = unit.exists()
+    if existed and not resume:
         raise FileExistsError(unit)
-    if not unit.exists():
+    if not existed:
         unit.mkdir(parents=True, exist_ok=False)
         dataset = unit / "dataset.json"
         prediction = unit / "prediction.jsonl"
@@ -108,11 +109,13 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         dataset = unit / "dataset.json"
         prediction = unit / "prediction.jsonl"
     adapter = settings.project_root / "scripts" / "official_harness_adapter.py"
+    if resume and existed and (not dataset.is_file() or not prediction.is_file()):
+        raise EvalError(f"Existing checkpoint is invalid and was preserved: {unit}", hint="Use a new run_id")
     replay_input.update({"dataset_sha256": sha256_file(dataset), "prediction_sha256": sha256_file(prediction), "adapter_sha256": sha256_file(adapter), "wsl_python": settings.wsl_python, "docker_transport": "wsl2" if sys.platform == "win32" else "native"})
     input_fingerprint = compute_input_fingerprint(replay_input)
     if resume and (cached := load_reusable_run(unit, input_fingerprint)) is not None:
         return cached
-    if resume:
+    if resume and existed:
         raise EvalError(f"Existing checkpoint is invalid and was preserved: {unit}", hint="Use a new run_id")
     events = EventWriter(unit / "events.jsonl", run_id)
     report_dir = unit / "harness"

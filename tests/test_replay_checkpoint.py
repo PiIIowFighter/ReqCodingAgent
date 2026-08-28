@@ -280,6 +280,38 @@ def test_recovery_rejects_incomplete_or_invalid_runs(tmp_path: Path, breakage: s
     assert load_reusable_run(tmp_path, fp) is None
 
 
+def test_resume_new_case_executes_instead_of_rejecting_checkpoint(monkeypatch, tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "scripts").mkdir()
+    (project / "scripts/official_harness_adapter.py").write_text("adapter", encoding="utf-8")
+    settings = Settings(project, tmp_path / "cache", project / "artifacts")
+    case = {"instance_id": "x__x-1", "case_id": "case-x", "source_revision": "b" * 40, "FAIL_TO_PASS": ["a"], "PASS_TO_PASS": ["b"], "split": "test", "repo": "x/x", "base_commit": "c" * 40}
+    (settings.artifact_root / "runs/iteration1/resume-run").mkdir(parents=True)
+    monkeypatch.setattr("evalsys.replay.build_harness_command", lambda *args, **kwargs: ["python", "adapter", "--pgid-file", "pgid"])
+    monkeypatch.setattr("evalsys.replay.cleanup_run_resources", lambda *args, **kwargs: {})
+    monkeypatch.setattr("evalsys.replay.run_process", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("runner reached")))
+    from evalsys.replay import replay_case
+    with pytest.raises(RuntimeError, match="runner reached"):
+        replay_case(settings, case, {"harness_revision": "a" * 40}, "noop", run_id="resume-run", timeout_s=1, workers=1, resume=True)
+
+
+def test_resume_preserves_existing_incomplete_case(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "scripts").mkdir()
+    (project / "scripts/official_harness_adapter.py").write_text("adapter", encoding="utf-8")
+    settings = Settings(project, tmp_path / "cache", project / "artifacts")
+    case = {"instance_id": "x__x-1", "case_id": "case-x", "source_revision": "b" * 40, "FAIL_TO_PASS": ["a"], "PASS_TO_PASS": ["b"], "split": "test", "repo": "x/x", "base_commit": "c" * 40}
+    unit = settings.artifact_root / "runs/iteration1/resume-run/cases/case-x/noop"
+    unit.mkdir(parents=True)
+    (unit / "partial.txt").write_text("keep", encoding="utf-8")
+    from evalsys.replay import replay_case
+    with pytest.raises(Exception, match="invalid and was preserved"):
+        replay_case(settings, case, {"harness_revision": "a" * 40}, "noop", run_id="resume-run", timeout_s=1, workers=1, resume=True)
+    assert (unit / "partial.txt").read_text(encoding="utf-8") == "keep"
+
+
 def test_run_directory_is_atomic_and_resume_reuses_explicit_id(tmp_path: Path):
     first = create_run_directory(tmp_path, "run-1", resume=False)
     assert first == tmp_path / "run-1"
