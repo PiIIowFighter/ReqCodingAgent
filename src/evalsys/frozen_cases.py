@@ -19,10 +19,10 @@ CASE_IDS = tuple(case["instance_id"] for case in case_definitions())
 
 
 _CORE = {
-    "django__django-13933": "ModelChoiceField 和 ModelMultipleChoiceField 对无效选择的报错不一致：一个会携带被拒绝的值，另一个只说明该选择不可用。请让该字段在 invalid_choice 错误及其参数中包含这个值。",
-    "psf__requests-2317": "Neutronclient 会把请求方法及其他请求参数一起经过 safe_encode_list。随后，其中一个字节值在 Requests 中被转换成带 b'...' 前缀的字面字符串，导致请求返回 404。请让该参数被规范化为对应的原生字符串。",
-    "scikit-learn__scikit-learn-13779": "一个 VotingClassifier 包含名为 lr 和 rf 的两个基础估计器。将其中一个组件设为 None 后，再使用 sample_weight 拟合它时，它仍尝试在该对象上调用 fit，从而触发异常。被禁用的组件应被正确忽略。",
-    "sphinx-doc__sphinx-8721": "在配置 viewcode_enable_epub=False 后执行 make html epub，两个构建器都会运行，但其中一个输出仍然生成了 viewcode 模块页面。该构建器不应生成这些页面，另一个构建器则应保持原有行为。",
+    "django__django-13933": "ModelChoiceField and ModelMultipleChoiceField report invalid choices inconsistently: one includes the rejected value, while the other only says that the choice is unavailable. Make the field include this value in the invalid_choice error and its parameters.",
+    "psf__requests-2317": "Neutronclient passes the request method and other request parameters through safe_encode_list. One of the resulting byte values is then converted by Requests into a literal string with a b'...' prefix, causing a 404 response. Normalize that parameter to the corresponding native string.",
+    "scikit-learn__scikit-learn-13779": "A VotingClassifier contains two base estimators named lr and rf. After one component is set to None, fitting it with sample_weight still attempts to call fit on that object and raises an exception. The disabled component should be ignored correctly.",
+    "sphinx-doc__sphinx-8721": "After configuring viewcode_enable_epub=False and running make html epub, both builders run, but one output still generates viewcode module pages. That builder should not generate these pages, while the other builder should retain its existing behavior.",
 }
 
 
@@ -47,14 +47,14 @@ def transform_prompt(instance_id: str, original: str) -> str:
         text = text[:text.index("#### MCVE Code Sample")] + block + text[text.index("#### Expected Output"):]
         pstart = text.index("#### Problem Description")
         pend = text.index("#### Versions", pstart)
-        return text[:pstart] + "#### Problem Description\n需要先堆叠一组变量，之后再还原，但该 roundtrip 会触发上述 MergeError。\n\n" + text[pend:]
+        return text[:pstart] + "#### Problem Description\nA group of variables must first be stacked and then restored, but this roundtrip raises the MergeError shown above.\n\n" + text[pend:]
     if instance_id == "pytest-dev__pytest-7432":
-        text = original.replace("--runxfail", "一个与 xfail 相关的额外执行选项").replace("skipping: 一个与 xfail 相关的额外执行选项 breaks", "skipping: an additional execution option breaks")
+        text = original.replace("--runxfail", "an additional xfail-related execution option").replace("skipping: an additional xfail-related execution option breaks", "skipping: an additional execution option breaks")
         hint = re.search(r"(?m)^---\r?$", text)
         return text[:hint.start()].rstrip() + "\n" if hint else text
     if instance_id == "matplotlib__matplotlib-25311":
         text = original.replace("[Bug]: Unable to pickle figure with draggable legend", "[Bug]: Unable to pickle figure after enabling an interactive legend behavior")
-        text = _replace(text, "I am unable to pickle figure with draggable legend. Same error comes for draggable annotations.", "启用一种交互式 legend 行为后无法序列化 Figure；draggable annotation 也会出现类似问题。", instance_id)
+        text = _replace(text, "I am unable to pickle figure with draggable legend. Same error comes for draggable annotations.", "The Figure cannot be serialized after enabling an interactive legend behavior; draggable annotations exhibit a similar problem.", instance_id)
         line = r"(?m)^leg\.set_draggable\(True\)[^\r\n]*(?:\r?\n|$)"
         if not re.search(line, text):
             raise EvalError(f"Frozen transformation anchor missing for {instance_id}", hint="Expected the draggable trigger line")
@@ -67,25 +67,25 @@ def transform_prompt(instance_id: str, original: str) -> str:
         text = text.replace("When a figure is unpickled, it's dpi is doubled.", "After unpickling, the figure DPI becomes incorrect.", 1)
         a = text.index("### Actual outcome")
         b = text.index("### Expected outcome", a)
-        text = text[:a] + "### Actual outcome\n\nDPI 每轮都增大并最终越界。\n\n" + text[b:]
+        text = text[:a] + "### Actual outcome\n\nThe DPI increases on every round and eventually overflows.\n\n" + text[b:]
         a = text.index("### Expected outcome")
         b = text.index("### Additional information", a)
-        return text[:a] + "### Expected outcome\n\nDPI 应始终保持原 Figure 的正确值。\n\n" + text[b:]
+        return text[:a] + "### Expected outcome\n\nThe DPI should always retain the correct value from the original Figure.\n\n" + text[b:]
     if instance_id == "scikit-learn__scikit-learn-13439":
         text = original.replace("Pipeline should implement __len__", "Pipeline should expose its number of steps through a standard interface", 1)
-        text = _replace(text, "With the new indexing support `pipe[:len(pipe)]` raises an error.", "通过预期的标准 Python 接口查询 Pipeline 大小时发生错误。", instance_id)
+        text = _replace(text, "With the new indexing support `pipe[:len(pipe)]` raises an error.", "Querying the Pipeline size through the expected standard Python interface raises an error.", instance_id)
         return text.replace("len(pipe)", "# Query the number of steps using the intended standard interface", 1)
     if instance_id == "sphinx-doc__sphinx-8595":
         text = original.replace("autodoc: empty __all__ attribute is ignored", "autodoc mishandles an explicitly defined __all__ attribute")
         text = text.replace("empty `__all__` attribute is ignored", "an explicitly defined `__all__` attribute is mishandled")
         text = text.replace("__all__ = []", "# __all__ is explicitly defined to a particular value", 1)
-        return text.replace("No entries should be shown because `__all__` is empty.", "autodoc 应尊重显式导出列表。", 1)
+        return text.replace("No entries should be shown because `__all__` is empty.", "autodoc should respect the explicit export list.", 1)
     if instance_id == "django__django-11133":
-        return "HttpResponse incorrectly serializes some database binary values。\n将数据库 BinaryField 的内容写入 HttpResponse 时，SQLite 返回的值可以正常工作，但 PostgreSQL 返回的同一内容会变成类似 b'<... at 0x...>' 的表示，而不是 b'My Content'。字符串和普通字节输入均能正常工作。"
+        return "HttpResponse incorrectly serializes some database binary values.\nWhen database BinaryField content is written to an HttpResponse, the value returned by SQLite works correctly, but the same content returned by PostgreSQL becomes a representation like b'<... at 0x...>' instead of b'My Content'. String and ordinary bytes inputs both work correctly."
     if instance_id == "scikit-learn__scikit-learn-14983":
         a = original.index("#### Expected Results")
         b = original.index("#### Actual Results", a)
-        return original[:a] + "#### Expected Results\n\n两个对象都应显示稳定、可读的构造器式表示，并包含其交叉验证配置，而不是默认对象地址。\n\n" + original[b:]
+        return original[:a] + "#### Expected Results\n\nBoth objects should display stable, readable constructor-style representations that include their cross-validation configuration, rather than default object addresses.\n\n" + original[b:]
     if instance_id == "matplotlib__matplotlib-25332":
         text = original.replace("[Bug]: Unable to pickle figure with aligned labels", "A figure fails after combining label alignment and serialization", 1)
         text = text.replace("Unable to pickle figure after calling `align_labels()`", "A Figure performs label alignment and serialization; together they raise the reported error.", 1)

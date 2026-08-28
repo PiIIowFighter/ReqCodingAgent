@@ -1,0 +1,7 @@
+{
+  "data_version": "frozen-v1.3",
+  "docker": false,
+  "network": false,
+  "operation": "validate-data",
+  "scope": "static-15-pairs"
+}

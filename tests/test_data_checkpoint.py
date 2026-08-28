@@ -65,6 +65,29 @@ def test_frozen_case_metadata_is_exact_and_balanced():
         assert case["transformation_description"]
 
 
+def test_frozen_pairs_use_the_same_script():
+    from evalsys.validation import validate_pairs
+
+    manifest = Path(__file__).parents[1] / "benchmark/manifests/paired-cases.jsonl"
+    records = validate_jsonl(manifest, "public-case")
+    validate_pairs(records)
+    attacked = json.loads(json.dumps(records))
+    fuzzy = next(row for row in attacked if row["pair_id"] == "T-O2" and row["prompt_variant"] == "fuzzy")
+    fuzzy["prompt"] = "中文模糊题面"
+    fuzzy["prompt_sha256"] = __import__("hashlib").sha256(fuzzy["prompt"].encode()).hexdigest()
+    with pytest.raises(EvalError, match="language"):
+        validate_pairs(attacked)
+
+
+def test_prepare_data_cli_returns_success_for_valid_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    from evalsys import cli
+
+    monkeypatch.setattr(cli, "prepare_data", lambda settings: object())
+    monkeypatch.setattr(cli, "validate_benchmark", lambda prepared: {"records": 30})
+    assert cli.main(["--project-root", str(tmp_path), "prepare-data"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
+
+
 def test_lock_verification_checks_real_heads(tmp_path: Path):
     settings = _settings(tmp_path)
     settings.project_root.mkdir()
@@ -158,7 +181,7 @@ def test_t_o3_removes_forbidden_hint_but_preserves_required_context():
     assert "pytest_runtest_makereport" not in fuzzy
     assert "@pytest.mark.skip" in fuzzy
     assert "test_it.py:3" in fuzzy
-    assert "一个与 xfail 相关的额外执行选项" in fuzzy
+    assert "an additional xfail-related execution option" in fuzzy
 
 
 def test_generated_fuzzy_manifest_has_no_t_o3_or_t_o4_leaks():

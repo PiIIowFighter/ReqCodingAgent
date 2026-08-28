@@ -8,6 +8,10 @@ from .frozen_cases import CASE_IDS, build_oracles, case_definitions, transform_p
 from .schema import validate_jsonl
 
 
+def _contains_han(text: str) -> bool:
+    return any("㐀" <= char <= "䶿" or "一" <= char <= "鿿" for char in text)
+
+
 def validate_pairs(records: list[dict]) -> dict:
     grouped: dict[str, list[dict]] = {}
     for record in records:
@@ -28,7 +32,10 @@ def validate_pairs(records: list[dict]) -> dict:
             raise EvalError(f"Pair {pair_id} must contain one full and one fuzzy record")
         if any(pair[0][key] != pair[1][key] for key in immutable):
             raise EvalError(f"Paired official task fields differ for {pair_id}")
+        full = next(r for r in pair if r["prompt_variant"] == "full")
         fuzzy = next(r for r in pair if r["prompt_variant"] == "fuzzy")
+        if _contains_han(full["prompt"]) != _contains_han(fuzzy["prompt"]):
+            raise EvalError(f"Frozen pair language mismatch for {pair_id}")
         if fuzzy["severity"] != "medium" or not fuzzy["transformation_description"] or not fuzzy["hidden_fact_id"] or fuzzy["approval_status"] != "frozen":
             raise EvalError(f"Fuzzy freeze metadata is incomplete for {pair_id}")
     if {pair[0]["instance_id"] for pair in grouped.values()} != set(CASE_IDS):
