@@ -1,0 +1,7 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,
+  "required":["schema_version","case_id","split","pair_id","prompt_variant","instance_id","repo","base_commit","ambiguity_type","severity","source_dataset","source_revision","original_prompt_sha256","prompt_sha256","prompt","approval_status","transformation_description","hidden_fact_id","FAIL_TO_PASS","PASS_TO_PASS"],
+  "properties":{
+    "schema_version":{"const":"1.0"},"case_id":{"type":"string","minLength":1},"split":{"enum":["dev","test"]},"pair_id":{"type":"string","minLength":1},"prompt_variant":{"enum":["full","fuzzy"]},"instance_id":{"type":"string","minLength":1},"repo":{"type":"string","pattern":"^[^/]+/[^/]+$"},"base_commit":{"type":"string","pattern":"^[0-9a-f]{40}$"},"ambiguity_type":{"type":["string","null"],"enum":[null,"omission","specificity_reduction","referential_ambiguity"]},"severity":{"type":["string","null"],"enum":[null,"medium"]},"source_dataset":{"const":"SWE-bench Verified"},"source_revision":{"type":"string","pattern":"^[0-9a-f]{40}$"},"original_prompt_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"prompt_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"prompt":{"type":"string","minLength":1},"approval_status":{"const":"frozen"},"transformation_description":{"type":["string","null"]},"hidden_fact_id":{"type":["string","null"]},"FAIL_TO_PASS":{"type":"array","items":{"type":"string"}},"PASS_TO_PASS":{"type":"array","items":{"type":"string"}}
+  }
+}

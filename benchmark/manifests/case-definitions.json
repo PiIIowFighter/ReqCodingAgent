@@ -1,0 +1,312 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "T-O1",
+      "pair_id": "T-O1",
+      "split": "test",
+      "ambiguity_type": "omission",
+      "instance_id": "astropy__astropy-14995",
+      "repo": "astropy/astropy",
+      "base_commit": "b16c7d12ccbc7b2d20364b89fb44285bcbfede54",
+      "original_prompt_sha256": "2eb1c507dd3ad67acc74872966e4bb5e14d571e20e67f246fc454ed9461f5745",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-O1-HF1",
+      "hidden_fact_category": "expected_behavior",
+      "source_evidence": "When one of the operand does not have mask, the mask that exists should just be copied over to the output.",
+      "oracle_answer": "当且仅当一个操作数具有 mask 时，应把现有 mask 复制到输出；行为应与 5.2 版本一致。",
+      "acceptable_intents": [
+        "expected_behavior"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-O2",
+      "pair_id": "T-O2",
+      "split": "test",
+      "ambiguity_type": "omission",
+      "instance_id": "pydata__xarray-4094",
+      "repo": "pydata/xarray",
+      "base_commit": "a64cf2d5476e7bbda099b34c40b7be1880dbd39a",
+      "original_prompt_sha256": "4c60cee2e4247fd72e76052ae5938216ea38eca360d5b87d2a006d71bf4a91bc",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-O2-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "this doesn't work if the variables only have a single dimension.",
+      "oracle_answer": "源数据中的变量都只有一个维度；最小示例中 a 和 b 都是沿 x 维的一维 DataArray。",
+      "acceptable_intents": [
+        "trigger"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-O3",
+      "pair_id": "T-O3",
+      "split": "test",
+      "ambiguity_type": "omission",
+      "instance_id": "pytest-dev__pytest-7432",
+      "repo": "pytest-dev/pytest",
+      "base_commit": "e6e300e729dd33956e5448d8be9a0b1540b4e53a",
+      "original_prompt_sha256": "f8453cfb1e017be81d0fd5ac8fc5b6faeff6045f71763c81e7fd51537a81ef31",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-O3-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "However, adding `pytest -rs --runxfail` breaks this:",
+      "oracle_answer": "额外选项是 --runxfail；对照命令为 pytest -rs，触发命令为 pytest -rs --runxfail。",
+      "acceptable_intents": [
+        "trigger"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-O4",
+      "pair_id": "T-O4",
+      "split": "test",
+      "ambiguity_type": "omission",
+      "instance_id": "matplotlib__matplotlib-25311",
+      "repo": "matplotlib/matplotlib",
+      "base_commit": "430fb1db88843300fb4baae3edc499bbfe073b0c",
+      "original_prompt_sha256": "a2583ca80e1609006e02901af35754c41bc9bb0c325da37d2f6fef434d7f2ff7",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-O4-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "I am unable to pickle figure with draggable legend. Same error comes for draggable annotations.",
+      "oracle_answer": "在 pickle 前调用 leg.set_draggable(True)；draggable annotation 是同类触发条件。",
+      "acceptable_intents": [
+        "trigger"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-S1",
+      "pair_id": "T-S1",
+      "split": "test",
+      "ambiguity_type": "specificity_reduction",
+      "instance_id": "django__django-10914",
+      "repo": "django/django",
+      "base_commit": "e7fd69d051eaa67cb17f172a39b57253e9cb831a",
+      "original_prompt_sha256": "ba101c6d80094fe56bc64d74dcb7efe033a6e0d43dd77e8f00e65806fdbcdb8b",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-S1-HF1",
+      "hidden_fact_category": "expected_behavior",
+      "source_evidence": "Set default FILE_UPLOAD_PERMISSION to 0o644.",
+      "oracle_answer": "FILE_UPLOAD_PERMISSIONS 的默认值应为 0o644。",
+      "acceptable_intents": [
+        "expected_behavior",
+        "scope_constraint"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-S2",
+      "pair_id": "T-S2",
+      "split": "test",
+      "ambiguity_type": "specificity_reduction",
+      "instance_id": "matplotlib__matplotlib-23476",
+      "repo": "matplotlib/matplotlib",
+      "base_commit": "33a0599711d26dc2b79f851c6daed4947df7c167",
+      "original_prompt_sha256": "09f6a686f1cdc38099eeaf53b4f8d5d7f5ccc2587d792da3f5f5ac0ee5e94eab",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-S2-HF1",
+      "hidden_fact_category": "expected_behavior",
+      "source_evidence": "When a figure is unpickled, it's dpi is doubled.",
+      "oracle_answer": "每次反序列化后都必须保持原 DPI；本例为 200，不应翻倍。",
+      "acceptable_intents": [
+        "expected_behavior"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-S3",
+      "pair_id": "T-S3",
+      "split": "test",
+      "ambiguity_type": "specificity_reduction",
+      "instance_id": "scikit-learn__scikit-learn-13439",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "a62775e99f2a5ea3d51db7160fad783f6cd8a4c5",
+      "original_prompt_sha256": "bcdb7c064b7370929b2d8b37e9b35008d95bc4050e49372d9f13723e13f8baa4",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-S3-HF1",
+      "hidden_fact_category": "expected_behavior",
+      "source_evidence": "Pipeline should implement __len__",
+      "oracle_answer": "预期接口是 __len__；len(pipe) 应返回 pipe.steps 的数量。",
+      "acceptable_intents": [
+        "expected_behavior",
+        "target"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-S4",
+      "pair_id": "T-S4",
+      "split": "test",
+      "ambiguity_type": "specificity_reduction",
+      "instance_id": "sphinx-doc__sphinx-8595",
+      "repo": "sphinx-doc/sphinx",
+      "base_commit": "b19bce971e82f2497d67fdacdeca8db08ae0ba56",
+      "original_prompt_sha256": "f5549e64af66510e584758f04371935b8c6c3a5fec4fda812b8571a7bd733be4",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-S4-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "No entries should be shown because `__all__` is empty.",
+      "oracle_answer": "__all__ 被显式设置为空列表；因此不应显示任何条目。",
+      "acceptable_intents": [
+        "trigger",
+        "expected_behavior"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-R1",
+      "pair_id": "T-R1",
+      "split": "test",
+      "ambiguity_type": "referential_ambiguity",
+      "instance_id": "django__django-13933",
+      "repo": "django/django",
+      "base_commit": "42e8cf47c7ee2db238bf91197ea398126c546741",
+      "original_prompt_sha256": "401348caf9cb639acfea61bb1f3bbc93a59d3e8a025d2fb99dd17c4a512723dd",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-R1-HF1",
+      "hidden_fact_category": "target",
+      "source_evidence": "Compared with ChoiceField and others, ModelChoiceField does not show the value of the invalid choice when raising a validation error.",
+      "oracle_answer": "需要修改的是 ModelChoiceField。ModelMultipleChoiceField 已经会报告无效值；目标是让 ModelChoiceField 的 invalid_choice 错误也携带该值。",
+      "acceptable_intents": [
+        "target"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-R2",
+      "pair_id": "T-R2",
+      "split": "test",
+      "ambiguity_type": "referential_ambiguity",
+      "instance_id": "psf__requests-2317",
+      "repo": "psf/requests",
+      "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+      "original_prompt_sha256": "9fdbda259c2e75551a5282e979edf4ca93ba378bee22df393fe02998991cfd1a",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-R2-HF1",
+      "hidden_fact_category": "target",
+      "source_evidence": "method = builtin_str(method)",
+      "oracle_answer": "问题对象是 HTTP 请求方法，例如 b'GET' 应成为原生字符串 GET，而不是字符串 b'GET' 的字面表示。",
+      "acceptable_intents": [
+        "target",
+        "trigger"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-R3",
+      "pair_id": "T-R3",
+      "split": "test",
+      "ambiguity_type": "referential_ambiguity",
+      "instance_id": "scikit-learn__scikit-learn-13779",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "b34751b7ed02b2cfcc36037fb729d4360480a299",
+      "original_prompt_sha256": "d32c6ecdfaf0eeb42a35e7cb05bd03fc034571aaef7c7743a452422c2bcdc6bc",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-R3-HF1",
+      "hidden_fact_category": "target",
+      "source_evidence": "Because we don't check for an estimator to be `None` in `sample_weight` support, `fit` is failing`.",
+      "oracle_answer": "被设为 None 的是 lr。需要处理 VotingClassifier 使用 sample_weight 拟合时对基础估计器进行检查和调用的路径；None 项必须被跳过。",
+      "acceptable_intents": [
+        "target",
+        "scope_constraint"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "T-R4",
+      "pair_id": "T-R4",
+      "split": "test",
+      "ambiguity_type": "referential_ambiguity",
+      "instance_id": "sphinx-doc__sphinx-8721",
+      "repo": "sphinx-doc/sphinx",
+      "base_commit": "82ef497a8c88f0f6e50d84520e7276bfbf65025d",
+      "original_prompt_sha256": "684041d7ab737dd04914a0017b92d238cd8dae72182457e3f3a21f494e7acb3e",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "T-R4-HF1",
+      "hidden_fact_category": "target",
+      "source_evidence": "module pages should not be created for epub by default.",
+      "oracle_answer": "应禁止生成 viewcode 模块页面的是 EPUB 输出；HTML 输出仍可正常生成这些页面。",
+      "acceptable_intents": [
+        "target",
+        "scope_constraint"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "D-O1",
+      "pair_id": "D-O1",
+      "split": "dev",
+      "ambiguity_type": "omission",
+      "instance_id": "django__django-11133",
+      "repo": "django/django",
+      "base_commit": "879cc3da6249e920b8d54518a0ae06de835d7373",
+      "original_prompt_sha256": "a7f427b7eb3f746b6985030b467a99099e6e3453319297a41e35effa7c32b8ed",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "D-O1-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "Postgresql returns the contents of the field as a memoryview object",
+      "oracle_answer": "PostgreSQL 返回的 BinaryField 内容是 memoryview；最小触发输入为 HttpResponse(memoryview(b\"My Content\"))。",
+      "acceptable_intents": [
+        "trigger"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "D-S1",
+      "pair_id": "D-S1",
+      "split": "dev",
+      "ambiguity_type": "specificity_reduction",
+      "instance_id": "scikit-learn__scikit-learn-14983",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "06632c0d185128a53c57ccc73b25b6408e90bb89",
+      "original_prompt_sha256": "ca3d0c700c131e4b74bc7b9370f8e9c38093b25298dc682251e7c5185877f222",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "D-S1-HF1",
+      "hidden_fact_category": "expected_behavior",
+      "source_evidence": "RepeatedKFold(n_splits=5, n_repeats=10, random_state=None)",
+      "oracle_answer": "默认输出分别为 RepeatedKFold(n_splits=5, n_repeats=10, random_state=None) 和 RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=None)。",
+      "acceptable_intents": [
+        "expected_behavior"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    },
+    {
+      "case_id": "D-R1",
+      "pair_id": "D-R1",
+      "split": "dev",
+      "ambiguity_type": "referential_ambiguity",
+      "instance_id": "matplotlib__matplotlib-25332",
+      "repo": "matplotlib/matplotlib",
+      "base_commit": "66ba515e671638971bd11a34cff12c107a437e0b",
+      "original_prompt_sha256": "86c03c9b73bf970095097ed7e90516f96639aaf8b1a81a8ba3ddd8f620e0eee4",
+      "severity": "medium",
+      "approval_status": "frozen",
+      "hidden_fact_id": "D-R1-HF1",
+      "hidden_fact_category": "trigger",
+      "source_evidence": "Unable to pickle figure after calling `align_labels()`",
+      "oracle_answer": "触发条件是先调用 fig.align_labels()，随后执行 pickle.dumps(fig)；未调用标签对齐时可以序列化，目标是对齐后仍可序列化。",
+      "acceptable_intents": [
+        "trigger",
+        "target"
+      ],
+      "transformation_description": "Frozen deterministic transformation from implementation specification Sections 9-10."
+    }
+  ]
+}
