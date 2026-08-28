@@ -1,0 +1,7 @@
+{
+  "docker": false,
+  "network": false,
+  "revision": "iteration1-v1.3-final",
+  "selector": "not integration",
+  "suite": "default-fast"
+}

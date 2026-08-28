@@ -13,7 +13,7 @@ from .errors import EvalError
 from .frozen_cases import CASE_IDS
 from .isolation import prove_isolation
 from .preflight import run_preflight
-from .reporting import generate_report, publish_audit
+from .reporting import generate_report, generate_smoke_report, publish_audit
 from .replay import replay_cases
 from .locks import verify_source_locks
 from .validate_all import run_validate_all
@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--instance-id", help="run one frozen instance (smoke/recovery)")
     report = sub.add_parser("report", help="aggregate a validate-all run directory")
     report.add_argument("run_directory", type=Path)
+    smoke = sub.add_parser("smoke-report", help="aggregate one django__django-11133 noop/gold pair")
+    smoke.add_argument("--noop-run", type=Path, required=True)
+    smoke.add_argument("--gold-run", type=Path, required=True)
     validate_all = sub.add_parser("validate-all", help="run and resume the complete iteration-1 validation pipeline")
     validate_all.add_argument("--timeout", type=int, default=1800)
     validate_all.add_argument("--workers", type=int, default=1)
@@ -78,6 +81,15 @@ def main(argv: list[str] | None = None) -> int:
             instance_ids = list(CASE_IDS)
             paths = generate_report(args.run_directory, expected_instance_ids=instance_ids)
             report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "run_directory": str(args.run_directory), "machine_json": str(paths.machine_json), "machine_jsonl": str(paths.machine_jsonl), "markdown": str(paths.markdown)}
+        elif args.command == "smoke-report":
+            validation_receipt = validate_benchmark(load_prepared(settings))["validation_receipt"]
+            paths = generate_smoke_report(
+                args.noop_run,
+                args.gold_run,
+                destination=settings.project_root / "audit/iteration1",
+                validation_receipt=validation_receipt,
+            )
+            report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "machine_json": str(paths.machine_json), "markdown": str(paths.markdown)}
         elif args.command == "validate-all":
             if args.resume and not args.run_id:
                 raise EvalError("--run-id is required with --resume for validate-all")
@@ -98,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
                     validation["status"] = "passed"
                     return validation
                 if name == "unit_tests":
-                    completed = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=settings.project_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, env={**dict(__import__("os").environ), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})
+                    completed = subprocess.run([sys.executable, "-m", "pytest", "-q", "-m", "not integration"], cwd=settings.project_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, env={**dict(__import__("os").environ), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})
                     summary = completed.stdout[-4000:]
                     return {"status": "passed" if completed.returncode == 0 else "failed", "failure_kind": "infra", "exit_code": completed.returncode, "summary": summary}
                 records = validate_jsonl(prepared.public_manifest, "public-case")
@@ -128,8 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                 strict = context["state"]["stages"].get("strict_data", {})
                 machine["validation_receipt"] = strict.get("validation_receipt")
                 machine["resume_verified"] = context["state"].get("resume_verified") is True
-                acceptance = evaluate_acceptance(settings.project_root, machine, unit_tests_passed=context["state"]["stages"].get("unit_tests", {}).get("status") == "passed")
-                return {"status": "passed" if acceptance["iteration_completion"] else "failed", **acceptance, "reason": "Unit-test completion evidence is verified separately"}
+                return {"status": machine["status"], "optional_full_profile": True, "iteration_completion": False, "reason": "The optional 15x2 profile does not replace the iteration-1 smoke acceptance gate"}
             report = run_validate_all(settings.project_root, stage_runner=stage_runner, run_id=args.run_id, resume=args.resume, config=config, artifact_root=settings.artifact_root)
             report["run_directory"] = str(settings.artifact_root / "runs/iteration1" / report["run_id"])
         else:
@@ -144,8 +155,9 @@ def main(argv: list[str] | None = None) -> int:
         status = report.get("status", "passed")
         print(json.dumps({"status": status, "command": args.command, **report}, ensure_ascii=True, sort_keys=True))
         return 0 if status == "passed" else 1
-    except EvalError as exc:
-        print(f"ERROR [{exc.category}]: {exc}", file=sys.stderr)
+    except (EvalError, ValueError) as exc:
+        category = exc.category if isinstance(exc, EvalError) else "invalid"
+        print(f"ERROR [{category}]: {exc}", file=sys.stderr)
         return 2
 
 

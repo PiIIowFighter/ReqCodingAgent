@@ -103,7 +103,7 @@ def validate_benchmark(prepared, *, allow_fixture_hashes: bool = False) -> dict:
             raise EvalError(f"Oracle source_evidence is not a direct substring of the official prompt for {oracle['instance_id']}")
     receipt = {
         "schema_version": "1.0", "status": "passed",
-        "checks": {"schema_pairs_12_3": True, "distribution_4_4_4_1_1_1": True, "official_hashes_15": True, "pair_official_fields_equal": True},
+        "checks": {"schema_pairs_12_3": True, "distribution_4_4_4_1_1_1": True, "official_hashes_15": True, "pair_official_fields_equal": True, "pair_language_consistent": True},
         "source_heads": dict(prepared.lock_heads),
         "inputs": {"public_manifest_sha256": hashlib.sha256(prepared.public_manifest.read_bytes()).hexdigest(), "oracle_manifest_sha256": hashlib.sha256(prepared.oracle_manifest.read_bytes()).hexdigest()},
     }

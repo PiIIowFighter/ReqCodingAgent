@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 
 from evalsys.acceptance import ACCEPTANCE_KEYS, evaluate_acceptance
-from evalsys.reporting import generate_report, publish_audit
+from evalsys.reporting import generate_report, generate_smoke_report, publish_audit
 from evalsys import cli
+from evalsys.recovery import compute_input_fingerprint, write_completed_run
 from evalsys.validate_all import run_validate_all
 
 
@@ -66,6 +67,98 @@ def test_report_selects_supersession_leaves_and_writes_deterministic_outputs(tmp
     matrix = paths.markdown.read_text(encoding="utf-8")
     assert matrix.count("\n|") == 17  # header, separator, and exactly 15 data rows
     assert str(tmp_path) not in matrix
+
+
+def _smoke_replay(root: Path, run_id: str, mode: str) -> Path:
+    run = root / "artifacts/runs/iteration1" / run_id
+    case = run / "cases/D-O1-full" / mode
+    case.mkdir(parents=True)
+    result = _result("django__django-11133", mode)
+    result["run_id"] = run_id
+    result["case_id"] = "D-O1-full"
+    result["split"] = "dev"
+    result["fail_to_pass"] = {"f2p-pass": "PASSED", "f2p-fail": "FAILED"}
+    result["pass_to_pass"] = {"p2p-pass": "PASSED", "p2p-skip": "SKIPPED"}
+    result["cleanup"] = {"status": "passed", "message": None}
+    for name in ("stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"):
+        (case / name).write_text("{}\n" if name.endswith(".json") else "", encoding="utf-8")
+    harness = case / "harness"
+    harness.mkdir()
+    (harness / "run.log").write_text("fixture", encoding="utf-8")
+    fingerprint = compute_input_fingerprint({"run_id": run_id, "mode": mode})
+    write_completed_run(
+        case,
+        result,
+        fingerprint,
+        ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"],
+        artifact_trees=["harness"],
+    )
+    (run / "summary.json").write_text(json.dumps({"schema_version": "1.0", "run_id": run_id, "status": "passed", "results": [{"instance_id": "django__django-11133", "mode": mode, "status": "passed", "result": f"cases/D-O1-full/{mode}/result.json"}]}), encoding="utf-8")
+    (run / "COMPLETE").write_text("{}", encoding="utf-8")
+    audit = root / "audit/iteration1"
+    audit.mkdir(parents=True, exist_ok=True)
+    index_path = audit / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {"runs": []}
+    index["runs"].append({"run_id": run_id, "run_type": f"replay_{mode}", "status": "passed", "raw_path": f"artifacts/runs/iteration1/{run_id}", "validity": "active", "supersedes": []})
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    return run
+
+
+def test_smoke_report_writes_exact_redacted_1x2(tmp_path: Path):
+    noop = _smoke_replay(tmp_path, "noop", "noop")
+    gold = _smoke_replay(tmp_path, "gold", "gold")
+    destination = tmp_path / "audit/iteration1"
+    paths = generate_smoke_report(noop, gold, destination=destination)
+    report = json.loads(paths.machine_json.read_text(encoding="utf-8"))
+    assert {(row["instance_id"], row["mode"]) for row in report["results"]} == {("django__django-11133", "noop"), ("django__django-11133", "gold")}
+    assert report["results"][0]["fail_to_pass"] == {"passed": 1, "failed": 1, "skipped": 0, "error": 0}
+    assert report["results"][0]["pass_to_pass"] == {"passed": 1, "failed": 0, "skipped": 1, "error": 0}
+    assert all(len(row["raw_result_sha256"]) == 64 for row in report["results"])
+    assert not paths.machine_jsonl.exists()
+    assert str(tmp_path) not in paths.machine_json.read_text(encoding="utf-8") + paths.markdown.read_text(encoding="utf-8")
+
+
+def test_smoke_report_rejects_missing_cell(tmp_path: Path):
+    noop = _smoke_replay(tmp_path, "noop", "noop")
+    with pytest.raises(ValueError, match="noop and gold"):
+        generate_smoke_report(noop, noop, destination=tmp_path / "audit/iteration1")
+
+
+def test_smoke_report_rejects_wrong_identity(tmp_path: Path):
+    noop = _smoke_replay(tmp_path, "noop", "noop")
+    gold = _smoke_replay(tmp_path, "gold", "gold")
+    result_path = gold / "cases/D-O1-full/gold/result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["instance_id"] = "wrong__task-1"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    complete_path = result_path.parent / "COMPLETE"
+    complete = json.loads(complete_path.read_text(encoding="utf-8"))
+    complete["artifacts"]["result.json"] = __import__("hashlib").sha256(result_path.read_bytes()).hexdigest()
+    complete_path.write_text(json.dumps(complete), encoding="utf-8")
+    with pytest.raises(ValueError, match="identity"):
+        generate_smoke_report(noop, gold, destination=tmp_path / "audit/iteration1")
+
+
+def test_cli_exposes_smoke_report_options():
+    parser = cli.build_parser()
+    args = parser.parse_args(["smoke-report", "--noop-run", "noop", "--gold-run", "gold"])
+    assert (args.noop_run, args.gold_run) == (Path("noop"), Path("gold"))
+
+
+def test_smoke_report_redacts_windows_paths(tmp_path: Path):
+    noop = _smoke_replay(tmp_path, "noop", "noop")
+    gold = _smoke_replay(tmp_path, "gold", "gold")
+    result_path = gold / "cases/D-O1-full/gold/result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["cleanup"]["message"] = "removed C:/Users/alice/work and D:\\Users\\bob\\work"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    complete_path = result_path.parent / "COMPLETE"
+    complete = json.loads(complete_path.read_text(encoding="utf-8"))
+    complete["artifacts"]["result.json"] = __import__("hashlib").sha256(result_path.read_bytes()).hexdigest()
+    complete_path.write_text(json.dumps(complete), encoding="utf-8")
+    paths = generate_smoke_report(noop, gold, destination=tmp_path / "audit/iteration1")
+    published = paths.machine_json.read_text(encoding="utf-8")
+    assert "alice" not in published and "bob" not in published
 
 
 def test_report_preserves_failure_stage_retry_and_timeout(tmp_path: Path):
@@ -151,7 +244,7 @@ def test_readme_and_wrappers_are_bounded_and_quoting_safe():
     root = Path(__file__).parents[1]
     text = (root / "README.txt").read_text(encoding="utf-8")
     assert len(text) <= 1000
-    assert all(term in text for term in ("https://github.com/PiIIowFighter/ReqCodingAgent", "report RUN_DIRECTORY", "validate-all", "WSL2", "Docker"))
+    assert all(term in text for term in ("https://github.com/PiIIowFighter/ReqCodingAgent", "smoke-report", "validate-all", "WSL2", "Docker"))
     shell = (root / "scripts/validate-all.sh").read_text(encoding="utf-8")
     powershell = (root / "scripts/validate-all.ps1").read_text(encoding="utf-8")
     assert '"$@"' in shell and "@Args" in powershell
@@ -185,11 +278,15 @@ def test_acceptance_rejects_fabricated_checks_rows_and_weak_audit(tmp_path: Path
     assert not report["criteria"]["pair_official_fields_equal"]
     assert not report["criteria"]["executable_isolation"]
     assert not report["criteria"]["sanitized_audit"]
-    assert not report["criteria"]["noop_15_passed"]
+    assert not report["criteria"]["django_noop_passed"]
+    assert not report["criteria"]["django_gold_passed"]
+    assert not report["criteria"]["smoke_report_valid"]
 
 
-def test_acceptance_maps_every_section19_item_and_never_completes_without_30(tmp_path: Path):
-    report = evaluate_acceptance(tmp_path, {"counts": {"expected": 30, "passed": 29, "failed": 1}, "results": []}, unit_tests_passed=True)
+def test_acceptance_maps_every_section19_item_and_never_completes_without_smoke(tmp_path: Path):
+    report = evaluate_acceptance(tmp_path, {"status": "failed", "results": []}, unit_tests_passed=True)
     assert set(report["criteria"]) == set(ACCEPTANCE_KEYS)
     assert report["iteration_completion"] is False
-    assert report["criteria"]["noop_15_passed"] is False or report["criteria"]["gold_15_passed"] is False
+    assert report["criteria"]["django_noop_passed"] is False
+    assert report["criteria"]["django_gold_passed"] is False
+    assert report["criteria"]["smoke_report_valid"] is False

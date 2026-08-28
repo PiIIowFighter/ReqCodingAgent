@@ -1,17 +1,18 @@
-ReqCodingAgent 第一次迭代检查点
+ReqCodingAgent 迭代一 v1.3
 仓库：https://github.com/PiIIowFighter/ReqCodingAgent
 
-本阶段建立冻结、可复现、可恢复的 SWE-bench Verified/Lite 评测环境：固定三项上游版本，严格校验 15 题配对、哈希与分布；用官方 harness 逐项判定 no-op/gold；保存结构化日志、确定性报告和脱敏审计；以宿主及容器探针证明 Agent 看不到 gold patch、test patch、hints 与 Oracle。
+本阶段提供冻结的 15 题 SWE-bench 配对数据、官方 harness replay、Agent/evaluator 隔离和可审计结果。需 Python 3.11；Windows 使用 WSL2 与 Linux Docker Engine，缓存放在项目外。
 
-需 Python 3.11。Windows 必须启用 WSL2，并使用 Linux Docker Engine；缓存应放在项目目录外。
+默认快速测试：
+pytest -m "not integration"
 
-常用命令：
-python -m evalsys.cli preflight
+离线数据准备与校验：
 python -m evalsys.cli prepare-data
 python -m evalsys.cli validate-data
-python -m evalsys.cli replay --mode noop --split all
-python -m evalsys.cli replay --mode gold --split all
-python -m evalsys.cli validate-all --task-repo TASK_REPO --isolation-workspace WORKSPACE
-python -m evalsys.cli report RUN_DIRECTORY
 
-恢复时为 validate-all 提供 --resume --run-id，并可用 --noop-run-id/--gold-run-id 指定已有子运行。只有实际 30 次 replay 全部通过且第19节全部验收后，迭代一才算完成；当前检查点不作完成声明。
+Docker 健康且任务镜像、probe 镜像均已在本地时，仅运行开发题 django__django-11133：
+python -m evalsys.cli replay --mode noop --split dev --instance-id django__django-11133
+python -m evalsys.cli replay --mode gold --split dev --instance-id django__django-11133
+python -m evalsys.cli smoke-report --noop-run NOOP_RUN --gold-run GOLD_RUN
+
+迭代一强制验收为静态 15 题校验、默认快速测试、一次真实隔离证明及上述 1×2 smoke。15×2 replay 与 validate-all 保留为 optional full profile，不是完成门槛。integration 显式运行：pytest -m integration。

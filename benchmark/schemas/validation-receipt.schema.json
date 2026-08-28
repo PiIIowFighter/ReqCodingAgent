@@ -11,7 +11,8 @@
       "required": ["schema_pairs_12_3", "distribution_4_4_4_1_1_1", "official_hashes_15", "pair_official_fields_equal"],
       "properties": {
         "schema_pairs_12_3": {"const": true}, "distribution_4_4_4_1_1_1": {"const": true},
-        "official_hashes_15": {"const": true}, "pair_official_fields_equal": {"const": true}
+        "official_hashes_15": {"const": true}, "pair_official_fields_equal": {"const": true},
+        "pair_language_consistent": {"const": true}
       }
     },
     "source_heads": {
