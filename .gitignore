@@ -1,0 +1,27 @@
+# Protected local materials
+/资料/
+
+# Runtime products
+/artifacts/
+/.cache/
+/.superpowers/
+.env
+*.log
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

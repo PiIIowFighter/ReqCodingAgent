@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "sources": {
+    "harness": {
+      "url": "https://github.com/SWE-bench/SWE-bench.git",
+      "revision": "7a21e05772954cc81471ae19d56f436cecf43c54"
+    },
+    "verified": {
+      "url": "https://huggingface.co/datasets/SWE-bench/SWE-bench_Verified",
+      "revision": "78f471bf655a3137b2e8a75af1501690ec009ec3"
+    },
+    "lite": {
+      "url": "https://huggingface.co/datasets/SWE-bench/SWE-bench_Lite",
+      "revision": "b0dde1093fe417d83b7184254edf8199c1f0dff5"
+    }
+  }
+}
