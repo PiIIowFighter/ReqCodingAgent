@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -10,8 +13,10 @@ from typing import Any
 
 from .errors import EvalError
 from .preflight import PROBE_IMAGE
+from .schema import validate_json
 
-_PUBLIC_PROMPT_KEYS = ("case_id", "prompt_variant", "prompt", "prompt_sha256")
+_AGENT_PROMPT_KEYS = ("case_id", "prompt_variant", "prompt", "prompt_sha256")
+_CANARY = re.compile(r"EVALSYS_PRIVATE_CANARY_[A-Za-z0-9_]+")
 _FORBIDDEN_NAMES = {
     "benchmark", "private", "oracle", "oracles", "gold.patch", "test.patch", "hints", "hints.txt",
     "计划", "资料", "artifacts", "logs", "cache", ".cache",
@@ -44,44 +49,84 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _assert_safe_task_repo(task_repo: Path, project_root: Path) -> None:
-    source = task_repo.resolve()
-    root = project_root.resolve()
+def _contains(parent: Path, child: Path) -> bool:
     try:
-        source.relative_to(root)
+        child.resolve().relative_to(parent.resolve())
+        return True
     except ValueError:
-        pass
-    else:
-        raise EvalError("Task repository must not be the evaluator project root or live inside it", hint="Use a clean external task repository fixture")
+        return False
+
+
+def _overlap(first: Path, second: Path) -> bool:
+    return _contains(first, second) or _contains(second, first)
+
+
+def _is_reparse(path: Path) -> bool:
+    return bool(getattr(path.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _project_canaries(project_root: Path) -> set[str]:
+    found: set[str] = set()
+    for root, directories, files in os.walk(project_root, followlinks=False):
+        directories[:] = [name for name in directories if not _is_reparse(Path(root) / name)]
+        for name in files:
+            try:
+                found.update(_CANARY.findall((Path(root) / name).read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError):
+                continue
+    return found
+
+
+def _scan_task_repo(source: Path, forbidden_canaries: set[str]) -> None:
+    folded = {name.casefold() for name in _FORBIDDEN_NAMES}
+    for root, directories, files in os.walk(source, topdown=True, followlinks=False):
+        for name in [*directories, *files]:
+            path = Path(root) / name
+            if path.is_symlink() or _is_reparse(path):
+                raise EvalError(f"Task repository contains a symlink or reparse point: {name}", hint="Use a clean fixture without mount-like links")
+            try:
+                path.resolve().relative_to(source)
+            except ValueError as exc:
+                raise EvalError(f"Task repository entry escapes its source root: {name}", hint="Remove redirected entries") from exc
+            if name.casefold() in folded:
+                raise EvalError(f"Task repository contains forbidden evaluator-like entry: {name}", hint="Remove evaluator data")
+            if path.is_file():
+                try:
+                    contents = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if forbidden_canaries.intersection(_CANARY.findall(contents)):
+                    raise EvalError("Task repository contains a private evaluator canary", hint="Recreate the clean task checkout")
+
+
+def _validate_paths(task_repo: Path, destination: Path, project_root: Path) -> tuple[Path, Path, Path]:
+    source, target, root = task_repo.resolve(), destination.resolve(), project_root.resolve()
+    if _overlap(source, root):
+        raise EvalError("Task repository and evaluator project root overlap or contain one another", hint="Use an external task fixture")
+    if _overlap(target, root):
+        raise EvalError("Agent workspace and evaluator project root overlap or contain one another", hint="Use an external workspace")
+    if _overlap(source, target):
+        raise EvalError("Task repository and Agent workspace dangerously overlap or contain one another", hint="Use sibling paths")
     if not source.is_dir():
-        raise EvalError("Clean task repository fixture is missing", hint="Prepare the task checkout outside the evaluator project")
-    for path in source.rglob("*"):
-        if path.is_symlink():
-            raise EvalError(f"Task repository contains a symlink: {path.name}", hint="Use a clean fixture without links that can escape the workspace")
-        if path.name.casefold() in {name.casefold() for name in _FORBIDDEN_NAMES}:
-            raise EvalError(f"Task repository contains forbidden evaluator-like entry: {path.name}", hint="Remove private evaluator data from the clean task fixture")
+        raise EvalError("Clean task repository fixture is missing", hint="Prepare the external checkout")
+    return source, target, root
 
 
 def construct_agent_workspace(task_repo: Path, public_case: dict[str, Any], destination: Path, *, project_root: Path) -> dict[str, Any]:
-    _assert_safe_task_repo(task_repo, project_root)
-    target = destination.resolve()
-    root = project_root.resolve()
-    try:
-        target.relative_to(root)
-    except ValueError:
-        pass
-    else:
-        raise EvalError("Agent workspace must be outside the evaluator project root", hint="Use an external temporary workspace root")
+    source, target, root = _validate_paths(task_repo, destination, project_root)
     if target.exists():
-        raise EvalError("Agent workspace destination already exists", hint="Use a fresh destination to prevent stale private files")
-    missing = [key for key in _PUBLIC_PROMPT_KEYS if key not in public_case]
-    if missing or public_case.get("prompt_variant") not in {"full", "fuzzy"}:
-        raise EvalError(f"Invalid public prompt record; missing={missing}", hint="Pass exactly one validated public full or fuzzy record")
+        raise EvalError("Agent workspace destination already exists", hint="Use a fresh destination")
+    validate_json(public_case, "public-case")
+    actual_hash = hashlib.sha256(public_case["prompt"].encode("utf-8")).hexdigest()
+    if actual_hash != public_case["prompt_sha256"]:
+        raise EvalError("Public prompt hash does not match its UTF-8 content", hint="Use a validated frozen public record")
+    canaries = _project_canaries(root)
+    _scan_task_repo(source, canaries)
     target.mkdir(parents=True)
     repo_target = target / "repo"
-    shutil.copytree(task_repo, repo_target)
+    shutil.copytree(source, repo_target, symlinks=True)
     (repo_target / ".evalsys-allowed-repo").write_text("allowed\n", encoding="utf-8")
-    prompt_record = {key: public_case[key] for key in _PUBLIC_PROMPT_KEYS}
+    prompt_record = {key: public_case[key] for key in _AGENT_PROMPT_KEYS}
     prompt_path = target / "prompt.json"
     prompt_path.write_text(json.dumps(prompt_record, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     manifest = {
@@ -97,24 +142,21 @@ def construct_agent_workspace(task_repo: Path, public_case: dict[str, Any], dest
     return manifest
 
 
-def _host_probe(workspace: Path, project_root: Path) -> dict[str, bool]:
+def _host_probe(workspace: Path, private_canaries: set[str]) -> dict[str, bool]:
     positive = (workspace / "repo/.evalsys-allowed-repo").is_file() and (workspace / "prompt.json").is_file()
-    forbidden_paths = [
-        "benchmark/private", "Oracle", "oracle", "gold.patch", "test.patch", "hints", "计划", "资料",
-        "artifacts", "logs", "cache", ".cache",
-    ]
+    forbidden_paths = ["benchmark/private", "Oracle", "oracle", "gold.patch", "test.patch", "hints", "计划", "资料", "artifacts", "logs", "cache", ".cache"]
     no_paths = all(not (workspace / relative).exists() for relative in forbidden_paths)
     workspace_bytes = b"\n".join(path.read_bytes() for path in workspace.rglob("*") if path.is_file())
-    private_canaries = []
-    for path in project_root.rglob("*"):
-        if path.is_file():
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            private_canaries.extend(token for token in text.split() if token.startswith("EVALSYS_PRIVATE_CANARY_"))
-    no_canaries = all(canary.encode() not in workspace_bytes for canary in private_canaries)
-    return {"positive": positive, "negative": no_paths and no_canaries}
+    return {"positive": positive, "negative": no_paths and all(value.encode() not in workspace_bytes for value in private_canaries)}
+
+
+def _sanitize_diagnostic(text: str, project_root: Path, destination: Path) -> str:
+    value = text.replace(str(project_root), "<PROJECT_ROOT>").replace(project_root.as_posix(), "<PROJECT_ROOT>")
+    value = value.replace(str(destination), "<WORKSPACE>").replace(destination.as_posix(), "<WORKSPACE>")
+    value = re.sub(r"(?i)(token|password|secret|api[_-]?key)\s*[=:]\s*\S+", r"\1=[REDACTED]", value)
+    value = re.sub(r"[A-Za-z]:[\\/][^\r\n\t\"]+", "<ABSOLUTE_PATH>", value)
+    value = re.sub(r"/mnt/[a-z]/[^\r\n\t\"]+", "<ABSOLUTE_PATH>", value)
+    return value[:1024]
 
 
 def prove_isolation(
@@ -128,7 +170,7 @@ def prove_isolation(
     platform_name: str | None = None,
 ) -> dict[str, Any]:
     manifest = construct_agent_workspace(task_repo, public_case, destination, project_root=project_root)
-    host = _host_probe(destination, project_root)
+    host = _host_probe(destination, _project_canaries(project_root))
     active_runner = runner or ContainerRunner()
     current_platform = platform_name or sys.platform
     if current_platform == "win32":
@@ -149,7 +191,9 @@ def prove_isolation(
         container = {"positive": False, "negative": False}
     passed = host == {"positive": True, "negative": True} and container == {"positive": True, "negative": True}
     if not passed:
-        raise EvalError("Agent isolation executable probes failed", hint="Inspect the private local container stderr and ensure only the workspace mount is allowed", category="infra_failed")
+        stdout = _sanitize_diagnostic(result.stdout, project_root.resolve(), destination.resolve())
+        stderr = _sanitize_diagnostic(result.stderr, project_root.resolve(), destination.resolve())
+        raise EvalError(f"Agent isolation executable probes failed: returncode={result.returncode}; stdout={stdout!r}; stderr={stderr!r}", hint="Ensure only the isolated workspace mount is allowed", category="infra_failed")
     return {
         "schema_version": "1.0",
         "status": "passed",

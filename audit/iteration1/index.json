@@ -206,6 +206,16 @@
       "status": "passed",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T060630Z_unit_tests_4c071ecbf6",
+      "config_hash": "4c071ecbf6",
+      "raw_path": "artifacts/runs/iteration1/20260828T060630Z_unit_tests_4c071ecbf6",
+      "run_id": "20260828T060630Z_unit_tests_4c071ecbf6",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",
