@@ -10,6 +10,8 @@ from .data import load_prepared, prepare_data
 from .errors import EvalError
 from .isolation import prove_isolation
 from .preflight import run_preflight
+from .replay import replay_cases
+from .schema import validate_jsonl
 from .validation import validate_benchmark
 
 
@@ -25,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     isolation.add_argument("--public-case", type=Path, required=True, help="one validated public prompt record as JSON")
     isolation.add_argument("--workspace", type=Path, required=True, help="fresh external Agent workspace destination")
     isolation.add_argument("--output", type=Path, help="optional sanitized machine-readable proof destination")
+    replay = sub.add_parser("replay", help="run the pinned official SWE-bench harness")
+    replay.add_argument("--mode", required=True, choices=("noop", "gold"))
+    replay.add_argument("--split", required=True, choices=("all", "dev", "test"))
+    replay.add_argument("--timeout", type=int, default=1800)
+    replay.add_argument("--workers", type=int, default=1)
+    replay.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -39,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
             report = validate_benchmark(prepared)
         elif args.command == "validate-data":
             report = validate_benchmark(load_prepared(settings))
+        elif args.command == "replay":
+            prepared = load_prepared(settings)
+            records = validate_jsonl(prepared.public_manifest, "public-case")
+            cases = [record for record in records if record["prompt_variant"] == "full" and (args.split == "all" or record["split"] == args.split)]
+            report = replay_cases(settings, cases, prepared.source_rows, args.mode, timeout_s=args.timeout, workers=args.workers, resume=args.resume)
         else:
             try:
                 public_case = json.loads(args.public_case.read_text(encoding="utf-8"))
