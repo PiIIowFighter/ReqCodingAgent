@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "case_id", "instance_id", "split", "mode", "status", "classification", "harness_revision", "data_revision", "repo", "base_commit", "docker_image", "started_at", "ended_at", "wall_time_s", "stages", "tests_executed", "fail_to_pass", "pass_to_pass", "logs", "error"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "instance_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["dev", "test"]},
+    "mode": {"enum": ["noop", "gold"]},
+    "status": {"enum": ["passed", "test_failed", "infra_failed", "timeout", "invalid"]},
+    "classification": {"type": "string", "minLength": 1},
+    "harness_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "data_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "repo": {"type": "string", "minLength": 1},
+    "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "docker_image": {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "ended_at": {"type": "string", "format": "date-time"},
+    "wall_time_s": {"type": "number", "minimum": 0},
+    "stages": {"type": "object", "additionalProperties": false, "required": ["environment", "patch", "tests"], "properties": {"environment": {"enum": ["pending", "passed", "failed"]}, "patch": {"enum": ["pending", "skipped", "passed", "failed"]}, "tests": {"enum": ["pending", "passed", "failed", "timeout"]}}},
+    "tests_executed": {"type": "boolean"},
+    "fail_to_pass": {"$ref": "#/$defs/outcomes"},
+    "pass_to_pass": {"$ref": "#/$defs/outcomes"},
+    "logs": {"type": "object", "additionalProperties": false, "required": ["stdout", "stderr", "harness"], "properties": {"stdout": {"type": "string"}, "stderr": {"type": "string"}, "harness": {"type": "string"}}},
+    "error": {"type": ["object", "null"], "additionalProperties": false, "required": ["category", "message", "stage"], "properties": {"category": {"type": "string"}, "message": {"type": "string"}, "stage": {"type": "string"}}}
+  },
+  "$defs": {"outcomes": {"type": "object", "additionalProperties": {"enum": ["PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL"]}}}
+}

@@ -5,7 +5,9 @@ def decide_verdict(mode: str, outcomes: dict[str, str], fail_to_pass: list[str],
     expected = fail_to_pass + pass_to_pass
     f2p = {test: outcomes[test] for test in fail_to_pass if test in outcomes}
     p2p = {test: outcomes[test] for test in pass_to_pass if test in outcomes}
-    if mode not in {"noop", "gold"} or len(f2p) != len(fail_to_pass) or len(p2p) != len(pass_to_pass):
+    if mode not in {"noop", "gold"}:
+        return {"status": "invalid", "classification": "invalid_mode", "fail_to_pass": f2p, "pass_to_pass": p2p}
+    if len(f2p) != len(fail_to_pass) or len(p2p) != len(pass_to_pass):
         return {"status": "invalid", "classification": "missing_test_result", "fail_to_pass": f2p, "pass_to_pass": p2p}
     if any(outcomes[test] == "ERROR" for test in expected):
         return {"status": "invalid", "classification": "test_error", "fail_to_pass": f2p, "pass_to_pass": p2p}
