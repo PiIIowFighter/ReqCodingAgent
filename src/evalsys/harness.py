@@ -32,7 +32,8 @@ def build_harness_command(invocation: HarnessInvocation, *, platform_name: str =
     prefix = ["wsl.exe", "--", wsl_python] if windows else [python_executable or "python3.11"]
     convert = path_converter if windows else str
     predictions = "gold" if invocation.mode == "gold" else convert(invocation.predictions_path)
-    command = prefix + [convert(invocation.adapter_path), "--harness-checkout", convert(invocation.harness_checkout), "--dataset", convert(invocation.dataset_path), "--predictions", predictions, "--report-dir", convert(invocation.report_dir), "--run-id", invocation.run_id, "--instance-id", invocation.instance_id, "--timeout", str(invocation.timeout_s), "--max-workers", str(invocation.max_workers), "--label", f"evalsys.run_id={invocation.run_id}"]
+    pgid_file = f"/tmp/evalsys-{invocation.run_id}-{invocation.instance_id}.pgid"
+    command = prefix + [convert(invocation.adapter_path), "--pgid-file", pgid_file, "--harness-checkout", convert(invocation.harness_checkout), "--dataset", convert(invocation.dataset_path), "--predictions", predictions, "--report-dir", convert(invocation.report_dir), "--run-id", invocation.run_id, "--instance-id", invocation.instance_id, "--timeout", str(invocation.timeout_s), "--max-workers", str(invocation.max_workers), "--label", f"evalsys.run_id={invocation.run_id}"]
     if invocation.case_id:
         command += ["--label", f"evalsys.case_id={invocation.case_id}"]
     if invocation.mode == "noop":

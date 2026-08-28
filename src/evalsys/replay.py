@@ -119,7 +119,8 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     outcomes: dict[str, str] = {}
     tests_executed = False
     try:
-        result = run_process(command, timeout_s=timeout_s + 120)
+        pgid_file = command[command.index("--pgid-file") + 1]
+        result = run_process(command, timeout_s=timeout_s + 120, wsl_pgid_file=pgid_file if sys.platform == "win32" else None)
         stdout, stderr = result.stdout or "", result.stderr or ""
         raw_path = report_dir / "adapter-result.json"
         if result.returncode != 0 or not raw_path.is_file():
@@ -179,21 +180,32 @@ def replay_cases(settings: Settings, public_cases: list[dict], source_rows: dict
     lease.mkdir(exist_ok=False)
     recorder = EvidenceRecorder(settings.project_root, iteration=1)
     evidence = recorder.start(f"replay_{mode}", {"run_id": invocation_id, "harness_revision": harness_revision, "cases": [c["instance_id"] for c in public_cases]}, ["python", "-m", "evalsys.cli", "replay", "--mode", mode])
-    results = []
+    results: list[dict] = []
+    caught: Exception | None = None
     try:
         for case in public_cases:
             row = dict(source_rows[case["instance_id"]])
             row["harness_revision"] = harness_revision
             results.append(replay_case(settings, case, row, mode, run_id=invocation_id, timeout_s=timeout_s, workers=1, resume=resume))
-        summary = {"schema_version": "1.0", "run_id": invocation_id, "status": "passed" if all(result["status"] == "passed" for result in results) else "failed", "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"{result['instance_id']}/{mode}/result.json"} for result in results]}
-        validate_json(summary, "validation-summary")
-        atomic_json(root / "summary.json", summary)
-        evidence.finish({"status": summary["status"], "passed": sum(r["status"] == "passed" for r in results), "failed": sum(r["status"] != "passed" for r in results)})
-        return {"run_id": invocation_id, "run_directory": str(root), "status": summary["status"], "results": results}
+    except Exception as exc:
+        caught = exc
+    cleanup_error = None
+    try:
+        cleanup_run_resources(invocation_id, docker_prefix=settings.docker_prefix(sys.platform))
+    except Exception as exc:
+        cleanup_error = str(exc)
+        evidence.record_event("cleanup_failed", {"message": cleanup_error})
     finally:
-        try:
-            cleanup_run_resources(invocation_id, docker_prefix=settings.docker_prefix(sys.platform))
-        except Exception as cleanup_error:
-            evidence.record_event("cleanup_failed", {"message": str(cleanup_error)})
-        finally:
-            lease.rmdir()
+        lease.rmdir()
+    if caught is not None:
+        evidence.fail({"status": "failed", "reason": str(caught), "classification": "replay_exception"})
+        raise caught
+    summary_status = "passed" if all(result["status"] == "passed" for result in results) and cleanup_error is None else "failed"
+    summary = {"schema_version": "1.0", "run_id": invocation_id, "status": summary_status, "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"{result['instance_id']}/{mode}/result.json"} for result in results]}
+    validate_json(summary, "validation-summary")
+    atomic_json(root / "summary.json", summary)
+    evidence_result = {"status": summary_status, "passed": sum(r["status"] == "passed" for r in results), "failed": sum(r["status"] != "passed" for r in results) + int(cleanup_error is not None)}
+    if cleanup_error:
+        evidence_result.update({"classification": "cleanup_failure", "reason": cleanup_error})
+    evidence.finish(evidence_result)
+    return {"run_id": invocation_id, "run_directory": str(root), "status": summary_status, "results": results}

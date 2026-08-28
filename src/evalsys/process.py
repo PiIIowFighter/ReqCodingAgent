@@ -25,7 +25,7 @@ class CommandResult:
     stderr: str
 
 
-def run_process(argv: Sequence[str], *, cwd: Path | None = None, timeout_s: int, env: Mapping[str, str] | None = None) -> CommandResult:
+def run_process(argv: Sequence[str], *, cwd: Path | None = None, timeout_s: int, env: Mapping[str, str] | None = None, wsl_pgid_file: str | None = None) -> CommandResult:
     command = [str(part) for part in argv]
     process_env = dict(os.environ if env is None else env)
     if command and Path(command[0]).name.lower() in {"wsl", "wsl.exe"}:
@@ -39,6 +39,8 @@ def run_process(argv: Sequence[str], *, cwd: Path | None = None, timeout_s: int,
     try:
         stdout, stderr = process.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
+        if wsl_pgid_file and command and Path(command[0]).name.lower() in {"wsl", "wsl.exe"}:
+            subprocess.run(["wsl.exe", "--", "sh", "-c", "kill -TERM -- -$(cat \"$1\") 2>/dev/null || true; sleep 1; kill -KILL -- -$(cat \"$1\") 2>/dev/null || true", "sh", wsl_pgid_file], capture_output=True, check=False)
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)
         else:

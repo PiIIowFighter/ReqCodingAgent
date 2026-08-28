@@ -296,6 +296,26 @@
       "status": "failed",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T090708Z_replay_noop_e511981e38",
+      "config_hash": "e511981e38",
+      "raw_path": "artifacts/runs/iteration1/20260828T090708Z_replay_noop_e511981e38",
+      "run_id": "20260828T090708Z_replay_noop_e511981e38",
+      "run_type": "replay_noop",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T090723Z_replay_noop_97b93f22d3",
+      "config_hash": "97b93f22d3",
+      "raw_path": "artifacts/runs/iteration1/20260828T090723Z_replay_noop_97b93f22d3",
+      "run_id": "20260828T090723Z_replay_noop_97b93f22d3",
+      "run_type": "replay_noop",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",

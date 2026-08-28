@@ -10,6 +10,7 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--pgid-file", type=Path, required=True)
     parser.add_argument("--harness-checkout", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--predictions", required=True)
@@ -42,6 +43,11 @@ def classify_artifacts(log_root: Path, instance_id: str, *, skip_patch: bool) ->
 
 def main() -> int:
     args = parse_args()
+    # Detach the Linux harness into its own session. The parent invokes this
+    # adapter directly through WSL, and uses this pgid for in-WSL timeout kill.
+    if os.getpid() != os.getsid(0):
+        os.setsid()
+    args.pgid_file.write_text(str(os.getpgrp()), encoding="ascii")
     sys.path.insert(0, str(args.harness_checkout))
     module = importlib.import_module("swebench.harness.run_evaluation")
     original_create = module.create_container
@@ -84,6 +90,7 @@ def main() -> int:
     else:
         result = {"status": "completed", "classification": "test_results_parsed", "tests_executed": True, "outcomes": outcomes}
     (Path.cwd() / "adapter-result.json").write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    args.pgid_file.unlink(missing_ok=True)
     return 0
 
 

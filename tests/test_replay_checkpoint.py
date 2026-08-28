@@ -10,6 +10,7 @@ from evalsys.config import Settings
 from evalsys.domain import REPLAY_STATUSES
 from evalsys.harness import HarnessInvocation, build_harness_command, extract_test_outcomes
 from evalsys.preflight import CommandRunner, resolve_wsl_path, validate_wsl_python
+from evalsys.process import ProcessTimeout, run_process
 from evalsys.recovery import compute_input_fingerprint, load_reusable_run, write_completed_run
 from evalsys.replay import cleanup_run_resources, create_run_directory
 from evalsys.schema import validate_json
@@ -88,6 +89,23 @@ def test_official_command_uses_wsl_python311_arrays_and_skip_patch(tmp_path: Pat
     assert "--skip-patch" in command
     assert command[command.index("--harness-checkout") + 1] == "/translated/fixed harness"
     assert command[command.index("--max-workers") + 1] == "1"
+
+
+def test_wsl_process_timeout_invokes_linux_group_kill(monkeypatch):
+    calls = []
+    class FakeProcess:
+        pid = 42
+        returncode = None
+        def communicate(self, timeout=None):
+            if timeout is not None:
+                import subprocess
+                raise subprocess.TimeoutExpired(["wsl.exe"], timeout)
+            return "", ""
+    monkeypatch.setattr("evalsys.process.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+    monkeypatch.setattr("evalsys.process.subprocess.run", lambda argv, **kwargs: calls.append(argv))
+    with pytest.raises(ProcessTimeout):
+        run_process(["wsl.exe", "--", "python3.11", "adapter.py"], timeout_s=1, wsl_pgid_file="/tmp/evalsys-run.pgid")
+    assert ["wsl.exe", "--", "sh", "-c", "kill -TERM -- -$(cat \"$1\") 2>/dev/null || true; sleep 1; kill -KILL -- -$(cat \"$1\") 2>/dev/null || true", "sh", "/tmp/evalsys-run.pgid"] in calls
 
 
 def test_gold_command_uses_official_gold_prediction(tmp_path: Path):
@@ -232,6 +250,22 @@ def test_cleanup_filters_current_label_and_never_prunes():
     assert all("label=evalsys.run_id=run-1" in call and "label=evalsys.case_id=case-1" in call for call in calls if "--filter" in call)
     assert not any("prune" in call for call in calls)
     assert ["wsl.exe", "--", "docker", "rm", "-f", "c1", "c2"] in calls
+
+
+def test_process_uses_utf8_and_disables_msys_path_conversion(monkeypatch):
+    captured = {}
+    class FakeProcess:
+        pid = 1
+        returncode = 0
+        def communicate(self, timeout=None): return "ok", ""
+    def popen(argv, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+    monkeypatch.setattr("evalsys.process.subprocess.Popen", popen)
+    assert run_process(["wsl.exe", "--", "python3.11", "--version"], timeout_s=1).stdout == "ok"
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert captured["env"]["MSYS_NO_PATHCONV"] == "1"
 
 
 def test_cli_replay_options_and_defaults():
