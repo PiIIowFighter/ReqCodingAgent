@@ -1,0 +1,10 @@
+{
+  "classification": "replay_exception",
+  "duration": null,
+  "exit_code": null,
+  "failed": 0,
+  "passed": 0,
+  "reason": "WSL Python is unavailable: w\u0000s\u0000l\u0000:\u0000 \u0000�hKm0R \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006tM�n\f�FO*g\\��P0R \u0000W\u0000S\u0000L\u0000\u00020N\u0000A\u0000T\u0000 \u0000!j\u000f_\u000bN�v \u0000W\u0000S\u0000L\u0000 \u0000\nN/e\u0001c \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006t\u00020\n\u0000\n\u0000 Hint: Set EVALSYS_WSL_PYTHON to a Python 3.11 command name",
+  "skipped": 0,
+  "status": "failed"
+}

@@ -42,6 +42,7 @@ def _result(status: str = "passed") -> dict:
         "pass_to_pass": {"test_b": "PASSED"},
         "logs": {"stdout": "stdout.log", "stderr": "stderr.log", "harness": "harness"},
         "error": None,
+        "cleanup": {"status": "passed", "message": None},
     }
 
 
@@ -53,22 +54,31 @@ class WslRunner(CommandRunner):
         self.calls.append(list(argv))
         if "wslpath" in argv:
             return subprocess.CompletedProcess(argv, 0, "/custom/挂载/path\n", "")
+        if any("command -v" in item for item in argv):
+            return subprocess.CompletedProcess(argv, 0, "/custom/bin/python3.11\n", "")
         return subprocess.CompletedProcess(argv, 0, "Python 3.11.16\n", "")
 
 
 def test_settings_configures_wsl_python_without_username(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("EVALSYS_WSL_PYTHON", "/external/venv/bin/python")
+    monkeypatch.setenv("EVALSYS_WSL_PYTHON", "python3.11")
     settings = Settings.from_env(tmp_path)
-    assert settings.wsl_python == "/external/venv/bin/python"
+    assert settings.wsl_python == "python3.11"
     assert settings.docker_prefix("win32") == ["wsl.exe", "--", "docker"]
+
+
+def test_settings_rejects_msys_polluted_wsl_python(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("EVALSYS_WSL_PYTHON", "D:/Git/home/user/venv/bin/python")
+    with pytest.raises(Exception, match="MSYS|Windows drive"):
+        Settings.from_env(tmp_path)
 
 
 def test_preflight_path_and_python_are_shared_argument_array_helpers(tmp_path: Path):
     runner = WslRunner()
     assert resolve_wsl_path(tmp_path / "中文 空格", runner) == "/custom/挂载/path"
-    assert validate_wsl_python("python3.11", runner) == "python3.11"
+    assert validate_wsl_python("python3.11", runner) == "/custom/bin/python3.11"
     assert ["wsl.exe", "--", "wslpath", "-a", (tmp_path / "中文 空格").as_posix()] in runner.calls
-    assert ["wsl.exe", "--", "python3.11", "--version"] in runner.calls
+    assert ["wsl.exe", "--", "sh", "-lc", "command -v -- python3.11"] in runner.calls
+    assert ["wsl.exe", "--", "/custom/bin/python3.11", "--version"] in runner.calls
 
 
 def test_official_command_uses_wsl_python311_arrays_and_skip_patch(tmp_path: Path):
@@ -133,6 +143,29 @@ def test_adapter_classifies_missing_real_output(tmp_path: Path):
     assert classify_artifacts(tmp_path, "instance", skip_patch=True)["classification"] == "missing_instance_log"
 
 
+@pytest.mark.parametrize("marker,status,classification", [
+    (">>>>> Tests Timed Out", "timeout", "official_tests_timeout"),
+    ("Timeout error: 120 seconds exceeded.", "timeout", "official_tests_timeout"),
+    ("Test timed out after 120 seconds.", "timeout", "official_tests_timeout"),
+    (">>>>> Tests Errored", "infra_failed", "official_tests_error"),
+])
+def test_adapter_reads_official_markers_from_test_output(tmp_path: Path, marker: str, status: str, classification: str):
+    directory = tmp_path / "model" / "instance"
+    directory.mkdir(parents=True)
+    (directory / "run_instance.log").write_text("container started", encoding="utf-8")
+    (directory / "test_output.txt").write_text(marker, encoding="utf-8")
+    result = classify_artifacts(tmp_path, "instance", skip_patch=False)
+    assert (result["status"], result["classification"]) == (status, classification)
+
+
+def test_adapter_specific_patch_marker_precedes_generic_container_text(tmp_path: Path):
+    directory = tmp_path / "model" / "instance"
+    directory.mkdir(parents=True)
+    (directory / "run_instance.log").write_text("container failed\n>>>>> Patch Apply Failed", encoding="utf-8")
+    result = classify_artifacts(tmp_path, "instance", skip_patch=False)
+    assert (result["status"], result["classification"], result["stage"]) == ("invalid", "official_patch_apply_failure", "patch")
+
+
 def test_extract_requires_execution_marker_and_every_exact_status():
     raw = {"tests_status": {"FAIL_TO_PASS": {"success": [], "failure": ["a"]}, "PASS_TO_PASS": {"success": ["b"], "failure": []}}}
     parsed = extract_test_outcomes(raw, ["a"], ["b"], tests_executed=True)
@@ -155,6 +188,25 @@ def test_extract_rejects_duplicate_missing_and_unknown(mutation, match):
 
 def test_extract_accepts_raw_official_parser_status_map():
     assert extract_test_outcomes({"outcomes": {"a": "FAILED", "b": "PASSED"}}, ["a"], ["b"], tests_executed=True) == {"a": "FAILED", "b": "PASSED"}
+
+
+def test_extract_canonicalizes_pinned_harness_truncated_parameter_id():
+    expected = "test_mod.py::test_case[param(value"
+    raw_key = "test_mod.py::test_case[param(value)-rest]"
+    assert extract_test_outcomes({"outcomes": {raw_key: "FAILED"}}, [expected], [], tests_executed=True) == {expected: "FAILED"}
+
+
+def test_extract_rejects_ambiguous_truncated_parameter_results():
+    expected = "test_mod.py::test_case[param(value"
+    raw = {"outcomes": {expected + ")-a]": "FAILED", expected + ")-b]": "PASSED"}}
+    with pytest.raises(ValueError, match="ambiguous"):
+        extract_test_outcomes(raw, [expected], [], tests_executed=True)
+
+
+def test_extract_rejects_one_raw_key_mapped_twice():
+    expected = "test_mod.py::test_case[param(value"
+    with pytest.raises(ValueError, match="multiple expected"):
+        extract_test_outcomes({"outcomes": {expected + ")-x]": "FAILED"}}, [expected, expected], [], tests_executed=True)
 
 
 def test_invalid_mode_has_explicit_classification():
@@ -256,7 +308,7 @@ def test_replay_uses_same_raw_audit_and_index_identity(monkeypatch, tmp_path: Pa
     project = tmp_path / "project"
     project.mkdir()
     settings = Settings(project, tmp_path / "cache", project / "artifacts")
-    case = {"instance_id": "x__x-1"}
+    case = {"instance_id": "x__x-1", "case_id": "case-x"}
     result = _result()
     result.update({"run_id": "explicit-run", "instance_id": "x__x-1"})
     monkeypatch.setattr("evalsys.replay.replay_case", lambda *args, **kwargs: result)

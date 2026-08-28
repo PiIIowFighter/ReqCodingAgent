@@ -332,6 +332,46 @@
       "status": "failed",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T092341183030Z_replay_noop_c04b65e80b",
+      "config_hash": "32f53288a0",
+      "raw_path": "artifacts/runs/iteration1/20260828T092341183030Z_replay_noop_c04b65e80b",
+      "run_id": "20260828T092341183030Z_replay_noop_c04b65e80b",
+      "run_type": "replay_noop",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T120351122238Z_replay_noop_e21ebbb024",
+      "config_hash": "d4139b52d8",
+      "raw_path": "artifacts/runs/iteration1/20260828T120351122238Z_replay_noop_e21ebbb024",
+      "run_id": "20260828T120351122238Z_replay_noop_e21ebbb024",
+      "run_type": "replay_noop",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T120517537449Z_replay_noop_e21ebbb024",
+      "config_hash": "c37150d833",
+      "raw_path": "artifacts/runs/iteration1/20260828T120517537449Z_replay_noop_e21ebbb024",
+      "run_id": "20260828T120517537449Z_replay_noop_e21ebbb024",
+      "run_type": "replay_noop",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T120647802191Z_replay_noop_e21ebbb024",
+      "config_hash": "4c075bec16",
+      "raw_path": "artifacts/runs/iteration1/20260828T120647802191Z_replay_noop_e21ebbb024",
+      "run_id": "20260828T120647802191Z_replay_noop_e21ebbb024",
+      "run_type": "replay_noop",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",

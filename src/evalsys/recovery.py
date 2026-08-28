@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .domain import REPLAY_STATUSES
 from .persistence import atomic_json
+from .errors import EvalError
 from .schema import validate_json
 
 TERMINAL_STATUSES = REPLAY_STATUSES
@@ -40,7 +41,7 @@ def _tree_manifest(directory: Path, trees: list[str]) -> dict:
             raise FileNotFoundError(root)
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
             files.append({"path": path.relative_to(directory).as_posix(), "sha256": sha256_file(path), "bytes": path.stat().st_size})
-    return {"schema_version": "1.0", "files": files}
+    return {"schema_version": "1.0", "roots": sorted(trees), "files": files}
 
 
 def _tree_manifest_valid(directory: Path) -> bool:
@@ -48,7 +49,9 @@ def _tree_manifest_valid(directory: Path) -> bool:
     if not path.is_file():
         return True
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    trees = sorted({entry["path"].split("/", 1)[0] for entry in manifest["files"]})
+    trees = manifest.get("roots")
+    if not isinstance(trees, list) or any(not isinstance(root, str) for root in trees):
+        return False
     return _tree_manifest(directory, trees) == manifest
 
 
@@ -78,5 +81,9 @@ def load_reusable_run(directory: Path, expected_fingerprint: str) -> dict | None
         result = json.loads((directory / marker["result"]).read_text(encoding="utf-8"))
         validate_json(result, "replay-result")
         return result if result["status"] in TERMINAL_STATUSES else None
-    except Exception:
+    except EvalError:
         return None
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return None
+    except (PermissionError, OSError) as exc:
+        raise EvalError(f"Cannot access replay checkpoint: {exc}", category="infra_failed", hint="Fix artifact storage permissions; the checkpoint was not modified") from exc

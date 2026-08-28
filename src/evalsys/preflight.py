@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import platform
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -48,11 +49,16 @@ def resolve_wsl_path(path: Path, runner: CommandRunner) -> str:
 
 
 def validate_wsl_python(command: str, runner: CommandRunner) -> str:
-    result = _checked(runner, ["wsl.exe", "--", command, "--version"], "WSL Python is unavailable", "Set EVALSYS_WSL_PYTHON to an external Python 3.11 environment")
+    if len(command) >= 3 and command[1:3] in {":/", ":\\"}:
+        raise EvalError("WSL Python contains a Windows drive path, likely rewritten by MSYS", hint="Use EVALSYS_WSL_PYTHON=python3.11", category="infra_failed")
+    resolved = _checked(runner, ["wsl.exe", "--", "sh", "-lc", f"command -v -- {shlex.quote(command)}"], "WSL Python is unavailable", "Set EVALSYS_WSL_PYTHON to a Python 3.11 command name").stdout.strip()
+    if not resolved.startswith("/"):
+        raise EvalError("WSL Python discovery returned a non-Linux path", hint="Use EVALSYS_WSL_PYTHON=python3.11", category="infra_failed")
+    result = _checked(runner, ["wsl.exe", "--", resolved, "--version"], "WSL Python is unavailable", "Install an external Python 3.11 environment")
     version = (result.stdout or result.stderr).strip()
     if not version.startswith("Python 3.11."):
         raise EvalError(f"WSL Python 3.11 is required; found {version}", hint="Set EVALSYS_WSL_PYTHON to Python 3.11", category="infra_failed")
-    return command
+    return resolved
 
 
 def _docker_source(path: Path, platform_name: str, runner: CommandRunner) -> str:

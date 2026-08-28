@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .persistence import atomic_json as _atomic_json, utf8_lf as _lf_bytes, write_text_lf as _write_text_lf
+from .persistence import atomic_json as _atomic_json, file_lock, utf8_lf as _lf_bytes, write_text_lf as _write_text_lf
 from .recovery import fingerprint, sha256_file
 
 _REQUIRED_AUDIT = ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json")
@@ -49,11 +49,19 @@ def _checksums(directory: Path, names: list[str]) -> None:
 
 
 def verify_checksums(directory: Path) -> list[str]:
+    root = directory.resolve()
     mismatches: list[str] = []
-    checksums = directory / "checksums.sha256"
-    for line in checksums.read_bytes().decode("utf-8").splitlines():
+    seen: set[str] = set()
+    for line in (root / "checksums.sha256").read_bytes().decode("utf-8").splitlines():
         digest, name = line.split("  ", 1)
-        path = directory / name
+        candidate = Path(name)
+        if candidate.is_absolute() or ".." in candidate.parts or "\\" in name or name in seen:
+            raise ValueError(f"unsafe or duplicate checksum path: {name}")
+        seen.add(name)
+        path = root / candidate
+        resolved = path.resolve()
+        if root not in resolved.parents or any(part.is_symlink() for part in [path, *path.parents] if part != root):
+            raise ValueError(f"checksum path escapes or uses symlink: {name}")
         if not path.is_file() or sha256_file(path) != digest:
             mismatches.append(name)
     return mismatches
@@ -75,13 +83,23 @@ def select_current_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str, list[str]]:
-    index_path = project_root / f"audit/iteration{iteration}/index.json"
+    root = project_root.resolve()
+    index_path = root / f"audit/iteration{iteration}/index.json"
     index = json.loads(index_path.read_bytes().decode("utf-8"))
-    return {
-        entry["run_id"]: verify_checksums(project_root / entry["audit_path"])
-        for entry in index["runs"]
-        if entry.get("validity") == "active"
-    }
+    result = {}
+    for entry in index["runs"]:
+        if entry.get("validity") != "active":
+            continue
+        run_id = entry["run_id"]
+        expected = Path(f"audit/iteration{iteration}/runs") / run_id
+        supplied = Path(entry["audit_path"])
+        if supplied != expected or supplied.is_absolute() or ".." in supplied.parts:
+            raise ValueError(f"unsafe audit path for {run_id}")
+        resolved = (root / supplied).resolve()
+        if resolved != (root / expected).resolve() or any(part.is_symlink() for part in [root / supplied, *(root / supplied).parents] if part != root):
+            raise ValueError(f"audit path escapes through symlink for {run_id}")
+        result[run_id] = verify_checksums(resolved)
+    return result
 
 
 def _file_metadata(path: Path) -> dict[str, Any]:
@@ -113,13 +131,16 @@ class EvidenceRun:
 
     def _close(self, result: dict[str, Any], stdout: str, stderr: str, marker: str) -> None:
         if self.indexed:
-            return
+            raise RuntimeError(f"Evidence run already finalized: {self.run_id}")
+        # Validate serialization before writing any terminal artifact.
+        json.dumps(result, ensure_ascii=False, allow_nan=False)
+        if (self.raw_dir / "COMPLETE").exists() or (self.raw_dir / "FAILED").exists():
+            raise RuntimeError(f"Evidence run already has terminal marker: {self.run_id}")
         _write_text_lf(self.raw_dir / "stdout.log", stdout)
         _write_text_lf(self.raw_dir / "stderr.log", stderr)
         _atomic_json(self.raw_dir / "result.json", result)
         raw_names = ["run-manifest.json", "config.snapshot.json", "events.jsonl", "stdout.log", "stderr.log", "result.json"]
         _checksums(self.raw_dir, raw_names)
-        _write_text_lf(self.raw_dir / marker, "\n")
         sanitized_config = sanitize(self.config, project_root=self.recorder.project_root)
         result_summary = {
             field: sanitize(
@@ -141,6 +162,8 @@ class EvidenceRun:
         if not self.indexed:
             self.recorder._append_index(self, str(result.get("status", "unknown")))
             self.indexed = True
+        terminal = {"schema_version": "1.0", "run_id": self.run_id, "status": result.get("status", "unknown"), "result": "result.json", "checksums": "checksums.sha256", "audit_path": f"audit/iteration{self.recorder.iteration}/runs/{self.run_id}", "indexed": True}
+        _atomic_json(self.raw_dir / marker, terminal)
 
 
 class EvidenceRecorder:

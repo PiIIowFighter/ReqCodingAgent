@@ -4,6 +4,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,27 +27,23 @@ def parse_args() -> argparse.Namespace:
 
 def classify_artifacts(log_root: Path, instance_id: str, *, skip_patch: bool) -> dict:
     instance_logs = list(log_root.glob(f"*/{instance_id}/run_instance.log"))
-    text = instance_logs[0].read_text(encoding="utf-8", errors="replace") if instance_logs else ""
-    if ">>>>> Tests Timed Out" in text:
-        return {"status": "timeout", "classification": "official_tests_timeout", "stage": "tests", "message": "official harness test timeout"}
-    infra_markers = ("Image not found", "Error in evaluating model", "Docker", "container")
-    if any(marker in text for marker in infra_markers) and not list(log_root.glob(f"*/{instance_id}/test_output.txt")):
-        return {"status": "infra_failed", "classification": "official_environment_failure", "stage": "environment", "message": text[-1000:]}
+    test_outputs = list(log_root.glob(f"*/{instance_id}/test_output.txt"))
+    reports = list(log_root.glob(f"*/{instance_id}/report.json"))
+    text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in instance_logs + test_outputs + reports)
     if ">>>>> Patch Apply Failed" in text:
         return {"status": "invalid" if not skip_patch else "infra_failed", "classification": "official_patch_apply_failure", "stage": "patch", "message": "official harness patch application failed"}
+    if ">>>>> Tests Timed Out" in text or re.search(r"Timeout error: \d+ seconds exceeded\.", text) or re.search(r"Test timed out after \d+ seconds\.", text):
+        return {"status": "timeout", "classification": "official_tests_timeout", "stage": "tests", "message": "official harness test timeout"}
     if ">>>>> Tests Errored" in text:
         return {"status": "infra_failed", "classification": "official_tests_error", "stage": "tests", "message": "official harness tests errored"}
+    if any(marker in text for marker in ("Image not found", "Error in evaluating model", "Docker")) and not test_outputs:
+        return {"status": "infra_failed", "classification": "official_environment_failure", "stage": "environment", "message": text[-1000:]}
     if not instance_logs:
         return {"status": "infra_failed", "classification": "missing_instance_log", "stage": "environment", "message": "official harness produced no instance log"}
     return {"status": "invalid", "classification": "missing_test_output", "stage": "tests", "message": "official harness produced no parseable test output"}
 
-
 def main() -> int:
     args = parse_args()
-    # Detach the Linux harness into its own session. The parent invokes this
-    # adapter directly through WSL, and uses this pgid for in-WSL timeout kill.
-    if os.getpid() != os.getsid(0):
-        os.setsid()
     args.pgid_file.write_text(str(os.getpgrp()), encoding="ascii")
     sys.path.insert(0, str(args.harness_checkout))
     module = importlib.import_module("swebench.harness.run_evaluation")
@@ -74,7 +71,10 @@ def main() -> int:
         module.run_instances = run_instances
     args.report_dir.mkdir(parents=True, exist_ok=True)
     os.chdir(args.report_dir)
-    module.main(dataset_name=str(args.dataset), split="test", instance_ids=[args.instance_id], predictions_path=args.predictions, max_workers=args.max_workers, open_file_limit=4096, run_id=args.run_id, timeout=args.timeout, rewrite_reports=False, modal=False, report_dir=".", task_repo=None)
+    import resource
+    _, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    safe_limit = 4096 if hard_limit == resource.RLIM_INFINITY else min(4096, hard_limit)
+    module.main(dataset_name=str(args.dataset), split="test", instance_ids=[args.instance_id], predictions_path=args.predictions, max_workers=args.max_workers, open_file_limit=safe_limit, run_id=args.run_id, timeout=args.timeout, rewrite_reports=False, modal=False, report_dir=".", task_repo=None)
     log_root = Path.cwd() / "logs/run_evaluation" / args.run_id
     test_outputs = list(log_root.glob(f"*/{args.instance_id}/test_output.txt"))
     outcomes = None

@@ -31,7 +31,10 @@ class Settings:
         root = (project_root or Path.cwd()).resolve()
         cache = Path(os.environ.get("EVALSYS_CACHE_ROOT", "~/.cache/reqcodingagent")).expanduser().resolve()
         artifacts = Path(os.environ.get("EVALSYS_ARTIFACT_ROOT", root / "artifacts")).expanduser().resolve()
-        return cls(root, cache, artifacts, os.environ.get("EVALSYS_WSL_PYTHON", "python3.11"))
+        wsl_python = os.environ.get("EVALSYS_WSL_PYTHON", "python3.11")
+        if len(wsl_python) >= 3 and wsl_python[1:3] in {":/", ":\\"}:
+            raise EvalError("EVALSYS_WSL_PYTHON contains a Windows drive path, likely rewritten by MSYS", hint="Set it to a command name such as python3.11")
+        return cls(root, cache, artifacts, wsl_python)
 
     @staticmethod
     def docker_prefix(platform_name: str) -> list[str]:

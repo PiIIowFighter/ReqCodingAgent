@@ -48,10 +48,29 @@ def extract_test_outcomes(raw: dict, expected_f2p: list[str], expected_p2p: list
     if direct is not None:
         if not isinstance(direct, dict) or any(not isinstance(name, str) or status not in TEST_OUTCOMES for name, status in direct.items()):
             raise ValueError("unknown or unparseable raw test status")
-        expected = set(expected_f2p + expected_p2p)
-        if set(direct) != expected:
-            raise ValueError(f"missing={sorted(expected - set(direct))} unexpected={sorted(set(direct) - expected)} test outcomes")
-        return dict(direct)
+        expected_list = expected_f2p + expected_p2p
+        if len(expected_list) != len(set(expected_list)):
+            raise ValueError("one raw key cannot map multiple expected tests")
+        canonical: dict[str, str] = {}
+        used: set[str] = set()
+        for expected in expected_list:
+            if expected in direct:
+                matches = [expected]
+            elif expected.count("[") > expected.count("]"):
+                matches = [name for name in direct if name.startswith(expected)]
+            else:
+                matches = []
+            if not matches:
+                raise ValueError(f"missing expected test outcome: {expected}")
+            passing = {direct[name] in {"PASSED", "XFAIL"} for name in matches}
+            if len(passing) != 1:
+                raise ValueError(f"ambiguous truncated test outcome: {expected}")
+            chosen = matches[0]
+            if chosen in used:
+                raise ValueError("one raw key mapped to multiple expected tests")
+            used.add(chosen)
+            canonical[expected] = direct[chosen]
+        return canonical
     tests_status = raw.get("tests_status")
     if not isinstance(tests_status, dict):
         raise ValueError("unparseable tests_status")

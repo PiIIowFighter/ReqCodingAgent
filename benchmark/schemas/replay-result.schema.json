@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "case_id", "instance_id", "split", "mode", "status", "classification", "harness_revision", "data_revision", "repo", "base_commit", "docker_image", "started_at", "ended_at", "wall_time_s", "stages", "tests_executed", "fail_to_pass", "pass_to_pass", "logs", "error"],
+  "required": ["schema_version", "run_id", "case_id", "instance_id", "split", "mode", "status", "classification", "harness_revision", "data_revision", "repo", "base_commit", "docker_image", "started_at", "ended_at", "wall_time_s", "stages", "tests_executed", "fail_to_pass", "pass_to_pass", "logs", "error", "cleanup"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "run_id": {"type": "string", "minLength": 1},
@@ -25,7 +25,8 @@
     "fail_to_pass": {"$ref": "#/$defs/outcomes"},
     "pass_to_pass": {"$ref": "#/$defs/outcomes"},
     "logs": {"type": "object", "additionalProperties": false, "required": ["stdout", "stderr", "harness"], "properties": {"stdout": {"type": "string"}, "stderr": {"type": "string"}, "harness": {"type": "string"}}},
-    "error": {"type": ["object", "null"], "additionalProperties": false, "required": ["category", "message", "stage"], "properties": {"category": {"type": "string"}, "message": {"type": "string"}, "stage": {"type": "string"}}}
+    "error": {"type": ["object", "null"], "additionalProperties": false, "required": ["category", "message", "stage"], "properties": {"category": {"type": "string"}, "message": {"type": "string"}, "stage": {"type": "string"}}},
+    "cleanup": {"type": "object", "additionalProperties": false, "required": ["status", "message"], "properties": {"status": {"enum": ["passed", "failed"]}, "message": {"type": ["string", "null"]}}}
   },
   "$defs": {"outcomes": {"type": "object", "additionalProperties": {"enum": ["PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL"]}}}
 }

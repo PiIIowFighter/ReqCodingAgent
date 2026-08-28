@@ -13,9 +13,9 @@ from .errors import EvalError
 from .harness import HarnessInvocation, build_harness_command, extract_test_outcomes
 from .evidence import EvidenceRecorder
 from .persistence import atomic_json, write_text_lf
-from .preflight import CommandRunner, resolve_wsl_path
+from .preflight import CommandRunner, resolve_wsl_path, validate_wsl_python
 from .process import ProcessTimeout, run_process
-from .recovery import compute_input_fingerprint, load_reusable_run, write_completed_run
+from .recovery import compute_input_fingerprint, load_reusable_run, sha256_file, write_completed_run
 from .schema import validate_json
 from .verdict import decide_verdict
 
@@ -91,30 +91,43 @@ def _prediction(instance_id: str, destination: Path) -> None:
 def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: str, *, run_id: str, timeout_s: int, workers: int, resume: bool) -> dict:
     if mode not in {"noop", "gold"}:
         raise EvalError(f"Unsupported replay mode: {mode}")
-    unit = settings.artifact_root / "runs" / "iteration1" / run_id / public_case["instance_id"] / mode
+    for component in (run_id, public_case["instance_id"], public_case["case_id"], mode):
+        if not RUN_ID.fullmatch(component):
+            raise EvalError(f"Unsafe replay path component: {component}")
+    unit = settings.artifact_root / "runs" / "iteration1" / run_id / "cases" / public_case["case_id"] / mode
     replay_input = {"case": public_case, "mode": mode, "harness_revision": source_row["harness_revision"], "data_revision": public_case["source_revision"], "timeout_s": timeout_s}
+    if unit.exists() and not resume:
+        raise FileExistsError(unit)
+    if not unit.exists():
+        unit.mkdir(parents=True, exist_ok=False)
+        dataset = unit / "dataset.json"
+        prediction = unit / "prediction.jsonl"
+        _case_dataset(source_row, dataset)
+        _prediction(public_case["instance_id"], prediction)
+    else:
+        dataset = unit / "dataset.json"
+        prediction = unit / "prediction.jsonl"
+    adapter = settings.project_root / "scripts" / "official_harness_adapter.py"
+    replay_input.update({"dataset_sha256": sha256_file(dataset), "prediction_sha256": sha256_file(prediction), "adapter_sha256": sha256_file(adapter), "wsl_python": settings.wsl_python, "docker_transport": "wsl2" if sys.platform == "win32" else "native"})
     input_fingerprint = compute_input_fingerprint(replay_input)
-    if resume and unit.exists() and (cached := load_reusable_run(unit, input_fingerprint)) is not None:
+    if resume and (cached := load_reusable_run(unit, input_fingerprint)) is not None:
         return cached
-    if unit.exists():
-        stale = unit.with_name(unit.name + ".invalid-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
-        unit.rename(stale)
-    unit.mkdir(parents=True, exist_ok=False)
+    if resume:
+        raise EvalError(f"Existing checkpoint is invalid and was preserved: {unit}", hint="Use a new run_id")
     events = EventWriter(unit / "events.jsonl", run_id)
-    dataset = unit / "dataset.json"
-    prediction = unit / "prediction.jsonl"
-    _case_dataset(source_row, dataset)
-    _prediction(public_case["instance_id"], prediction)
     report_dir = unit / "harness"
     report_dir.mkdir()
-    invocation = HarnessInvocation(settings.cache_root / "swe-bench", settings.project_root / "scripts" / "official_harness_adapter.py", dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers, public_case["case_id"])
+    invocation = HarnessInvocation(settings.cache_root / "swe-bench", adapter, dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers, public_case["case_id"])
     runner = CommandRunner()
     converter = (lambda path: resolve_wsl_path(path, runner)) if sys.platform == "win32" else str
-    command = build_harness_command(invocation, wsl_python=settings.wsl_python, path_converter=converter)
+    wsl_python = validate_wsl_python(settings.wsl_python, runner) if sys.platform == "win32" else settings.wsl_python
+    command = build_harness_command(invocation, wsl_python=wsl_python, path_converter=converter)
     started = datetime.now(timezone.utc)
     began = time.monotonic()
     events.write("stage_started", "harness", {"mode": mode})
     status, classification, error = "infra_failed", "harness_failure", None
+    failed_stage = "environment"
+    cleanup = {"status": "passed", "message": None}
     stdout = stderr = ""
     outcomes: dict[str, str] = {}
     tests_executed = False
@@ -128,17 +141,18 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
         if raw.get("status") in {"timeout", "infra_failed", "invalid"}:
             status, classification = raw["status"], raw.get("classification", "harness_failure")
-            error = {"category": status, "message": raw.get("message", classification), "stage": raw.get("stage", "harness")}
+            failed_stage = raw.get("stage", "environment")
+            error = {"category": status, "message": raw.get("message", classification), "stage": failed_stage}
             raise StopIteration
         tests_executed = bool(raw.get("tests_executed"))
         outcomes = extract_test_outcomes(raw, public_case["FAIL_TO_PASS"], public_case["PASS_TO_PASS"], tests_executed=tests_executed)
         verdict = decide_verdict(mode, outcomes, public_case["FAIL_TO_PASS"], public_case["PASS_TO_PASS"])
-        status, classification = verdict["status"], verdict["classification"]
+        status, classification, failed_stage = verdict["status"], verdict["classification"], "none"
     except StopIteration:
         pass
     except ProcessTimeout as exc:
-        stdout, stderr, status, classification = exc.stdout, exc.stderr, "timeout", "process_tree_timeout"
-        error = {"category": "timeout", "message": str(exc), "stage": "harness"}
+        stdout, stderr, status, classification, failed_stage = exc.stdout, exc.stderr, "timeout", "process_tree_timeout", "tests"
+        error = {"category": "timeout", "message": str(exc), "stage": "tests"}
     except (EvalError, ValueError, OSError, json.JSONDecodeError) as exc:
         category = getattr(exc, "category", "invalid")
         status = "infra_failed" if category == "infra_failed" else "invalid"
@@ -147,7 +161,9 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     finally:
         try:
             cleanup_run_resources(run_id, case_id=public_case["case_id"], docker_prefix=settings.docker_prefix(sys.platform))
-        except EvalError as cleanup_error:
+        except Exception as cleanup_error:
+            cleanup = {"status": "failed", "message": str(cleanup_error)}
+            events.write("cleanup_failed", "cleanup", {"message": str(cleanup_error)})
             if status != "timeout":
                 status, classification = "infra_failed", "cleanup_failure"
                 error = {"category": "infra_failed", "message": str(cleanup_error), "stage": "cleanup"}
@@ -159,12 +175,12 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         "schema_version": "1.0", "run_id": run_id, "case_id": public_case["case_id"], "instance_id": public_case["instance_id"], "split": public_case["split"], "mode": mode,
         "status": status, "classification": classification, "harness_revision": source_row["harness_revision"], "data_revision": public_case["source_revision"], "repo": public_case["repo"], "base_commit": public_case["base_commit"], "docker_image": source_row.get("docker_image", ""),
         "started_at": started.isoformat().replace("+00:00", "Z"), "ended_at": ended.isoformat().replace("+00:00", "Z"), "wall_time_s": time.monotonic() - began,
-        "stages": {"environment": "passed" if status not in {"infra_failed", "timeout"} else "failed", "patch": "skipped" if mode == "noop" else ("passed" if status not in {"infra_failed", "timeout"} else "failed"), "tests": "timeout" if status == "timeout" else ("passed" if tests_executed else "failed")},
+        "stages": {"environment": "failed" if failed_stage == "environment" else "passed", "patch": "skipped" if mode == "noop" else ("failed" if failed_stage == "patch" else ("passed" if failed_stage == "tests" or tests_executed else "pending")), "tests": "timeout" if status == "timeout" else ("failed" if failed_stage == "tests" and not tests_executed else ("passed" if tests_executed else "pending"))},
         "tests_executed": tests_executed,
         "fail_to_pass": {name: outcomes[name] for name in public_case["FAIL_TO_PASS"] if name in outcomes}, "pass_to_pass": {name: outcomes[name] for name in public_case["PASS_TO_PASS"] if name in outcomes},
-        "logs": {"stdout": "stdout.log", "stderr": "stderr.log", "harness": "harness"}, "error": error,
+        "logs": {"stdout": "stdout.log", "stderr": "stderr.log", "harness": "harness"}, "error": error, "cleanup": cleanup,
     }
-    write_completed_run(unit, result_record, input_fingerprint, ["stdout.log", "stderr.log", "events.jsonl"], artifact_trees=["harness"])
+    write_completed_run(unit, result_record, input_fingerprint, ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"], artifact_trees=["harness"])
     return result_record
 
 
@@ -201,7 +217,7 @@ def replay_cases(settings: Settings, public_cases: list[dict], source_rows: dict
         evidence.fail({"status": "failed", "reason": str(caught), "classification": "replay_exception"})
         raise caught
     summary_status = "passed" if all(result["status"] == "passed" for result in results) and cleanup_error is None else "failed"
-    summary = {"schema_version": "1.0", "run_id": invocation_id, "status": summary_status, "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"{result['instance_id']}/{mode}/result.json"} for result in results]}
+    summary = {"schema_version": "1.0", "run_id": invocation_id, "status": summary_status, "results": [{"instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"], "result": f"cases/{next(case['case_id'] for case in public_cases if case['instance_id'] == result['instance_id'])}/{mode}/result.json"} for result in results]}
     validate_json(summary, "validation-summary")
     atomic_json(root / "summary.json", summary)
     evidence_result = {"status": summary_status, "passed": sum(r["status"] == "passed" for r in results), "failed": sum(r["status"] != "passed" for r in results) + int(cleanup_error is not None)}

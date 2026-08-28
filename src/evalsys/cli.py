@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps({"status": "passed", "command": args.command, **report}, ensure_ascii=True, sort_keys=True))
-        return 0
+        return 0 if report.get("status") == "passed" else 1
     except EvalError as exc:
         print(f"ERROR [{exc.category}]: {exc}", file=sys.stderr)
         return 2

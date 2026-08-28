@@ -33,7 +33,9 @@ class FakeRunner(CommandRunner):
             return subprocess.CompletedProcess(argv, 1, "", "simulated failure")
         if "wslpath" in joined:
             return subprocess.CompletedProcess(argv, 0, str(argv[-1]), "")
-        if "python3.11 --version" in joined:
+        if "command -v" in joined:
+            return subprocess.CompletedProcess(argv, 0, "/usr/bin/python3.11", "")
+        if "/usr/bin/python3.11 --version" in joined:
             return subprocess.CompletedProcess(argv, 0, "Python 3.11.16", "")
         if "docker version" in joined:
             return subprocess.CompletedProcess(argv, 0, f'{{"Os":"{self.docker_os}","Arch":"{self.machine}","Version":"27.0"}}', "")
@@ -106,4 +108,4 @@ def test_windows_uses_wsl_docker_path(tmp_path: Path):
     assert report["docker_transport"] == "wsl2"
     wslpath_call = next(call for call in runner.calls if "wslpath" in call)
     assert "\\" not in wslpath_call[-1]
-    assert all(call[:3] in (["wsl.exe", "--", "docker"], ["wsl.exe", "--", "wslpath"], ["wsl.exe", "--", "python3.11"]) or call[:2] == ["wsl.exe", "--status"] for call in runner.calls)
+    assert all(call[:3] in (["wsl.exe", "--", "docker"], ["wsl.exe", "--", "wslpath"], ["wsl.exe", "--", "sh"], ["wsl.exe", "--", "/usr/bin/python3.11"]) or call[:2] == ["wsl.exe", "--status"] for call in runner.calls)
