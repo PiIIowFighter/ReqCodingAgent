@@ -13,7 +13,7 @@ from typing import Any
 
 from .errors import EvalError
 from .preflight import PROBE_IMAGE
-from .schema import validate_json
+from .schema import validate_json, validate_jsonl
 
 _AGENT_PROMPT_KEYS = ("case_id", "prompt_variant", "prompt", "prompt_sha256")
 _CANARY = re.compile(r"EVALSYS_PRIVATE_CANARY_[A-Za-z0-9_]+")
@@ -112,6 +112,27 @@ def _validate_paths(task_repo: Path, destination: Path, project_root: Path) -> t
     return source, target, root
 
 
+def _require_canonical_case(project_root: Path, public_case: dict[str, Any]) -> None:
+    manifest_path = project_root / "benchmark" / "manifests" / "paired-cases.jsonl"
+    records = validate_jsonl(manifest_path, "public-case")
+    identity = (public_case["case_id"], public_case["prompt_variant"], public_case["instance_id"])
+    matches = [
+        record
+        for record in records
+        if (record["case_id"], record["prompt_variant"], record["instance_id"]) == identity
+    ]
+    if len(matches) != 1:
+        raise EvalError(
+            f"Canonical public case identity must match exactly one manifest record; found {len(matches)}",
+            hint="Use one unique record from benchmark/manifests/paired-cases.jsonl",
+        )
+    if public_case != matches[0]:
+        raise EvalError(
+            "Public case differs from the canonical committed manifest record",
+            hint="Load the exact frozen record instead of trusting caller-supplied content",
+        )
+
+
 def construct_agent_workspace(task_repo: Path, public_case: dict[str, Any], destination: Path, *, project_root: Path) -> dict[str, Any]:
     source, target, root = _validate_paths(task_repo, destination, project_root)
     if target.exists():
@@ -120,6 +141,7 @@ def construct_agent_workspace(task_repo: Path, public_case: dict[str, Any], dest
     actual_hash = hashlib.sha256(public_case["prompt"].encode("utf-8")).hexdigest()
     if actual_hash != public_case["prompt_sha256"]:
         raise EvalError("Public prompt hash does not match its UTF-8 content", hint="Use a validated frozen public record")
+    _require_canonical_case(root, public_case)
     canaries = _project_canaries(root)
     _scan_task_repo(source, canaries)
     target.mkdir(parents=True)

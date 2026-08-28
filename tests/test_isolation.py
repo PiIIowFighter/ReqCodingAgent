@@ -54,11 +54,15 @@ def _fixture(tmp_path: Path):
         "artifacts/evaluator.log": "EVALSYS_PRIVATE_CANARY_LOG_36d0",
         ".cache/evaluator.cache": "EVALSYS_PRIVATE_CANARY_CACHE_ff82",
     }
+    case = _public_case()
     for relative, canary in forbidden.items():
         path = project / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(canary, encoding="utf-8")
-    return project, repo, destination, _public_case(), forbidden
+    canonical = project / "benchmark/manifests/paired-cases.jsonl"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text(json.dumps(case, ensure_ascii=False) + "\n", encoding="utf-8")
+    return project, repo, destination, case, forbidden
 
 
 def test_constructor_copies_only_clean_repo_and_projected_prompt(tmp_path: Path):
@@ -132,6 +136,34 @@ def test_constructor_strictly_validates_public_case(tmp_path: Path, mutation: st
     else:
         case["oracle_answer"] = "EVALSYS_PRIVATE_CANARY_IN_RECORD"
     with pytest.raises(EvalError, match="schema|hash"):
+        construct_agent_workspace(repo, case, destination, project_root=project)
+
+
+def test_constructor_rejects_schema_valid_self_hashed_noncanonical_private_prompt(tmp_path: Path):
+    project, repo, destination, case, _ = _fixture(tmp_path)
+    case["prompt"] = "PRIVATE_ORACLE_SECRET"
+    case["prompt_sha256"] = hashlib.sha256(case["prompt"].encode("utf-8")).hexdigest()
+    with pytest.raises(EvalError, match="canonical"):
+        construct_agent_workspace(repo, case, destination, project_root=project)
+    assert not destination.exists()
+
+
+def test_constructor_accepts_exact_real_manifest_record(tmp_path: Path):
+    project = Path(__file__).resolve().parents[1]
+    case = json.loads((project / "benchmark/manifests/paired-cases.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    repo = tmp_path / "task"
+    repo.mkdir()
+    (repo / "task.py").write_text("allowed", encoding="utf-8")
+    destination = tmp_path / "workspace"
+    construct_agent_workspace(repo, case, destination, project_root=project)
+    assert json.loads((destination / "prompt.json").read_text(encoding="utf-8"))["prompt"] == case["prompt"]
+
+
+def test_constructor_rejects_duplicate_canonical_identity(tmp_path: Path):
+    project, repo, destination, case, _ = _fixture(tmp_path)
+    canonical = project / "benchmark/manifests/paired-cases.jsonl"
+    canonical.write_text(json.dumps(case) + "\n" + json.dumps(case) + "\n", encoding="utf-8")
+    with pytest.raises(EvalError, match="unique"):
         construct_agent_workspace(repo, case, destination, project_root=project)
 
 
