@@ -68,18 +68,35 @@ def verify_checksums(directory: Path) -> list[str]:
 
 
 def select_current_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return evidence-valid leaf runs; ``active`` alone does not mean current."""
-    superseded = {
-        prior
-        for run in runs
-        if run.get("validity") == "active"
-        for prior in run.get("supersedes", [])
-    }
-    return [
-        run
-        for run in runs
-        if run.get("validity") == "active" and run["run_id"] not in superseded
-    ]
+    """Validate the supersession DAG and return active leaves per run type."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for run in runs:
+        run_id = run.get("run_id")
+        if not isinstance(run_id, str) or run_id in by_id:
+            raise ValueError(f"duplicate or invalid run_id: {run_id}")
+        by_id[run_id] = run
+    for run in runs:
+        for prior in run.get("supersedes", []):
+            if prior not in by_id:
+                raise ValueError(f"unknown superseded run: {prior}")
+            if by_id[prior].get("run_type") != run.get("run_type"):
+                raise ValueError("supersession run_type mismatch")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    def visit(run_id: str) -> None:
+        if run_id in visiting:
+            raise ValueError("supersession cycle detected")
+        if run_id in visited:
+            return
+        visiting.add(run_id)
+        for prior in by_id[run_id].get("supersedes", []):
+            visit(prior)
+        visiting.remove(run_id)
+        visited.add(run_id)
+    for run_id in by_id:
+        visit(run_id)
+    superseded = {prior for run in runs if run.get("validity") == "active" for prior in run.get("supersedes", [])}
+    return [run for run in runs if run.get("validity") == "active" and run["run_id"] not in superseded]
 
 
 def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str, list[str]]:
@@ -118,10 +135,21 @@ class EvidenceRun:
     config: dict[str, Any]
     supersedes: list[str]
     indexed: bool = False
+    attempt_dir: Path | None = None
+
+    def _target_dir(self) -> Path:
+        return self.attempt_dir or self.raw_dir
 
     def record_event(self, event: str, details: dict[str, Any]) -> None:
-        with (self.raw_dir / "events.jsonl").open("ab") as stream:
-            stream.write(_lf_bytes(json.dumps({"event": event, "details": details}, ensure_ascii=False, sort_keys=True) + "\n"))
+        target = self._target_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        lock = target / ".events.lock"
+        with file_lock(lock):
+            with (target / "events.jsonl").open("ab") as stream:
+                stream.write(_lf_bytes(json.dumps({"event": event, "details": details}, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n"))
+                stream.flush()
+                import os
+                os.fsync(stream.fileno())
 
     def finish(self, result: dict[str, Any], *, stdout: str = "", stderr: str = "") -> None:
         self._close(result, stdout, stderr, "COMPLETE")
@@ -130,8 +158,20 @@ class EvidenceRun:
         self._close(result, stdout, stderr, "FAILED")
 
     def _close(self, result: dict[str, Any], stdout: str, stderr: str, marker: str) -> None:
-        if self.indexed:
+        if self.indexed and self.attempt_dir is None:
             raise RuntimeError(f"Evidence run already finalized: {self.run_id}")
+        target = self._target_dir()
+        if self.attempt_dir is not None:
+            json.dumps(result, ensure_ascii=False, allow_nan=False)
+            if (target / "COMPLETE").exists() or (target / "FAILED").exists():
+                raise RuntimeError(f"Resume attempt already finalized: {target.name}")
+            _write_text_lf(target / "stdout.log", stdout)
+            _write_text_lf(target / "stderr.log", stderr)
+            _atomic_json(target / "result.json", result)
+            names = ["events.jsonl", "stdout.log", "stderr.log", "result.json"]
+            _checksums(target, names)
+            _atomic_json(target / marker, {"schema_version": "1.0", "run_id": self.run_id, "attempt_id": target.name, "status": result.get("status", "unknown"), "indexed": False})
+            return
         # Validate serialization before writing any terminal artifact.
         json.dumps(result, ensure_ascii=False, allow_nan=False)
         if (self.raw_dir / "COMPLETE").exists() or (self.raw_dir / "FAILED").exists():
@@ -207,7 +247,13 @@ class EvidenceRecorder:
         if resume:
             if not indexed or not audit_dir.is_dir():
                 raise ValueError("resume requires existing audit and index identity")
-            return EvidenceRun(self, run_id, run_type, fingerprint(config)[:10], raw_dir, audit_dir, command, config, list(supersedes or []), indexed=True)
+            attempts = raw_dir / "attempts"
+            attempts.mkdir(exist_ok=True)
+            attempt_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + fingerprint({"config": config, "command": command})[:10]
+            attempt_dir = attempts / attempt_id
+            attempt_dir.mkdir(exist_ok=False)
+            _write_text_lf(attempt_dir / "events.jsonl", "")
+            return EvidenceRun(self, run_id, run_type, fingerprint(config)[:10], raw_dir, audit_dir, command, config, list(supersedes or []), indexed=True, attempt_dir=attempt_dir)
         if indexed or audit_dir.exists() or (raw_dir / "run-manifest.json").exists():
             raise FileExistsError(run_id)
         audit_dir.mkdir(parents=True, exist_ok=False)

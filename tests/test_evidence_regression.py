@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from evalsys.evidence import (
     EvidenceRecorder,
     select_current_runs,
@@ -70,6 +72,18 @@ def test_current_runs_are_active_supersedes_leaves_not_all_active_runs():
         {"run_id": "preflight", "run_type": "preflight", "validity": "active", "supersedes": []},
     ]
     assert [run["run_id"] for run in select_current_runs(runs)] == ["leaf-a", "leaf-b", "preflight"]
+
+
+@pytest.mark.parametrize("runs,match", [
+    ([{"run_id": "a", "run_type": "unit_tests", "validity": "active", "supersedes": ["missing"]}], "unknown"),
+    ([{"run_id": "a", "run_type": "unit_tests", "validity": "active", "supersedes": ["b"]}, {"run_id": "b", "run_type": "unit_tests", "validity": "active", "supersedes": ["a"]}], "cycle"),
+    ([{"run_id": "a", "run_type": "unit_tests", "validity": "active", "supersedes": []}, {"run_id": "b", "run_type": "preflight", "validity": "active", "supersedes": ["a"]}], "run_type"),
+    ([{"run_id": "a", "run_type": "unit_tests", "validity": "active", "supersedes": []}, {"run_id": "a", "run_type": "unit_tests", "validity": "active", "supersedes": []}], "duplicate"),
+])
+def test_current_run_graph_rejects_invalid_dag_type_and_scope(runs, match):
+    import pytest
+    with pytest.raises(ValueError, match=match):
+        select_current_runs(runs)
 
 
 def test_active_means_checksum_valid_not_current_result():

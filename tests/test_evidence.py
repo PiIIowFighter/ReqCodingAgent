@@ -48,6 +48,11 @@ def test_explicit_resume_does_not_add_second_index_entry(tmp_path: Path):
     first.finish({"status": "failed", "passed": 0, "failed": 1})
     resumed = recorder.start_explicit(run_id, "replay_noop", {}, ["evalsys"], existing_raw_dir=raw, resume=True)
     assert resumed.indexed is True
+    resumed.record_event("resume_started", {"attempt": 1})
+    resumed.finish({"status": "passed", "passed": 1, "failed": 0})
+    attempts = list((raw / "attempts").iterdir())
+    assert len(attempts) == 1
+    assert {"events.jsonl", "stdout.log", "stderr.log", "result.json", "checksums.sha256", "COMPLETE"} <= {path.name for path in attempts[0].iterdir()}
     index = json.loads((tmp_path / "audit/iteration1/index.json").read_text(encoding="utf-8"))
     assert [entry["run_id"] for entry in index["runs"]] == [run_id]
 
