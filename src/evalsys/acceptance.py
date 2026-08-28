@@ -61,8 +61,8 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
         proof = json.loads((audit / "isolation-proof.json").read_text(encoding="utf-8"))
         proof_ok = proof.get("status") == "passed" and proof.get("host_probe") == {"positive": True, "negative": True} and proof.get("container_probe") == {"positive": True, "negative": True} and proof.get("project_root_mounted") is False and proof.get("container_mount_count") == 1
         if audit_ok:
-            from .evidence import verify_checksums
-            audit_ok = not verify_checksums(audit)
+            from .evidence import scan_audit_local_paths, verify_checksums
+            audit_ok = not verify_checksums(audit) and not scan_audit_local_paths(root)
     except (OSError, ValueError, json.JSONDecodeError):
         audit_ok = proof_ok = False
     receipt = validation_report.get("validation_receipt")

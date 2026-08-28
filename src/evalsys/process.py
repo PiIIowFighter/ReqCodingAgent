@@ -44,7 +44,10 @@ def run_process(argv: Sequence[str], *, cwd: Path | None = None, timeout_s: int,
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)
         else:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         stdout, stderr = process.communicate()
         raise ProcessTimeout(command, timeout_s, stdout or str(exc.stdout or ""), stderr or str(exc.stderr or "")) from exc
     return CommandResult(command, process.returncode, stdout, stderr)

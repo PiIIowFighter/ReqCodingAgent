@@ -191,11 +191,16 @@ def test_transformations_hide_frozen_specific_details():
 def _real_prepared() -> PreparedData:
     root = Path(__file__).parents[1]
     cache = Path.home() / ".cache" / "reqcodingagent"
-    source_rows = {row["instance_id"]: row for row in pq.read_table(cache / "verified/data/test-00000-of-00001.parquet").to_pylist() if row["instance_id"] in CASE_IDS}
-    lite_ids = {row["instance_id"] for row in pq.read_table(cache / "lite/data/test-00000-of-00001.parquet", columns=["instance_id"]).to_pylist()}
+    verified = cache / "verified/data/test-00000-of-00001.parquet"
+    lite = cache / "lite/data/test-00000-of-00001.parquet"
+    if not verified.is_file() or not lite.is_file():
+        pytest.skip("integration benchmark cache is not available")
+    source_rows = {row["instance_id"]: row for row in pq.read_table(verified).to_pylist() if row["instance_id"] in CASE_IDS}
+    lite_ids = {row["instance_id"] for row in pq.read_table(lite, columns=["instance_id"]).to_pylist()}
     return PreparedData(root / "benchmark/manifests/paired-cases.jsonl", root / "benchmark/private/oracles.jsonl", source_rows, lite_ids, {"verified": "78f471bf655a3137b2e8a75af1501690ec009ec3"})
 
 
+@pytest.mark.integration
 def test_validation_rejects_frozen_binding_and_source_test_tampering(tmp_path: Path):
     prepared = _real_prepared()
     records = validate_jsonl(prepared.public_manifest, "public-case")

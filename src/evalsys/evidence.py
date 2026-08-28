@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 from dataclasses import dataclass
@@ -24,8 +25,8 @@ _RESULT_FIELDS = (
 )
 _SECRET = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*\S+")
 _SSH = re.compile(r"(?i)(ssh-(?:rsa|ed25519))\s+\S+")
-_WINDOWS_ABS = re.compile(r"[A-Za-z]:\\[^\r\n\t\"]+")
-_WSL_ABS = re.compile(r"/mnt/[a-z]/[^\r\n\t\"]+")
+_WINDOWS_ABS = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z]:\\(?:[^\s\"']| (?!--))+|[A-Za-z]:/(?!/)(?:[^\s\"']| (?!--))+)")
+_WSL_ABS = re.compile(r"/mnt/[a-z]/(?:[^\s\"']| (?!--))+")
 
 
 
@@ -127,6 +128,28 @@ def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str,
         run_dir = safe_relative_path(root, supplied, expected_type="directory")
         result[run_id] = verify_checksums(run_dir)
     return result
+
+
+def scan_audit_local_paths(project_root: Path) -> list[str]:
+    """Return audit-relative text files containing an unredacted local path."""
+    audit_root = project_root.resolve() / "audit"
+    findings = []
+    if not audit_root.is_dir():
+        return findings
+    for directory, names, files in os.walk(audit_root, topdown=True, followlinks=False):
+        current = Path(directory)
+        names[:] = [name for name in names if not (current / name).is_symlink()]
+        for name in sorted(files):
+            path = current / name
+            try:
+                if path.is_symlink() or path.stat().st_size > 1_000_000:
+                    continue
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if _WINDOWS_ABS.search(text) or _WSL_ABS.search(text):
+                findings.append(path.relative_to(audit_root).as_posix())
+    return findings
 
 
 def _file_metadata(path: Path) -> dict[str, Any]:

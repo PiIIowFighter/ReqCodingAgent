@@ -25,3 +25,6 @@ where = ["src"]
 addopts = "-ra"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "integration: requires external benchmark data or Docker",
+]

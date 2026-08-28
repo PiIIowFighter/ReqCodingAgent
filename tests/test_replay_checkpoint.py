@@ -103,6 +103,7 @@ def test_official_command_uses_wsl_python311_arrays_and_skip_patch(tmp_path: Pat
 
 def test_wsl_process_timeout_invokes_linux_group_kill(monkeypatch):
     calls = []
+    group_kills = []
     class FakeProcess:
         pid = 42
         returncode = None
@@ -113,9 +114,30 @@ def test_wsl_process_timeout_invokes_linux_group_kill(monkeypatch):
             return "", ""
     monkeypatch.setattr("evalsys.process.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
     monkeypatch.setattr("evalsys.process.subprocess.run", lambda argv, **kwargs: calls.append(argv))
+    monkeypatch.setattr("evalsys.process.os.killpg", lambda pid, sig: group_kills.append((pid, sig)), raising=False)
     with pytest.raises(ProcessTimeout):
         run_process(["wsl.exe", "--", "python3.11", "adapter.py"], timeout_s=1, wsl_pgid_file="/tmp/evalsys-run.pgid")
     assert ["wsl.exe", "--", "sh", "-c", "kill -TERM -- -$(cat \"$1\") 2>/dev/null || true; sleep 1; kill -KILL -- -$(cat \"$1\") 2>/dev/null || true", "sh", "/tmp/evalsys-run.pgid"] in calls
+    if __import__("os").name != "nt":
+        assert group_kills == [(42, __import__("signal").SIGKILL)]
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX process-group cleanup only")
+def test_process_timeout_tolerates_process_group_exit_race(monkeypatch):
+    class FakeProcess:
+        pid = 42
+        returncode = None
+        def communicate(self, timeout=None):
+            if timeout is not None:
+                import subprocess
+                raise subprocess.TimeoutExpired(["python"], timeout)
+            return "late stdout", "late stderr"
+    monkeypatch.setattr("evalsys.process.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+    monkeypatch.setattr("evalsys.process.os.killpg", lambda *_: (_ for _ in ()).throw(ProcessLookupError()), raising=False)
+    with pytest.raises(ProcessTimeout) as caught:
+        run_process(["python", "worker.py"], timeout_s=1)
+    assert caught.value.stdout == "late stdout"
+    assert caught.value.stderr == "late stderr"
 
 
 def test_gold_command_uses_official_gold_prediction(tmp_path: Path):

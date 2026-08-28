@@ -69,6 +69,35 @@ def test_index_is_append_only_and_paths_are_relative(tmp_path: Path):
     assert all(not Path(entry["raw_path"]).is_absolute() for entry in index["runs"])
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "C:/Users/alice/AppData/Local/Temp/result.json",
+        r"C:\Users\alice\AppData\Local\Temp\result.json",
+    ],
+)
+def test_sanitizer_removes_windows_absolute_path_styles(tmp_path: Path, path: str):
+    cleaned = sanitize(f"command --result {path}", project_root=tmp_path)
+    assert "alice" not in cleaned
+    assert path not in cleaned
+    assert "<ABSOLUTE_PATH>" in cleaned
+
+
+def test_sanitizer_removes_paths_from_nested_config_and_result(tmp_path: Path):
+    value = {
+        "config": {"workspace": "D:/Users/bob/work space --mode gold"},
+        "result": {"reason": r"failed under D:\Users\bob\work space --retry true"},
+        "public_url": "https://example.com/repository",
+    }
+    cleaned = sanitize(value, project_root=tmp_path)
+    serialized = json.dumps(cleaned)
+    assert "bob" not in serialized
+    assert serialized.count("<ABSOLUTE_PATH>") == 2
+    assert cleaned["config"]["workspace"] == "<ABSOLUTE_PATH> --mode gold"
+    assert cleaned["result"]["reason"] == "failed under <ABSOLUTE_PATH> --retry true"
+    assert cleaned["public_url"] == "https://example.com/repository"
+
+
 def test_sanitizer_removes_secrets_and_absolute_paths(tmp_path: Path):
     text = f"API_KEY=abc123 path={tmp_path} ssh-rsa AAAAB3Nza"
     cleaned = sanitize(text, project_root=tmp_path)

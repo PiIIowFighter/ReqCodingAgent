@@ -10,6 +10,7 @@ import pytest
 from evalsys.evidence import (
     EvidenceRecorder,
     select_current_runs,
+    scan_audit_local_paths,
     verify_active_audit_runs,
     verify_checksums,
 )
@@ -31,6 +32,15 @@ def test_generated_text_uses_utf8_lf_and_survives_git_normalization(tmp_path: Pa
         digest, name = line.split("  ", 1)
         blob = subprocess.check_output(["git", "show", f":audit/iteration1/runs/{run.run_id}/{name}"], cwd=tmp_path)
         assert hashlib.sha256(blob).hexdigest() == digest
+
+
+def test_audit_local_path_scan_is_scoped_and_covers_windows_styles(tmp_path: Path):
+    audit = tmp_path / "audit/iteration1"
+    audit.mkdir(parents=True)
+    (audit / "forward.txt").write_text("C:/Users/alice/private", encoding="utf-8")
+    (audit / "backward.txt").write_text(r"D:\Users\bob\private", encoding="utf-8")
+    (tmp_path / "official-prompt.txt").write_text("C:/official/example", encoding="utf-8")
+    assert scan_audit_local_paths(tmp_path) == ["iteration1/backward.txt", "iteration1/forward.txt"]
 
 
 def test_public_evidence_contains_counts_and_raw_file_metadata(tmp_path: Path):

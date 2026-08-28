@@ -188,7 +188,7 @@ def test_verify_checksums_rejects_symlinked_audit_file(tmp_path: Path):
         (tmp_path / "summary.json").symlink_to(outside)
     except OSError:
         pytest.skip("symlink creation unavailable")
-    with pytest.raises(ValueError, match="symlink|reparse"):
+    with pytest.raises(ValueError, match="symlink|reparse|escapes root"):
         verify_checksums(tmp_path)
 
 

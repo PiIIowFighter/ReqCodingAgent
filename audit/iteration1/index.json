@@ -255,7 +255,8 @@
       "run_type": "preflight",
       "status": "passed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid",
+      "invalid_reason": "Privacy revision exception: public command.txt exposed forward-slash Windows user paths. The tracked artifact was redacted without rewriting Git history; original sha256 602aec3cc629e573a8c7178f5b19cbc7e0e90ef4adf637c2dbec39e75bf589a5, redacted sha256 f8a92e8a81c0694ef02d5cb461b3b85720e77136393ce78fe0876915baba9875."
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T084256Z_replay_noop_25dd274123",
