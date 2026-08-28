@@ -226,14 +226,33 @@ def test_schema_loader_rejects_traversal_and_invalid_names():
 
 
 def test_schema_format_checker_rejects_invalid_datetime_and_uri():
-    result = _result()
-    result["started_at"] = "not-a-date"
-    with pytest.raises(EvalError, match="date-time"):
-        validate_json(result, "replay-result")
+    for field in ("started_at", "ended_at"):
+        result = _result()
+        result[field] = "not-a-date"
+        with pytest.raises(EvalError, match="date-time"):
+            validate_json(result, "replay-result")
     source = {"url": "https://example.invalid/repo", "revision": "a" * 40}
     lock = {"schema_version": "1.0", "sources": {"harness": {**source, "url": "not a uri"}, "verified": source, "lite": source}}
     with pytest.raises(EvalError, match="uri"):
         validate_json(lock, "source-lock")
+
+
+def test_source_lock_schema_accepts_real_https_values_and_rejects_non_https():
+    lock = load_json(Path(__file__).parents[1] / "benchmark" / "source-lock.json")
+    validate_json(lock, "source-lock")
+    lock["sources"]["harness"]["url"] = "ftp://example.invalid/repo"
+    with pytest.raises(EvalError, match="https"):
+        validate_json(lock, "source-lock")
+
+
+def test_all_timestamp_and_url_schema_fields_declare_formats():
+    replay = load_schema("replay-result")["properties"]
+    event = load_schema("event")["properties"]
+    source = load_schema("source-lock")["$defs"]["source"]["properties"]
+    assert replay["started_at"]["format"] == "date-time"
+    assert replay["ended_at"]["format"] == "date-time"
+    assert event["timestamp"]["format"] == "date-time"
+    assert source["url"]["format"] == "uri"
 
 
 @pytest.mark.parametrize("field,value", [
