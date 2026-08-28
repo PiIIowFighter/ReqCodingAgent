@@ -2,13 +2,49 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .errors import EvalError
+
+
+FORMAT_CHECKER = FormatChecker()
+_RFC3339 = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+@FORMAT_CHECKER.checks("date-time")
+def _is_datetime(value: object) -> bool:
+    if not isinstance(value, str) or _RFC3339.fullmatch(value) is None:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+@FORMAT_CHECKER.checks("uri")
+def _is_uri(value: object) -> bool:
+    if not isinstance(value, str) or any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return bool(parsed.scheme and parsed.netloc and parsed.hostname)
+
+
+_REQUIRED_FORMATS = frozenset({"date-time", "uri"})
+if not _REQUIRED_FORMATS.issubset(FORMAT_CHECKER.checkers):
+    raise RuntimeError("required deterministic JSON schema format checkers are not registered")
 
 
 def _root() -> Path:
@@ -53,7 +89,7 @@ def load_schema(name: str) -> dict:
 
 @lru_cache(maxsize=None)
 def _validator(schema_name: str) -> Draft202012Validator:
-    return Draft202012Validator(load_schema(schema_name), format_checker=FormatChecker())
+    return Draft202012Validator(load_schema(schema_name), format_checker=FORMAT_CHECKER)
 
 
 def validate_json(value: object, schema_name: str) -> None:

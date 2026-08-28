@@ -12,7 +12,7 @@ import pytest
 from evalsys.errors import EvalError
 from evalsys.evidence import EvidenceRecorder, verify_checksums
 from evalsys.recovery import artifact_hashes_valid, load_reusable_run, write_completed_run
-from evalsys.schema import load_json, load_schema, validate_json, validate_jsonl
+from evalsys.schema import FORMAT_CHECKER, load_json, load_schema, validate_json, validate_jsonl
 
 
 REPLAY_ARTIFACTS = {
@@ -223,6 +223,36 @@ def test_schema_loader_rejects_traversal_and_invalid_names():
     for name in ("../source-lock", "source_lock", "Source-lock", "", "a/b"):
         with pytest.raises(EvalError, match="schema name"):
             load_schema(name)
+
+
+def test_required_format_checkers_are_registered_locally():
+    assert {"date-time", "uri"} <= set(FORMAT_CHECKER.checkers)
+
+
+@pytest.mark.parametrize("value", [
+    "not-a-date", "2026-08-28T00:00:00", "2026-08-28 00:00:00Z",
+    "2026-08-28T00:00:00", "2026-02-30T00:00:00Z", "2026-08-28T24:00:00Z",
+])
+def test_datetime_checker_rejects_invalid_or_naive_values(value: str):
+    result = _result()
+    result["started_at"] = value
+    with pytest.raises(EvalError, match="date-time"):
+        validate_json(result, "replay-result")
+
+
+def test_datetime_checker_accepts_z_and_explicit_offsets():
+    for value in ("2026-08-28T00:00:00Z", "2026-08-28T00:00:00.123456Z", "2026-08-28T08:00:00+08:00"):
+        result = _result()
+        result["started_at"] = value
+        validate_json(result, "replay-result")
+
+
+@pytest.mark.parametrize("value", ["not a uri", "https:///missing-host", "/relative", "example.com/path"])
+def test_uri_checker_rejects_missing_scheme_or_authority(value: str):
+    source = {"url": "https://example.invalid/repo", "revision": "a" * 40}
+    lock = {"schema_version": "1.0", "sources": {"harness": {**source, "url": value}, "verified": source, "lite": source}}
+    with pytest.raises(EvalError, match="uri|https"):
+        validate_json(lock, "source-lock")
 
 
 def test_schema_format_checker_rejects_invalid_datetime_and_uri():
