@@ -10,7 +10,16 @@ from typing import Any
 from .recovery import fingerprint, sha256_file
 
 _REQUIRED_AUDIT = ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json")
-_RESULT_FIELDS = ("status", "passed", "failed", "skipped", "duration", "exit_code")
+_RESULT_FIELDS = (
+    "status",
+    "passed",
+    "failed",
+    "skipped",
+    "duration",
+    "exit_code",
+    "classification",
+    "reason",
+)
 _SECRET = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*\S+")
 _SSH = re.compile(r"(?i)(ssh-(?:rsa|ed25519))\s+\S+")
 _WINDOWS_ABS = re.compile(r"[A-Za-z]:\\[^\r\n\t\"]+")
@@ -64,6 +73,21 @@ def verify_checksums(directory: Path) -> list[str]:
     return mismatches
 
 
+def select_current_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return evidence-valid leaf runs; ``active`` alone does not mean current."""
+    superseded = {
+        prior
+        for run in runs
+        if run.get("validity") == "active"
+        for prior in run.get("supersedes", [])
+    }
+    return [
+        run
+        for run in runs
+        if run.get("validity") == "active" and run["run_id"] not in superseded
+    ]
+
+
 def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str, list[str]]:
     index_path = project_root / f"audit/iteration{iteration}/index.json"
     index = json.loads(index_path.read_bytes().decode("utf-8"))
@@ -108,7 +132,16 @@ class EvidenceRun:
         _checksums(self.raw_dir, raw_names)
         _write_text_lf(self.raw_dir / marker, "\n")
         sanitized_config = sanitize(self.config, project_root=self.recorder.project_root)
-        result_summary = {field: sanitize(result.get(field, 0 if field in {"passed", "failed", "skipped"} else None), project_root=self.recorder.project_root) for field in _RESULT_FIELDS}
+        result_summary = {
+            field: sanitize(
+                result.get(field, 0 if field in {"passed", "failed", "skipped"} else None),
+                project_root=self.recorder.project_root,
+            )
+            for field in _RESULT_FIELDS
+            if field not in {"classification", "reason"}
+            or result.get("status") != "passed"
+            or field in result
+        }
         _atomic_json(self.audit_dir / "summary.json", {"run_id": self.run_id, "run_type": self.run_type, "status": result.get("status", "unknown"), "config_hash": self.config_hash, "supersedes": self.supersedes})
         _write_text_lf(self.audit_dir / "command.txt", " ".join(sanitize(self.command, project_root=self.recorder.project_root)) + "\n")
         _atomic_json(self.audit_dir / "config-summary.json", sanitized_config)
@@ -163,6 +196,7 @@ class EvidenceRecorder:
     def _append_index(self, run: EvidenceRun, status: str) -> None:
         index_path = self.audit_root / "index.json"
         index = json.loads(index_path.read_bytes().decode("utf-8")) if index_path.exists() else {"schema_version": "1.0", "iteration": self.iteration, "runs": []}
+        index["validity_semantics"] = "active means evidence checksums are valid; current results are active leaves of the supersedes graph"
         if any(entry["run_id"] == run.run_id for entry in index["runs"]):
             raise RuntimeError(f"Run already indexed: {run.run_id}")
         index["runs"].append({"run_id": run.run_id, "run_type": run.run_type, "status": status, "config_hash": run.config_hash, "raw_path": run.raw_dir.relative_to(self.project_root).as_posix(), "audit_path": run.audit_dir.relative_to(self.project_root).as_posix(), "validity": "active", "supersedes": run.supersedes})

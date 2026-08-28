@@ -1,0 +1,1 @@
+wsl.exe -d Ubuntu -- bash -lc cd '<ABSOLUTE_PATH>"$HOME/.local/bin/uv" run --extra test --python 3.11 python -m pytest -ra -q

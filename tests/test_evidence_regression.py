@@ -5,7 +5,12 @@ import json
 import subprocess
 from pathlib import Path
 
-from evalsys.evidence import EvidenceRecorder, verify_active_audit_runs, verify_checksums
+from evalsys.evidence import (
+    EvidenceRecorder,
+    select_current_runs,
+    verify_active_audit_runs,
+    verify_checksums,
+)
 
 
 def test_generated_text_uses_utf8_lf_and_survives_git_normalization(tmp_path: Path):
@@ -53,6 +58,38 @@ def test_checkout_verifier_skips_preserved_invalid_legacy_runs(tmp_path: Path):
         {"run_id": "new", "validity": "active", "audit_path": "audit/iteration1/runs/new"},
     ]}), encoding="utf-8")
     assert verify_active_audit_runs(tmp_path, iteration=1) == {"new": []}
+
+
+def test_current_runs_are_active_supersedes_leaves_not_all_active_runs():
+    runs = [
+        {"run_id": "root", "run_type": "unit_tests", "validity": "active", "supersedes": []},
+        {"run_id": "branch-a", "run_type": "unit_tests", "validity": "active", "supersedes": ["root"]},
+        {"run_id": "leaf-a", "run_type": "unit_tests", "validity": "active", "supersedes": ["branch-a"]},
+        {"run_id": "leaf-b", "run_type": "unit_tests", "validity": "active", "supersedes": ["root"]},
+        {"run_id": "invalid-leaf", "run_type": "unit_tests", "validity": "invalid", "supersedes": ["leaf-b"]},
+        {"run_id": "preflight", "run_type": "preflight", "validity": "active", "supersedes": []},
+    ]
+    assert [run["run_id"] for run in select_current_runs(runs)] == ["leaf-a", "leaf-b", "preflight"]
+
+
+def test_active_means_checksum_valid_not_current_result():
+    runs = [
+        {"run_id": "old", "run_type": "unit_tests", "validity": "active", "supersedes": []},
+        {"run_id": "new", "run_type": "unit_tests", "validity": "active", "supersedes": ["old"]},
+    ]
+    assert all(run["validity"] == "active" for run in runs)
+    assert [run["run_id"] for run in select_current_runs(runs)] == ["new"]
+
+
+def test_failed_summary_includes_sanitized_bounded_classification_and_reason(tmp_path: Path):
+    run = EvidenceRecorder(tmp_path, iteration=1).start("preflight", {}, ["check"], now="2026-08-28T03:03:00Z")
+    secret = "API_KEY=top-secret " + str(tmp_path) + " " + ("x" * 9000)
+    run.fail({"status": "infra_failed", "passed": 0, "failed": 1, "skipped": 0, "duration": 0.3, "exit_code": 2, "classification": "docker_unavailable", "reason": secret})
+    summary = json.loads((run.audit_dir / "result-summary.json").read_text(encoding="utf-8"))
+    assert summary["classification"] == "docker_unavailable"
+    assert "top-secret" not in summary["reason"]
+    assert str(tmp_path) not in summary["reason"]
+    assert len(summary["reason"]) <= 8192
 
 
 def test_superseding_run_records_relationship(tmp_path: Path):
