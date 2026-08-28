@@ -1,0 +1,12 @@
+* text=auto
+
+# Generated structured evidence must hash identically on every platform.
+/audit/** text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.sha256 text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.sh text eol=lf

@@ -1,0 +1,6 @@
+{
+  "platform": "ubuntu-wsl2",
+  "python": "3.11.16",
+  "recorder": "raw-byte-console-v3",
+  "scope": "final-cross-platform-fix-22-tests"
+}

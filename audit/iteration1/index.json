@@ -4,28 +4,133 @@
     {
       "audit_path": "audit/iteration1/runs/20260828T020828Z_unit_tests_7e53d3d5b0",
       "config_hash": "7e53d3d5b0",
+      "invalid_reason": "Windows CRLF was normalized to LF by Git, invalidating all 15 public audit checksums after checkout; retained for audit history.",
       "raw_path": "artifacts/runs/iteration1/20260828T020828Z_unit_tests_7e53d3d5b0",
       "run_id": "20260828T020828Z_unit_tests_7e53d3d5b0",
       "run_type": "unit_tests",
       "status": "passed",
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T020852Z_validate_data_2d099b88b5",
       "config_hash": "2d099b88b5",
+      "invalid_reason": "Windows CRLF was normalized to LF by Git, invalidating all 15 public audit checksums after checkout; retained for audit history.",
       "raw_path": "artifacts/runs/iteration1/20260828T020852Z_validate_data_2d099b88b5",
       "run_id": "20260828T020852Z_validate_data_2d099b88b5",
       "run_type": "validate_data",
       "status": "passed",
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T020959Z_unit_tests_71cb77e4d4",
       "config_hash": "71cb77e4d4",
+      "invalid_reason": "Windows CRLF was normalized to LF by Git, invalidating all 15 public audit checksums after checkout; retained for audit history.",
       "raw_path": "artifacts/runs/iteration1/20260828T020959Z_unit_tests_71cb77e4d4",
       "run_id": "20260828T020959Z_unit_tests_71cb77e4d4",
       "run_type": "unit_tests",
       "status": "passed",
+      "validity": "invalid"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T024231Z_unit_tests_7f956540d1",
+      "config_hash": "7f956540d1",
+      "raw_path": "artifacts/runs/iteration1/20260828T024231Z_unit_tests_7f956540d1",
+      "run_id": "20260828T024231Z_unit_tests_7f956540d1",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T020828Z_unit_tests_7e53d3d5b0",
+        "20260828T020852Z_validate_data_2d099b88b5",
+        "20260828T020959Z_unit_tests_71cb77e4d4"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025156Z_unit_tests_db51b72c27",
+      "config_hash": "db51b72c27",
+      "raw_path": "artifacts/runs/iteration1/20260828T025156Z_unit_tests_db51b72c27",
+      "run_id": "20260828T025156Z_unit_tests_db51b72c27",
+      "run_type": "unit_tests",
+      "status": "failed",
+      "supersedes": [
+        "20260828T020828Z_unit_tests_7e53d3d5b0",
+        "20260828T020852Z_validate_data_2d099b88b5",
+        "20260828T020959Z_unit_tests_71cb77e4d4"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025420Z_unit_tests_cf4e3ac591",
+      "config_hash": "cf4e3ac591",
+      "raw_path": "artifacts/runs/iteration1/20260828T025420Z_unit_tests_cf4e3ac591",
+      "run_id": "20260828T025420Z_unit_tests_cf4e3ac591",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T025156Z_unit_tests_db51b72c27"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025435Z_unit_tests_3806f25359",
+      "config_hash": "3806f25359",
+      "invalid_reason": "Recorder failed while re-emitting UTF-8 replacement text through the Windows GBK console after tests; evidence retained but run invalidated.",
+      "raw_path": "artifacts/runs/iteration1/20260828T025435Z_unit_tests_3806f25359",
+      "run_id": "20260828T025435Z_unit_tests_3806f25359",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T024231Z_unit_tests_7f956540d1"
+      ],
+      "validity": "invalid"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025522Z_unit_tests_e59537bbab",
+      "config_hash": "e59537bbab",
+      "raw_path": "artifacts/runs/iteration1/20260828T025522Z_unit_tests_e59537bbab",
+      "run_id": "20260828T025522Z_unit_tests_e59537bbab",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T024231Z_unit_tests_7f956540d1",
+        "20260828T025435Z_unit_tests_3806f25359"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025530Z_unit_tests_c0cedc6f94",
+      "config_hash": "c0cedc6f94",
+      "raw_path": "artifacts/runs/iteration1/20260828T025530Z_unit_tests_c0cedc6f94",
+      "run_id": "20260828T025530Z_unit_tests_c0cedc6f94",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T025420Z_unit_tests_cf4e3ac591"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025656Z_unit_tests_1e5de6b066",
+      "config_hash": "1e5de6b066",
+      "raw_path": "artifacts/runs/iteration1/20260828T025656Z_unit_tests_1e5de6b066",
+      "run_id": "20260828T025656Z_unit_tests_1e5de6b066",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T025522Z_unit_tests_e59537bbab"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T025705Z_unit_tests_716fcc50cd",
+      "config_hash": "716fcc50cd",
+      "raw_path": "artifacts/runs/iteration1/20260828T025705Z_unit_tests_716fcc50cd",
+      "run_id": "20260828T025705Z_unit_tests_716fcc50cd",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [
+        "20260828T025530Z_unit_tests_c0cedc6f94"
+      ],
       "validity": "active"
     }
   ],

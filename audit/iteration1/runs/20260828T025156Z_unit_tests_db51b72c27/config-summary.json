@@ -1,0 +1,5 @@
+{
+  "platform": "ubuntu-wsl2",
+  "python": "3.11.16",
+  "scope": "evidence-lf-verdict-regression"
+}
