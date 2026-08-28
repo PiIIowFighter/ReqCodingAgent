@@ -31,8 +31,18 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
     _, tracked = _git(root, "ls-files")
     tracked_paths = tracked.splitlines()
     _, origin = _git(root, "remote", "get-url", "origin")
+    _, protected_changes = _git(root, "status", "--porcelain=v1", "--", "计划", "资料")
     suspicious = re.compile(r"(?i)(^|/)(artifacts|\.env|cache)(/|$)|\.(log|parquet)$")
-    git_clean = not any(suspicious.search(path) for path in tracked_paths)
+    secret = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*\S+|ssh-(rsa|ed25519)\s+\S+")
+    unsafe_content = False
+    for relative in tracked_paths:
+        path = root / relative
+        if path.is_file() and path.stat().st_size <= 1_000_000:
+            try:
+                unsafe_content = unsafe_content or bool(secret.search(path.read_text(encoding="utf-8")))
+            except UnicodeDecodeError:
+                pass
+    git_clean = not any(suspicious.search(path) for path in tracked_paths) and not unsafe_content
     audit = root / "audit/iteration1"
     audit_ok = all((audit / name).is_file() for name in ("validation-summary.json", "noop-gold-matrix.md", "run-manifest.json", "test-summary.txt", "isolation-proof.json"))
     criteria = {
@@ -46,7 +56,7 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
         "machine_and_markdown_reports": bool(validation_report.get("results")),
         "unit_tests_passed": unit_tests_passed, "readme_compliant": readme_ok,
         "git_no_secrets_caches_datasets_logs": git_clean,
-        "materials_untracked_plan_isolated": not any(path == "资料" or path.startswith("资料/") for path in tracked_paths),
+        "materials_untracked_plan_isolated": not protected_changes and not any(path == "资料" or path.startswith("资料/") for path in tracked_paths),
         "origin_exact": origin == _REQUIRED_ORIGIN, "sanitized_audit": audit_ok,
     }
     data_checks = validation_report.get("data_checks", {})

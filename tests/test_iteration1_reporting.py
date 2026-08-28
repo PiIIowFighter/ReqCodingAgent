@@ -99,6 +99,21 @@ def test_validate_all_stops_on_infra_but_continues_after_test_failure(tmp_path: 
     assert calls == ["preflight", "locks_and_cache"] and report["status"] == "failed"
 
 
+def test_validate_all_resume_keeps_failed_child_identity_available(tmp_path: Path):
+    def first(name, context):
+        if name == "replay_noop":
+            return {"status": "failed", "failure_kind": "test", "run_id": "noop-child", "run_directory": "noop-child"}
+        return {"status": "passed"}
+    run_validate_all(tmp_path, stage_runner=first, run_id="children")
+    seen = {}
+    def resumed(name, context):
+        if name == "replay_noop":
+            seen["children"] = list(context["state"]["children"])
+        return {"status": "passed"}
+    run_validate_all(tmp_path, stage_runner=resumed, run_id="children", resume=True)
+    assert seen["children"][0]["run_id"] == "noop-child"
+
+
 def test_validate_all_resume_keeps_completed_children(tmp_path: Path):
     calls = []
     def first(name, context):
