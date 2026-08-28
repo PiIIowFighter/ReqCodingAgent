@@ -52,7 +52,7 @@ def _failure_stage(result: dict[str, Any]) -> str:
 def _outcome_counts(outcomes: dict[str, str]) -> dict[str, int]:
     counts = {key: 0 for key in ("passed", "failed", "skipped", "error")}
     for status in outcomes.values():
-        normalized = "passed" if status == "XFAIL" else status.lower()
+        normalized = "skipped" if status == "XFAIL" else status.lower()
         counts[normalized if normalized in counts else "error"] += 1
     return counts
 

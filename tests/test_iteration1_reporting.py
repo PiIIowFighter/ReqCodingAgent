@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from evalsys.acceptance import ACCEPTANCE_KEYS, evaluate_acceptance
-from evalsys.reporting import generate_report, generate_smoke_report, publish_audit
+from evalsys.reporting import _outcome_counts, generate_report, generate_smoke_report, publish_audit
 from evalsys import cli
 from evalsys.recovery import compute_input_fingerprint, write_completed_run
 from evalsys.validate_all import run_validate_all
@@ -77,8 +77,8 @@ def _smoke_replay(root: Path, run_id: str, mode: str) -> Path:
     result["run_id"] = run_id
     result["case_id"] = "D-O1-full"
     result["split"] = "dev"
-    result["fail_to_pass"] = {"f2p-pass": "PASSED", "f2p-fail": "FAILED"}
-    result["pass_to_pass"] = {"p2p-pass": "PASSED", "p2p-skip": "SKIPPED"}
+    result["fail_to_pass"] = {"f2p-a": "FAILED", "f2p-b": "FAILED"} if mode == "noop" else {"f2p-a": "PASSED", "f2p-b": "PASSED"}
+    result["pass_to_pass"] = {"p2p-a": "PASSED", "p2p-b": "PASSED"}
     result["cleanup"] = {"status": "passed", "message": None}
     for name in ("stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"):
         (case / name).write_text("{}\n" if name.endswith(".json") else "", encoding="utf-8")
@@ -111,11 +111,21 @@ def test_smoke_report_writes_exact_redacted_1x2(tmp_path: Path):
     paths = generate_smoke_report(noop, gold, destination=destination)
     report = json.loads(paths.machine_json.read_text(encoding="utf-8"))
     assert {(row["instance_id"], row["mode"]) for row in report["results"]} == {("django__django-11133", "noop"), ("django__django-11133", "gold")}
-    assert report["results"][0]["fail_to_pass"] == {"passed": 1, "failed": 1, "skipped": 0, "error": 0}
-    assert report["results"][0]["pass_to_pass"] == {"passed": 1, "failed": 0, "skipped": 1, "error": 0}
+    rows = {row["mode"]: row for row in report["results"]}
+    assert rows["noop"]["fail_to_pass"] == {"passed": 0, "failed": 2, "skipped": 0, "error": 0}
+    assert rows["noop"]["pass_to_pass"] == {"passed": 2, "failed": 0, "skipped": 0, "error": 0}
+    assert rows["gold"]["fail_to_pass"] == {"passed": 2, "failed": 0, "skipped": 0, "error": 0}
+    assert rows["gold"]["pass_to_pass"] == {"passed": 2, "failed": 0, "skipped": 0, "error": 0}
+    assert report["status"] == "passed"
     assert all(len(row["raw_result_sha256"]) == 64 for row in report["results"])
     assert not paths.machine_jsonl.exists()
     assert str(tmp_path) not in paths.machine_json.read_text(encoding="utf-8") + paths.markdown.read_text(encoding="utf-8")
+
+
+def test_smoke_outcome_counts_treats_xfail_as_skipped():
+    assert _outcome_counts({"expected-failure": "XFAIL"}) == {
+        "passed": 0, "failed": 0, "skipped": 1, "error": 0,
+    }
 
 
 def test_smoke_report_rejects_missing_cell(tmp_path: Path):

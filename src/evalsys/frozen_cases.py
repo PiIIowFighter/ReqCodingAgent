@@ -49,7 +49,11 @@ def transform_prompt(instance_id: str, original: str) -> str:
         pend = text.index("#### Versions", pstart)
         return text[:pstart] + "#### Problem Description\nA group of variables must first be stacked and then restored, but this roundtrip raises the MergeError shown above.\n\n" + text[pend:]
     if instance_id == "pytest-dev__pytest-7432":
-        text = original.replace("--runxfail", "an additional xfail-related execution option").replace("skipping: an additional xfail-related execution option breaks", "skipping: an additional execution option breaks")
+        text = original.replace(
+            "However, adding `pytest -rs --runxfail` breaks this:",
+            "However, enabling an additional xfail-related execution option changes the reported location to:",
+        )
+        text = text.replace("--runxfail", "an additional xfail-related execution option").replace("skipping: an additional xfail-related execution option breaks", "skipping: an additional execution option breaks")
         hint = re.search(r"(?m)^---\r?$", text)
         return text[:hint.start()].rstrip() + "\n" if hint else text
     if instance_id == "matplotlib__matplotlib-25311":

@@ -75,6 +75,12 @@ def test_checkout_verifier_skips_preserved_invalid_legacy_runs(tmp_path: Path):
     assert verify_active_audit_runs(tmp_path, iteration=1) == {"new": []}
 
 
+def test_checked_in_index_has_a_valid_complete_supersession_graph():
+    root = Path(__file__).parents[1]
+    index = json.loads((root / "audit/iteration1/index.json").read_text(encoding="utf-8"))
+    assert select_current_runs(index["runs"])
+
+
 def test_current_runs_are_active_supersedes_leaves_not_all_active_runs():
     runs = [
         {"run_id": "root", "run_type": "unit_tests", "validity": "active", "supersedes": []},

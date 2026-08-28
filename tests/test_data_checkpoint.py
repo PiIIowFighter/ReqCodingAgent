@@ -50,6 +50,23 @@ def test_strict_schema_rejects_unknown_fields(tmp_path: Path):
         validate_jsonl(malformed, "public-case")
 
 
+def test_validation_receipt_requires_pair_language_consistent():
+    receipt = {
+        "schema_version": "1.0",
+        "status": "passed",
+        "checks": {
+            "schema_pairs_12_3": True,
+            "distribution_4_4_4_1_1_1": True,
+            "official_hashes_15": True,
+            "pair_official_fields_equal": True,
+        },
+        "source_heads": {"harness": "a" * 40, "verified": "b" * 40, "lite": "c" * 40},
+        "inputs": {"public_manifest_sha256": "d" * 64, "oracle_manifest_sha256": "e" * 64},
+    }
+    with pytest.raises(EvalError, match="schema"):
+        validate_json(receipt, "validation-receipt")
+
+
 def test_frozen_case_metadata_is_exact_and_balanced():
     definitions = case_definitions()
     assert len(CASE_IDS) == len(set(CASE_IDS)) == 15
@@ -172,6 +189,7 @@ def test_t_o3_removes_forbidden_hint_but_preserves_required_context():
         "skipping: --runxfail breaks pytest.mark.skip location reporting\n"
         "@pytest.mark.skip\ndef test_skip_location(): pass\n"
         "SKIPPED [1] test_it.py:3: unconditional skip\n"
+        "However, adding `pytest -rs --runxfail` breaks this:\n"
         "SKIPPED [1] src/_pytest/skipping.py:238: unconditional skip\n"
         "The --runxfail is only about xfail and should not affect this at all.\n"
         "\n---\n\nHint: the bug is in `src/_pytest/skipping.py`, the `pytest_runtest_makereport` hook.\n"
@@ -181,7 +199,8 @@ def test_t_o3_removes_forbidden_hint_but_preserves_required_context():
     assert "pytest_runtest_makereport" not in fuzzy
     assert "@pytest.mark.skip" in fuzzy
     assert "test_it.py:3" in fuzzy
-    assert "an additional xfail-related execution option" in fuzzy
+    assert "However, enabling an additional xfail-related execution option changes the reported location to:" in fuzzy
+    assert "pytest -rs an additional" not in fuzzy
 
 
 def test_generated_fuzzy_manifest_has_no_t_o3_or_t_o4_leaks():
