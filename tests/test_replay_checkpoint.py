@@ -12,7 +12,7 @@ from evalsys.harness import HarnessInvocation, build_harness_command, extract_te
 from evalsys.preflight import CommandRunner, resolve_wsl_path, validate_wsl_python
 from evalsys.process import ProcessTimeout, run_process
 from evalsys.recovery import compute_input_fingerprint, load_reusable_run, write_completed_run
-from evalsys.replay import cleanup_run_resources, create_run_directory
+from evalsys.replay import cleanup_run_resources, create_run_directory, replay_cases
 from evalsys.schema import validate_json
 from scripts.official_harness_adapter import classify_artifacts
 from evalsys.verdict import decide_verdict
@@ -250,6 +250,26 @@ def test_cleanup_filters_current_label_and_never_prunes():
     assert all("label=evalsys.run_id=run-1" in call and "label=evalsys.case_id=case-1" in call for call in calls if "--filter" in call)
     assert not any("prune" in call for call in calls)
     assert ["wsl.exe", "--", "docker", "rm", "-f", "c1", "c2"] in calls
+
+
+def test_replay_uses_same_raw_audit_and_index_identity(monkeypatch, tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(project, tmp_path / "cache", project / "artifacts")
+    case = {"instance_id": "x__x-1"}
+    result = _result()
+    result.update({"run_id": "explicit-run", "instance_id": "x__x-1"})
+    monkeypatch.setattr("evalsys.replay.replay_case", lambda *args, **kwargs: result)
+    monkeypatch.setattr("evalsys.replay.cleanup_run_resources", lambda *args, **kwargs: {})
+    report = replay_cases(settings, [case], {"x__x-1": {}}, "noop", harness_revision="a" * 40, run_id=None)
+    run_id = report["run_id"]
+    raw = project / "artifacts/runs/iteration1" / run_id
+    audit = project / "audit/iteration1/runs" / run_id
+    index = json.loads((project / "audit/iteration1/index.json").read_text(encoding="utf-8"))
+    assert raw.is_dir() and audit.is_dir()
+    assert [entry["run_id"] for entry in index["runs"]] == [run_id]
+    assert {path.name for path in (project / "artifacts/runs/iteration1").iterdir()} == {run_id}
+    assert (raw / "summary.json").is_file()
 
 
 def test_process_uses_utf8_and_disables_msys_path_conversion(monkeypatch):

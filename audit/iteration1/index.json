@@ -260,58 +260,74 @@
     {
       "audit_path": "audit/iteration1/runs/20260828T084256Z_replay_noop_25dd274123",
       "config_hash": "25dd274123",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T084256Z_replay_noop_25dd274123",
       "run_id": "20260828T084256Z_replay_noop_25dd274123",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T084351Z_replay_noop_1e9af95ec0",
       "config_hash": "1e9af95ec0",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T084351Z_replay_noop_1e9af95ec0",
       "run_id": "20260828T084351Z_replay_noop_1e9af95ec0",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T084421Z_replay_noop_ad7c539c51",
       "config_hash": "ad7c539c51",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T084421Z_replay_noop_ad7c539c51",
       "run_id": "20260828T084421Z_replay_noop_ad7c539c51",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T084450Z_replay_noop_f9f1122132",
       "config_hash": "f9f1122132",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T084450Z_replay_noop_f9f1122132",
       "run_id": "20260828T084450Z_replay_noop_f9f1122132",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T090708Z_replay_noop_e511981e38",
       "config_hash": "e511981e38",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T090708Z_replay_noop_e511981e38",
       "run_id": "20260828T090708Z_replay_noop_e511981e38",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],
-      "validity": "active"
+      "validity": "invalid"
     },
     {
       "audit_path": "audit/iteration1/runs/20260828T090723Z_replay_noop_97b93f22d3",
       "config_hash": "97b93f22d3",
+      "invalid_reason": "legacy replay identity mismatch: aggregate EvidenceRecorder ID did not equal raw replay invocation ID; preserved for audit only",
       "raw_path": "artifacts/runs/iteration1/20260828T090723Z_replay_noop_97b93f22d3",
       "run_id": "20260828T090723Z_replay_noop_97b93f22d3",
+      "run_type": "replay_noop",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "invalid"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T091507456509Z_replay_noop_dd7fd09da1",
+      "config_hash": "f2e0da4a8b",
+      "raw_path": "artifacts/runs/iteration1/20260828T091507456509Z_replay_noop_dd7fd09da1",
+      "run_id": "20260828T091507456509Z_replay_noop_dd7fd09da1",
       "run_type": "replay_noop",
       "status": "failed",
       "supersedes": [],

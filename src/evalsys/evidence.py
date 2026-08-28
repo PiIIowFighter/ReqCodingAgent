@@ -99,6 +99,7 @@ class EvidenceRun:
     command: list[str]
     config: dict[str, Any]
     supersedes: list[str]
+    indexed: bool = False
 
     def record_event(self, event: str, details: dict[str, Any]) -> None:
         with (self.raw_dir / "events.jsonl").open("ab") as stream:
@@ -111,6 +112,8 @@ class EvidenceRun:
         self._close(result, stdout, stderr, "FAILED")
 
     def _close(self, result: dict[str, Any], stdout: str, stderr: str, marker: str) -> None:
+        if self.indexed:
+            return
         _write_text_lf(self.raw_dir / "stdout.log", stdout)
         _write_text_lf(self.raw_dir / "stderr.log", stderr)
         _atomic_json(self.raw_dir / "result.json", result)
@@ -135,7 +138,9 @@ class EvidenceRun:
         raw_index = {name: _file_metadata(self.raw_dir / name) for name in ("stdout.log", "stderr.log", "result.json", "checksums.sha256")}
         _atomic_json(self.audit_dir / "log-index.json", raw_index)
         _checksums(self.audit_dir, list(_REQUIRED_AUDIT))
-        self.recorder._append_index(self, str(result.get("status", "unknown")))
+        if not self.indexed:
+            self.recorder._append_index(self, str(result.get("status", "unknown")))
+            self.indexed = True
 
 
 class EvidenceRecorder:
@@ -158,6 +163,33 @@ class EvidenceRecorder:
         except Exception:
             raw_dir.rmdir()
             raise
+        relationship = list(supersedes or [])
+        manifest = {"run_id": run_id, "run_type": run_type, "iteration": self.iteration, "config_hash": config_hash, "command": command, "started_at": timestamp, "supersedes": relationship}
+        _atomic_json(raw_dir / "run-manifest.json", manifest)
+        _atomic_json(raw_dir / "config.snapshot.json", config)
+        _write_text_lf(raw_dir / "events.jsonl", "")
+        return EvidenceRun(self, run_id, run_type, config_hash, raw_dir, audit_dir, command, config, relationship)
+
+    def start_explicit(self, run_id: str, run_type: str, config: dict[str, Any], command: list[str], *, existing_raw_dir: Path, resume: bool = False, supersedes: list[str] | None = None) -> EvidenceRun:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+            raise ValueError("unsafe explicit run_id")
+        raw_dir = existing_raw_dir.resolve()
+        expected = (self.raw_root / run_id).resolve()
+        if raw_dir != expected or not raw_dir.is_dir():
+            raise ValueError("explicit raw directory must be the matching recorder run root")
+        audit_dir = self.audit_root / "runs" / run_id
+        index_path = self.audit_root / "index.json"
+        index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {"runs": []}
+        indexed = any(entry["run_id"] == run_id for entry in index.get("runs", []))
+        if resume:
+            if not indexed or not audit_dir.is_dir():
+                raise ValueError("resume requires existing audit and index identity")
+            return EvidenceRun(self, run_id, run_type, fingerprint(config)[:10], raw_dir, audit_dir, command, config, list(supersedes or []), indexed=True)
+        if indexed or audit_dir.exists() or (raw_dir / "run-manifest.json").exists():
+            raise FileExistsError(run_id)
+        audit_dir.mkdir(parents=True, exist_ok=False)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        config_hash = fingerprint(config)[:10]
         relationship = list(supersedes or [])
         manifest = {"run_id": run_id, "run_type": run_type, "iteration": self.iteration, "config_hash": config_hash, "command": command, "started_at": timestamp, "supersedes": relationship}
         _atomic_json(raw_dir / "run-manifest.json", manifest)
