@@ -52,9 +52,12 @@ def test_checkout_verifier_skips_preserved_invalid_legacy_runs(tmp_path: Path):
     (old_dir / "checksums.sha256").write_text(f"{'0' * 64}  summary.json\n", encoding="utf-8")
     active_dir = audit / "runs/new"
     active_dir.mkdir(parents=True)
-    (active_dir / "summary.json").write_bytes(b"new\n")
-    digest = hashlib.sha256(b"new\n").hexdigest()
-    (active_dir / "checksums.sha256").write_text(f"{digest}  summary.json\n", encoding="utf-8")
+    lines = []
+    for name in ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json"):
+        payload = (name + "\n").encode()
+        (active_dir / name).write_bytes(payload)
+        lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+    (active_dir / "checksums.sha256").write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
     (audit / "index.json").write_text(json.dumps({"runs": [
         {"run_id": "old", "validity": "invalid", "audit_path": "audit/iteration1/runs/old"},
         {"run_id": "new", "validity": "active", "audit_path": "audit/iteration1/runs/new"},

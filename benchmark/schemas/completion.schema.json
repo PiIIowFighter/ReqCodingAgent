@@ -6,7 +6,20 @@
   "properties": {
     "schema_version": {"const": "1.0"},
     "input_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "result": {"const": "result.json"},
-    "artifacts": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    "result": {"const": "result.json", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:)[^/\\r\\n]+(?:/[^/\\r\\n]+)*\\Z"},
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl", "result.json", "harness-manifest.json"],
+      "properties": {
+        "stdout.log": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "stderr.log": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "events.jsonl": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "dataset.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "prediction.jsonl": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "result.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "harness-manifest.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
   }
 }

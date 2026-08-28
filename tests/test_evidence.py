@@ -17,8 +17,8 @@ def test_run_is_non_overwriting_and_contains_required_files(tmp_path: Path):
     assert expected <= {p.name for p in run.raw_dir.iterdir()}
     assert run.audit_dir.is_dir()
     assert {"summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json", "checksums.sha256"} <= {p.name for p in run.audit_dir.iterdir()}
-    with pytest.raises(FileExistsError):
-        recorder.start("unit_tests", {"python": "3.11", "token": "secret"}, ["python"], now="2026-08-28T01:02:03Z")
+    retry = recorder.start("unit_tests", {"python": "3.11", "token": "secret"}, ["python"], now="2026-08-28T01:02:03Z")
+    assert retry.run_id != run.run_id
 
 
 def test_explicit_run_uses_one_identity_and_existing_raw_root(tmp_path: Path):

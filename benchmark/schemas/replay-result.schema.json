@@ -24,7 +24,7 @@
     "tests_executed": {"type": "boolean"},
     "fail_to_pass": {"$ref": "#/$defs/outcomes"},
     "pass_to_pass": {"$ref": "#/$defs/outcomes"},
-    "logs": {"type": "object", "additionalProperties": false, "required": ["stdout", "stderr", "harness"], "properties": {"stdout": {"type": "string"}, "stderr": {"type": "string"}, "harness": {"type": "string"}}},
+    "logs": {"type": "object", "additionalProperties": false, "required": ["stdout", "stderr", "harness"], "properties": {"stdout": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:)[^/\\r\\n]+(?:/[^/\\r\\n]+)*\\Z"}, "stderr": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:)[^/\\r\\n]+(?:/[^/\\r\\n]+)*\\Z"}, "harness": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:)[^/\\r\\n]+(?:/[^/\\r\\n]+)*\\Z"}}},
     "error": {"type": ["object", "null"], "additionalProperties": false, "required": ["category", "message", "stage"], "properties": {"category": {"type": "string"}, "message": {"type": "string"}, "stage": {"type": "string"}}},
     "cleanup": {"type": "object", "additionalProperties": false, "required": ["status", "message"], "properties": {"status": {"enum": ["passed", "failed"]}, "message": {"type": ["string", "null"]}}}
   },
