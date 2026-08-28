@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .evidence import sanitize, select_current_runs
+from .evidence import sanitize, select_current_runs, verify_checksums
 from .persistence import atomic_json, write_text_lf
 from .schema import validate_json
 
@@ -25,12 +25,14 @@ def _load(path: Path) -> dict[str, Any]:
         raise EvalError(f"Cannot read report input {path.name}: {exc}", hint="Pass a retained schema-valid validate-all run directory") from exc
 
 
-def _relative_child(base: Path, value: str) -> Path:
-    candidate = Path(value)
+def _relative_child(base: Path, child: dict[str, Any]) -> Path:
+    candidate = Path(child["run_directory"])
     resolved = candidate.resolve() if candidate.is_absolute() else (base / candidate).resolve()
-    boundary = base.parent.resolve()
-    if resolved != boundary and boundary not in resolved.parents:
-        raise ValueError("child run directory escapes iteration run root")
+    expected = base.parent.resolve() / child["run_id"]
+    if resolved != expected or resolved.name != child["run_id"]:
+        raise ValueError("child run directory is not bound to iteration root/run_id")
+    if not (resolved / "COMPLETE").is_file() or not (resolved / "summary.json").is_file():
+        raise ValueError("child run is not complete")
     return resolved
 
 
@@ -52,15 +54,19 @@ def generate_report(run_directory: Path, *, expected_instance_ids: list[str] | N
     for child in leaves:
         if child.get("run_type") not in {"replay_noop", "replay_gold"}:
             continue
-        child_dir = _relative_child(run_directory, child["run_directory"])
+        child_dir = _relative_child(run_directory, child)
         summary = _load(child_dir / "summary.json")
         validate_json(summary, "validation-summary")
+        if summary["run_id"] != child["run_id"]:
+            raise ValueError("child summary run_id mismatch")
         for item in summary["results"]:
             result_path = Path(item["result"])
             if result_path.is_absolute() or ".." in result_path.parts:
                 raise ValueError("unsafe replay result path")
             result = _load(child_dir / result_path)
             validate_json(result, "replay-result")
+            if (result["run_id"], result["instance_id"], result["mode"], result["status"]) != (child["run_id"], item["instance_id"], item["mode"], item["status"]):
+                raise ValueError("replay result identity disagrees with child summary")
             rows.append({
                 "instance_id": result["instance_id"], "mode": result["mode"], "status": result["status"],
                 "failed_stage": _failure_stage(result), "classification": result["classification"],
@@ -111,4 +117,7 @@ def publish_audit(run_directory: Path, destination: Path, *, test_summary: str) 
     atomic_json(destination / "run-manifest.json", sanitize(manifest, project_root=run_directory))
     write_text_lf(destination / "test-summary.txt", sanitize(test_summary.strip() + "\n", project_root=run_directory))
     atomic_json(destination / "isolation-proof.json", sanitize(proof, project_root=run_directory))
-    return [destination / name for name in ("validation-summary.json", "noop-gold-matrix.md", "run-manifest.json", "test-summary.txt", "isolation-proof.json")]
+    from .recovery import sha256_file
+    names = ("validation-summary.json", "noop-gold-matrix.md", "run-manifest.json", "test-summary.txt", "isolation-proof.json")
+    write_text_lf(destination / "checksums.sha256", "".join(f"{sha256_file(destination / name)}  {name}\n" for name in sorted(names)))
+    return [destination / name for name in (*names, "checksums.sha256")]

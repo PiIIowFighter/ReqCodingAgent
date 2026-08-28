@@ -207,10 +207,10 @@ class EvidenceRun:
 
 
 class EvidenceRecorder:
-    def __init__(self, project_root: Path, *, iteration: int) -> None:
+    def __init__(self, project_root: Path, *, iteration: int, raw_root: Path | None = None) -> None:
         self.project_root = project_root.resolve()
         self.iteration = iteration
-        self.raw_root = self.project_root / f"artifacts/runs/iteration{iteration}"
+        self.raw_root = raw_root.resolve() if raw_root is not None else self.project_root / f"artifacts/runs/iteration{iteration}"
         self.audit_root = self.project_root / f"audit/iteration{iteration}"
 
     def start(self, run_type: str, config: dict[str, Any], command: list[str], *, now: str | None = None, supersedes: list[str] | None = None) -> EvidenceRun:

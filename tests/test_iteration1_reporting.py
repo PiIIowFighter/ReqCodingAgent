@@ -38,9 +38,11 @@ def _replay(root: Path, run_id: str, mode: str, statuses: dict[str, str] | None 
         case = run / "cases" / (instance_id + "-full") / mode
         case.mkdir(parents=True)
         result = _result(instance_id, mode, status, "tests" if status == "test_failed" else "environment")
+        result["run_id"] = run_id
         (case / "result.json").write_text(json.dumps(result), encoding="utf-8")
         results.append({"instance_id": instance_id, "mode": mode, "status": status, "result": f"cases/{instance_id}-full/{mode}/result.json"})
     (run / "summary.json").write_text(json.dumps({"schema_version": "1.0", "run_id": run_id, "status": "passed" if all(x["status"] == "passed" for x in results) else "failed", "results": results}), encoding="utf-8")
+    (run / "COMPLETE").write_text("{}", encoding="utf-8")
     return run
 
 
@@ -141,7 +143,7 @@ def test_publish_audit_derives_required_sanitized_files(tmp_path: Path):
     generate_report(validation, expected_instance_ids=IDS)
     destination = tmp_path / "audit"
     publish_audit(validation, destination, test_summary="107 passed")
-    assert {p.name for p in destination.iterdir()} == {"validation-summary.json", "noop-gold-matrix.md", "run-manifest.json", "test-summary.txt", "isolation-proof.json"}
+    assert {p.name for p in destination.iterdir()} == {"validation-summary.json", "noop-gold-matrix.md", "run-manifest.json", "test-summary.txt", "isolation-proof.json", "checksums.sha256"}
     assert str(tmp_path) not in "".join(p.read_text(encoding="utf-8") for p in destination.iterdir())
 
 
@@ -166,6 +168,24 @@ def test_cli_exposes_report_and_validate_all_resume_options():
     assert parser.parse_args(["report", "run"]).run_directory == Path("run")
     args = parser.parse_args(["validate-all", "--resume", "--run-id", "v", "--noop-run-id", "n", "--gold-run-id", "g"])
     assert (args.resume, args.run_id, args.noop_run_id, args.gold_run_id) == (True, "v", "n", "g")
+
+
+def test_acceptance_rejects_fabricated_checks_rows_and_weak_audit(tmp_path: Path):
+    fake_rows = [{"instance_id": instance, "mode": mode, "status": "passed"} for instance in IDS for mode in ("noop", "gold")]
+    fake = {"run_id": "v", "counts": {"expected": 30, "passed": 30, "failed": 0}, "results": fake_rows, "data_checks": {
+        "schema_pairs_12_3": True, "distribution_4_4_4_1_1_1": True, "official_hashes_15": True, "pair_official_fields_equal": True}}
+    audit = tmp_path / "audit/iteration1"
+    audit.mkdir(parents=True)
+    for name in ("validation-summary.json", "run-manifest.json", "isolation-proof.json"):
+        (audit / name).write_text("{}", encoding="utf-8")
+    for name in ("noop-gold-matrix.md", "test-summary.txt"):
+        (audit / name).write_text("placeholder", encoding="utf-8")
+    report = evaluate_acceptance(tmp_path, fake, unit_tests_passed=True)
+    assert not report["criteria"]["official_hashes_15"]
+    assert not report["criteria"]["pair_official_fields_equal"]
+    assert not report["criteria"]["executable_isolation"]
+    assert not report["criteria"]["sanitized_audit"]
+    assert not report["criteria"]["noop_15_passed"]
 
 
 def test_acceptance_maps_every_section19_item_and_never_completes_without_30(tmp_path: Path):

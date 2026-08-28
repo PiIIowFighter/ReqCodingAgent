@@ -194,7 +194,7 @@ def replay_cases(settings: Settings, public_cases: list[dict], source_rows: dict
     root = create_run_directory(settings.artifact_root / "runs" / "iteration1", invocation_id, resume=resume)
     lease = root / "RUNNING"
     lease.mkdir(exist_ok=False)
-    recorder = EvidenceRecorder(settings.project_root, iteration=1)
+    recorder = EvidenceRecorder(settings.project_root, iteration=1, raw_root=settings.artifact_root / "runs/iteration1")
     evidence = recorder.start_explicit(invocation_id, f"replay_{mode}", {"run_id": invocation_id, "harness_revision": harness_revision, "cases": [c["instance_id"] for c in public_cases]}, ["python", "-m", "evalsys.cli", "replay", "--mode", mode], existing_raw_dir=root, resume=resume)
     results: list[dict] = []
     caught: Exception | None = None

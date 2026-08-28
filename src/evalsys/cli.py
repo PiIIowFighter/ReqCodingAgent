@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -96,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
                     validation = validate_benchmark(prepared)
                     validation["status"] = "passed"
                     return validation
+                if name == "unit_tests":
+                    completed = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=settings.project_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, env={**dict(__import__("os").environ), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})
+                    summary = completed.stdout[-4000:]
+                    return {"status": "passed" if completed.returncode == 0 else "failed", "failure_kind": "infra", "exit_code": completed.returncode, "summary": summary}
                 records = validate_jsonl(prepared.public_manifest, "public-case")
                 cases = [record for record in records if record["prompt_variant"] == "full"]
                 if name == "isolation":
@@ -105,7 +110,9 @@ def main(argv: list[str] | None = None) -> int:
                     return {"status": "passed", "proof": proof}
                 if name in {"replay_noop", "replay_gold"}:
                     mode = name.removeprefix("replay_")
-                    explicit = args.noop_run_id if mode == "noop" else args.gold_run_id
+                    override = args.noop_run_id if mode == "noop" else args.gold_run_id
+                    prior = context.get("resume_child")
+                    explicit = override or (prior["run_id"] if prior else None)
                     child_resume = bool(explicit and args.resume)
                     child = replay_cases(settings, cases, prepared.source_rows, mode, harness_revision=prepared.lock_heads["harness"], timeout_s=args.timeout, workers=args.workers, resume=child_resume, run_id=explicit)
                     failure_kind = "infra" if any(row["status"] in {"infra_failed", "timeout", "invalid"} for row in child["results"]) else "test"
@@ -114,19 +121,16 @@ def main(argv: list[str] | None = None) -> int:
                     paths = generate_report(context["run_directory"], expected_instance_ids=sorted({case["instance_id"] for case in cases}))
                     return {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"]}
                 if name == "audit":
-                    publish_audit(context["run_directory"], settings.project_root / "audit/iteration1", test_summary="Unit-test evidence must be recorded separately; validate-all executed.")
+                    tests = context["state"]["stages"].get("unit_tests", {})
+                    publish_audit(context["run_directory"], settings.project_root / "audit/iteration1/runs" / context["run_id"], test_summary=tests.get("summary", f"pytest exit_code={tests.get('exit_code', 'unknown')}"))
                     return {"status": "passed"}
                 machine = json.loads((context["run_directory"] / "validation-summary.json").read_text(encoding="utf-8"))
                 strict = context["state"]["stages"].get("strict_data", {})
-                machine["data_checks"] = {
-                    "schema_pairs_12_3": strict.get("test_pairs") == 12 and strict.get("dev_pairs") == 3,
-                    "distribution_4_4_4_1_1_1": bool(strict.get("distributions")),
-                    "official_hashes_15": strict.get("records") == 30,
-                    "pair_official_fields_equal": strict.get("records") == 30,
-                }
-                acceptance = evaluate_acceptance(settings.project_root, machine, unit_tests_passed=False)
-                return {"status": "passed", **acceptance, "reason": "Unit-test completion evidence is verified separately"}
-            report = run_validate_all(settings.project_root, stage_runner=stage_runner, run_id=args.run_id, resume=args.resume, config=config)
+                machine["validation_receipt"] = strict.get("validation_receipt")
+                machine["resume_verified"] = context["state"].get("resume_verified") is True
+                acceptance = evaluate_acceptance(settings.project_root, machine, unit_tests_passed=context["state"]["stages"].get("unit_tests", {}).get("status") == "passed")
+                return {"status": "passed" if acceptance["iteration_completion"] else "failed", **acceptance, "reason": "Unit-test completion evidence is verified separately"}
+            report = run_validate_all(settings.project_root, stage_runner=stage_runner, run_id=args.run_id, resume=args.resume, config=config, artifact_root=settings.artifact_root)
             report["run_directory"] = str(settings.artifact_root / "runs/iteration1" / report["run_id"])
         else:
             try:
