@@ -226,6 +226,36 @@
       "status": "passed",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T061154Z_unit_tests_0a1545275e",
+      "config_hash": "0a1545275e",
+      "raw_path": "artifacts/runs/iteration1/20260828T061154Z_unit_tests_0a1545275e",
+      "run_id": "20260828T061154Z_unit_tests_0a1545275e",
+      "run_type": "unit_tests",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T061246Z_preflight_56eb7d7d40",
+      "config_hash": "56eb7d7d40",
+      "raw_path": "artifacts/runs/iteration1/20260828T061246Z_preflight_56eb7d7d40",
+      "run_id": "20260828T061246Z_preflight_56eb7d7d40",
+      "run_type": "preflight",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260828T061319Z_preflight_60c676a398",
+      "config_hash": "60c676a398",
+      "raw_path": "artifacts/runs/iteration1/20260828T061319Z_preflight_60c676a398",
+      "run_id": "20260828T061319Z_preflight_60c676a398",
+      "run_type": "preflight",
+      "status": "passed",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",

@@ -1,0 +1,6 @@
+{
+  "canonical_public_record": true,
+  "container_mounts": 1,
+  "operation": "prove-isolation",
+  "platform": "windows-wsl2"
+}
