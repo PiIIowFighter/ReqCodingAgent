@@ -235,10 +235,10 @@ def test_recovery_hashes_harness_tree_manifest(tmp_path: Path):
     (harness / "logs").mkdir(parents=True)
     (harness / "adapter-result.json").write_text("{}", encoding="utf-8")
     (harness / "logs" / "test_output.txt").write_text("ran", encoding="utf-8")
-    for name in ("stdout.log", "stderr.log", "events.jsonl"):
+    for name in ("stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"):
         (tmp_path / name).write_text(name, encoding="utf-8")
     fp = compute_input_fingerprint({"x": 1})
-    write_completed_run(tmp_path, _result(), fp, ["stdout.log", "stderr.log", "events.jsonl"], artifact_trees=["harness"])
+    write_completed_run(tmp_path, _result(), fp, ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"], artifact_trees=["harness"])
     manifest = json.loads((tmp_path / "harness-manifest.json").read_text(encoding="utf-8"))
     assert [entry["path"] for entry in manifest["files"]] == ["harness/adapter-result.json", "harness/logs/test_output.txt"]
     assert load_reusable_run(tmp_path, fp) is not None
@@ -248,9 +248,11 @@ def test_recovery_hashes_harness_tree_manifest(tmp_path: Path):
 
 def test_recovery_reuses_only_complete_schema_valid_hashed_artifacts(tmp_path: Path):
     fingerprint = compute_input_fingerprint({"instance_id": "x", "mode": "noop", "tests": ["a"]})
-    for name in ("stdout.log", "stderr.log", "events.jsonl", "harness.json"):
+    for name in ("stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"):
         (tmp_path / name).write_text(name, encoding="utf-8")
-    write_completed_run(tmp_path, _result(), fingerprint, ["stdout.log", "stderr.log", "events.jsonl", "harness.json"])
+    (tmp_path / "harness").mkdir()
+    (tmp_path / "harness" / "output.log").write_text("ran", encoding="utf-8")
+    write_completed_run(tmp_path, _result(), fingerprint, ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"], artifact_trees=["harness"])
     assert load_reusable_run(tmp_path, fingerprint) == _result()
     (tmp_path / "stdout.log").write_text("corrupt", encoding="utf-8")
     assert load_reusable_run(tmp_path, fingerprint) is None
@@ -259,14 +261,16 @@ def test_recovery_reuses_only_complete_schema_valid_hashed_artifacts(tmp_path: P
 @pytest.mark.parametrize("breakage", ["marker", "result", "temporary", "nonterminal"])
 def test_recovery_rejects_incomplete_or_invalid_runs(tmp_path: Path, breakage: str):
     fp = compute_input_fingerprint({"x": 1})
-    for name in ("stdout.log", "stderr.log", "events.jsonl"):
+    for name in ("stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"):
         (tmp_path / name).write_text(name, encoding="utf-8")
+    (tmp_path / "harness").mkdir()
+    (tmp_path / "harness" / "output.log").write_text("ran", encoding="utf-8")
     result = _result("infra_failed" if breakage != "nonterminal" else "running")
     if breakage == "nonterminal":
         (tmp_path / "result.json").write_text(json.dumps(result), encoding="utf-8")
         (tmp_path / "COMPLETE").write_text(json.dumps({"schema_version": "1.0", "input_fingerprint": fp, "result": "result.json", "artifacts": {}}), encoding="utf-8")
     else:
-        write_completed_run(tmp_path, result, fp, ["stdout.log", "stderr.log", "events.jsonl"])
+        write_completed_run(tmp_path, result, fp, ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"], artifact_trees=["harness"])
     if breakage == "marker":
         (tmp_path / "COMPLETE").unlink()
     elif breakage == "result":

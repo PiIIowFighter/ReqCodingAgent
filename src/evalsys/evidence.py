@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .persistence import atomic_json as _atomic_json, file_lock, utf8_lf as _lf_bytes, write_text_lf as _write_text_lf
-from .recovery import fingerprint, sha256_file
+from .recovery import fingerprint, safe_relative_path, sha256_file
 
 _REQUIRED_AUDIT = ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json")
 _RESULT_FIELDS = (
@@ -50,20 +51,31 @@ def _checksums(directory: Path, names: list[str]) -> None:
 
 def verify_checksums(directory: Path) -> list[str]:
     root = directory.resolve()
+    checksum_path = safe_relative_path(root, "checksums.sha256")
+    lines = checksum_path.read_bytes().decode("utf-8").splitlines()
+    if not lines:
+        raise ValueError("checksum manifest must contain exactly the required audit files")
     mismatches: list[str] = []
     seen: set[str] = set()
-    for line in (root / "checksums.sha256").read_bytes().decode("utf-8").splitlines():
-        digest, name = line.split("  ", 1)
-        candidate = Path(name)
-        if candidate.is_absolute() or ".." in candidate.parts or "\\" in name or name in seen:
-            raise ValueError(f"unsafe or duplicate checksum path: {name}")
+    for line in lines:
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^ ]+)" , line)
+        if match is None:
+            raise ValueError(f"malformed checksum line: {line!r}")
+        digest, name = match.groups()
+        if name in seen:
+            raise ValueError(f"duplicate checksum path: {name}")
         seen.add(name)
-        path = root / candidate
-        resolved = path.resolve()
-        if root not in resolved.parents or any(part.is_symlink() for part in [path, *path.parents] if part != root):
-            raise ValueError(f"checksum path escapes or uses symlink: {name}")
-        if not path.is_file() or sha256_file(path) != digest:
+        try:
+            path = safe_relative_path(root, name)
+        except ValueError as exc:
+            if "not a file" in str(exc):
+                mismatches.append(name)
+                continue
+            raise
+        if sha256_file(path) != digest:
             mismatches.append(name)
+    if seen != set(_REQUIRED_AUDIT):
+        raise ValueError("checksum names must be exactly the required audit files")
     return mismatches
 
 
@@ -108,14 +120,12 @@ def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str,
         if entry.get("validity") != "active":
             continue
         run_id = entry["run_id"]
-        expected = Path(f"audit/iteration{iteration}/runs") / run_id
-        supplied = Path(entry["audit_path"])
-        if supplied != expected or supplied.is_absolute() or ".." in supplied.parts:
+        expected = f"audit/iteration{iteration}/runs/{run_id}"
+        supplied = entry["audit_path"]
+        if supplied != expected:
             raise ValueError(f"unsafe audit path for {run_id}")
-        resolved = (root / supplied).resolve()
-        if resolved != (root / expected).resolve() or any(part.is_symlink() for part in [root / supplied, *(root / supplied).parents] if part != root):
-            raise ValueError(f"audit path escapes through symlink for {run_id}")
-        result[run_id] = verify_checksums(resolved)
+        run_dir = safe_relative_path(root, supplied, expected_type="directory")
+        result[run_id] = verify_checksums(run_dir)
     return result
 
 
@@ -214,18 +224,35 @@ class EvidenceRecorder:
         self.audit_root = self.project_root / f"audit/iteration{iteration}"
 
     def start(self, run_type: str, config: dict[str, Any], command: list[str], *, now: str | None = None, supersedes: list[str] | None = None) -> EvidenceRun:
-        timestamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        compact = timestamp.replace("-", "").replace(":", "").removesuffix("Z") + "Z"
-        config_hash = fingerprint(config)[:10]
-        run_id = f"{compact}_{run_type}_{config_hash}"
-        raw_dir = self.raw_root / run_id
-        audit_dir = self.audit_root / "runs" / run_id
-        raw_dir.mkdir(parents=True, exist_ok=False)
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", run_type):
+            raise ValueError("unsafe run_type")
+        timestamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z", timestamp):
+            raise ValueError("invalid UTC timestamp")
         try:
-            audit_dir.mkdir(parents=True, exist_ok=False)
-        except Exception:
-            raw_dir.rmdir()
-            raise
+            datetime.fromisoformat(timestamp.removesuffix("Z") + "+00:00")
+        except ValueError as exc:
+            raise ValueError("invalid UTC timestamp") from exc
+        compact = timestamp.replace("-", "").replace(":", "").replace(".", "").removesuffix("Z") + "Z"
+        config_hash = fingerprint(config)[:10]
+        base_id = f"{compact}_{run_type}_{config_hash}"
+        for attempt in range(8):
+            suffix = "" if attempt == 0 else f"-{secrets.token_hex(4)}"
+            run_id = base_id + suffix
+            raw_dir = self.raw_root / run_id
+            audit_dir = self.audit_root / "runs" / run_id
+            try:
+                raw_dir.mkdir(parents=True, exist_ok=False)
+                try:
+                    audit_dir.mkdir(parents=True, exist_ok=False)
+                except Exception:
+                    raw_dir.rmdir()
+                    raise
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileExistsError(f"unable to allocate unique evidence run after 8 attempts: {base_id}")
         relationship = list(supersedes or [])
         manifest = {"run_id": run_id, "run_type": run_type, "iteration": self.iteration, "config_hash": config_hash, "command": command, "started_at": timestamp, "supersedes": relationship}
         _atomic_json(raw_dir / "run-manifest.json", manifest)
