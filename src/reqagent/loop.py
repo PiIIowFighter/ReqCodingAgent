@@ -37,8 +37,12 @@ class AgentResult:
         }
 
 
+class AgentInterrupted(RuntimeError):
+    pass
+
+
 class AgentLoop:
-    def __init__(self, adapter: ModelAdapter, registry: ToolRegistry, workspace: GitWorkspace, config: AgentConfig, context: ContextLedger, run_store: RunStore):
+    def __init__(self, adapter: ModelAdapter, registry: ToolRegistry, workspace: GitWorkspace, config: AgentConfig, context: ContextLedger, run_store: RunStore, *, interrupt_after: str | None = None):
         self.adapter = adapter
         self.registry = registry
         self.workspace = workspace
@@ -56,6 +60,10 @@ class AgentLoop:
         self.submitted: dict[str, Any] | None = None
         self._repeat_fingerprint: str | None = None
         self._repeat_count = 0
+        self.next_state = "call_model"
+        self.pending_tool_calls: tuple[NormalizedToolCall, ...] = ()
+        self.next_tool_index = 0
+        self.interrupt_after = interrupt_after
 
     def _checkpoint(self, next_state: str) -> None:
         project = Path(__file__).resolve().parent
@@ -89,7 +97,30 @@ class AgentLoop:
             "repeat_count": self._repeat_count,
             "warnings": self.warnings,
             "tool_history": self.registry.history,
+            "pending_tool_calls": [
+                {"call_id": call.call_id, "name": call.name, "arguments": call.arguments}
+                for call in self.pending_tool_calls
+            ],
+            "next_tool_index": self.next_tool_index,
         })
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        self.steps = checkpoint["steps"]
+        self.tool_calls = checkpoint["tool_calls"]
+        self.invalid_outputs = checkpoint["invalid_outputs"]
+        self.usage = dict(checkpoint["usage"])
+        self.elapsed_before_resume = float(checkpoint["elapsed_seconds"])
+        self._repeat_fingerprint = checkpoint["repeat_fingerprint"]
+        self._repeat_count = checkpoint["repeat_count"]
+        self.warnings = list(checkpoint["warnings"])
+        self.registry.history.extend(checkpoint["tool_history"])
+        self.next_state = checkpoint["next_state"]
+        self.pending_tool_calls = tuple(NormalizedToolCall(**call) for call in checkpoint["pending_tool_calls"])
+        self.next_tool_index = checkpoint["next_tool_index"]
+
+    def _interrupt(self, point: str) -> None:
+        if self.interrupt_after == point:
+            raise AgentInterrupted(point)
 
     def _call_model(self) -> ModelResponse:
         request = ModelRequest(tuple(self.context.messages), self.registry.definitions, int(self.config.model["max_output_tokens"]), self.config.budgets["model_timeout_seconds"])
@@ -112,30 +143,42 @@ class AgentLoop:
                 if self.elapsed_before_resume + time.monotonic() - self.started >= self.config.budgets["wall_clock_seconds"]:
                     stop_reason = "wall_clock_timeout"
                     break
-                if self.steps >= self.config.budgets["max_steps"]:
-                    stop_reason = "step_budget"
-                    break
-                self.steps += 1
-                response = self._call_model()
-                self.run_store.event("model_response", sequence=self.steps, response=response.to_dict())
-                for key, value in response.usage.items():
-                    self.usage[key] = self.usage.get(key, 0) + value
-                self.context.add(ModelMessage("assistant", response.text, response.tool_calls))
-                self._checkpoint("execute")
-                if response.finish_reason == "refusal":
-                    stop_reason = "model_refusal"
-                    break
-                if not response.tool_calls:
-                    self.invalid_outputs += 1
-                    self._checkpoint("call_model")
-                    if self.invalid_outputs >= self.config.budgets["max_invalid_outputs"]:
-                        stop_reason = "invalid_output_limit"
+                if self.next_state == "call_model":
+                    if self.steps >= self.config.budgets["max_steps"]:
+                        stop_reason = "step_budget"
                         break
-                    continue
-                for call in response.tool_calls:
+                    self.steps += 1
+                    response = self._call_model()
+                    self.run_store.event("model_response", sequence=self.steps, response=response.to_dict())
+                    for key, value in response.usage.items():
+                        self.usage[key] = self.usage.get(key, 0) + value
+                    self.context.add(ModelMessage("assistant", response.text, response.tool_calls))
+                    if response.finish_reason == "refusal":
+                        stop_reason = "model_refusal"
+                        break
+                    if not response.tool_calls:
+                        self.invalid_outputs += 1
+                        self.pending_tool_calls = ()
+                        self.next_tool_index = 0
+                        self.next_state = "call_model"
+                        self._checkpoint(self.next_state)
+                        if self.invalid_outputs >= self.config.budgets["max_invalid_outputs"]:
+                            stop_reason = "invalid_output_limit"
+                            break
+                        continue
+                    self.pending_tool_calls = response.tool_calls
+                    self.next_tool_index = 0
+                    self.next_state = "execute"
+                    self._checkpoint(self.next_state)
+                    self._interrupt("after_model_checkpoint")
+
+                while self.next_state == "execute":
+                    if self.next_tool_index >= len(self.pending_tool_calls):
+                        raise ValueError("execute state has no pending tool call")
                     if self.tool_calls >= self.config.budgets["max_tool_calls"]:
                         stop_reason = "tool_budget"
                         break
+                    call = self.pending_tool_calls[self.next_tool_index]
                     before = self.workspace.diff_hash()
                     fingerprint = hashlib.sha256(json.dumps({"name": call.name, "arguments": call.arguments, "diff": before}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
                     result = self.registry.execute(call.name, call.arguments)
@@ -158,11 +201,23 @@ class AgentLoop:
                     self.context.add(ModelMessage("tool", tool_results=({"call_id": call.call_id, **result.to_dict()},)))
                     self.run_store.event("tool_result", sequence=self.tool_calls, call_id=call.call_id, result=result.to_dict())
                     self.context.compact_if_needed(self.registry.history, after)
-                    self._checkpoint("call_model")
+                    self.next_tool_index += 1
                     if call.name == "submit" and result.ok:
                         self.submitted = result.data
+                        self.pending_tool_calls = ()
+                        self.next_tool_index = 0
+                        self.next_state = "call_model"
+                        self._checkpoint(self.next_state)
                         stop_reason = "submitted"
                         break
+                    if self.next_tool_index < len(self.pending_tool_calls):
+                        self.next_state = "execute"
+                    else:
+                        self.pending_tool_calls = ()
+                        self.next_tool_index = 0
+                        self.next_state = "call_model"
+                    self._checkpoint(self.next_state)
+                    self._interrupt("after_tool_checkpoint")
                     if self.invalid_outputs >= self.config.budgets["max_invalid_outputs"]:
                         stop_reason = "invalid_output_limit"
                         break
@@ -170,6 +225,8 @@ class AgentLoop:
                         break
                 if stop_reason in {"submitted", "tool_budget", "repeated_action", "invalid_output_limit"}:
                     break
+        except AgentInterrupted:
+            raise
         except WorkspaceViolation:
             stop_reason = "workspace_violation"
         except Exception as exc:

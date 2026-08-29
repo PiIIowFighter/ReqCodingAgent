@@ -112,15 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             ledger.summary = ContextSummary.from_dict(checkpoint["context_summary"])
             model = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0)
             loop = AgentLoop(model, registry, workspace, config, ledger, store)
-            loop.steps = checkpoint["steps"]
-            loop.tool_calls = checkpoint["tool_calls"]
-            loop.invalid_outputs = checkpoint["invalid_outputs"]
-            loop.usage = dict(checkpoint["usage"])
-            loop.elapsed_before_resume = float(checkpoint["elapsed_seconds"])
-            loop._repeat_fingerprint = checkpoint["repeat_fingerprint"]
-            loop._repeat_count = checkpoint["repeat_count"]
-            loop.warnings = list(checkpoint["warnings"])
-            registry.history.extend(checkpoint["tool_history"])
+            loop.restore(checkpoint)
             result = loop.run()
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0
