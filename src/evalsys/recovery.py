@@ -107,12 +107,15 @@ def _tree_manifest(directory: Path, trees: list[str]) -> dict:
 def _tree_manifest_valid(directory: Path) -> bool:
     path = safe_relative_path(directory, "harness-manifest.json")
     manifest = strict_json_loads(_read_stable(path).decode("utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("roots") != ["harness"]:
+    if not isinstance(manifest, dict) or set(manifest) != {"schema_version", "roots", "files"} or manifest.get("roots") != ["harness"]:
         return False
     files = manifest.get("files")
     if not isinstance(files, list) or any(not isinstance(item, dict) or not isinstance(item.get("path"), str) for item in files):
         return False
-    return _tree_manifest(directory, ["harness"]) == manifest
+    actual = _tree_manifest(directory, ["harness"])
+    expected_files = sorted(files, key=lambda item: item["path"])
+    actual_files = sorted(actual["files"], key=lambda item: item["path"])
+    return manifest.get("schema_version") == actual["schema_version"] and expected_files == actual_files
 
 
 def write_completed_run(directory: Path, result: dict, input_fingerprint: str, key_artifacts: list[str], *, artifact_trees: list[str] | None = None) -> dict:

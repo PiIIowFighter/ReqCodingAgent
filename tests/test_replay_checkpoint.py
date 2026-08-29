@@ -264,6 +264,14 @@ def test_recovery_hashes_harness_tree_manifest(tmp_path: Path):
     manifest = json.loads((tmp_path / "harness-manifest.json").read_text(encoding="utf-8"))
     assert [entry["path"] for entry in manifest["files"]] == ["harness/adapter-result.json", "harness/logs/test_output.txt"]
     assert load_reusable_run(tmp_path, fp) is not None
+    manifest["files"].reverse()
+    manifest_path = tmp_path / "harness-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    marker_path = tmp_path / "COMPLETE"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["artifacts"]["harness-manifest.json"] = __import__("hashlib").sha256(manifest_path.read_bytes()).hexdigest()
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert load_reusable_run(tmp_path, fp) is not None
     (harness / "logs" / "test_output.txt").unlink()
     assert load_reusable_run(tmp_path, fp) is None
 

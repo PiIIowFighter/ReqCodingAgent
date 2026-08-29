@@ -147,6 +147,22 @@ def test_completed_replay_rejects_duplicate_json_keys(tmp_path: Path):
     assert load_reusable_run(tmp_path, "f" * 64) is None
 
 
+def test_completed_replay_rejects_unknown_harness_manifest_fields(tmp_path: Path):
+    _replay_files(tmp_path)
+    write_completed_run(tmp_path, _result(), "f" * 64,
+                        ["stdout.log", "stderr.log", "events.jsonl", "dataset.json", "prediction.jsonl"],
+                        artifact_trees=["harness"])
+    manifest_path = tmp_path / "harness-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["extra"] = True
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    marker_path = tmp_path / "COMPLETE"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["artifacts"]["harness-manifest.json"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert load_reusable_run(tmp_path, "f" * 64) is None
+
+
 def test_completed_replay_rejects_substitute_harness_roots(tmp_path: Path):
     _replay_files(tmp_path)
     write_completed_run(tmp_path, _result(), "f" * 64,

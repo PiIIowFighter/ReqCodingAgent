@@ -16,6 +16,11 @@ ACCEPTANCE_KEYS = (
     "materials_untracked_plan_isolated", "origin_exact", "sanitized_audit",
 )
 _REQUIRED_ORIGIN = "git@github.com:PiIIowFighter/ReqCodingAgent.git"
+_SECRET = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*(['\"]?)(?!\[?redacted\]?|secret\b|test\b|placeholder\b)[A-Za-z0-9_./+=-]{12,}\2|ssh-(rsa|ed25519)\s+[A-Za-z0-9+/]{64,}")
+
+
+def _contains_secret(text: str) -> bool:
+    return bool(_SECRET.search(text))
 
 
 def _git(root: Path, *args: str) -> tuple[int, str]:
@@ -42,13 +47,12 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
     remote_head = remote_line.split()[0] if remote_line else ""
     _, protected_changes = _git(root, "status", "--porcelain=v1", "--", "计划", "资料")
     suspicious = re.compile(r"(?i)(^|/)(artifacts|\.env|cache)(/|$)|\.(log|parquet)$")
-    secret = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*(?!\[?redacted\]?|secret\b|test\b|placeholder\b)\S{12,}|ssh-(rsa|ed25519)\s+[A-Za-z0-9+/]{64,}")
     unsafe_content = False
     for relative in tracked_paths:
         path = root / relative
         if path.is_file() and path.stat().st_size <= 1_000_000:
             try:
-                unsafe_content = unsafe_content or bool(secret.search(path.read_text(encoding="utf-8")))
+                unsafe_content = unsafe_content or _contains_secret(path.read_text(encoding="utf-8"))
             except UnicodeDecodeError:
                 pass
     oversized = any((root / path).is_file() and (root / path).stat().st_size > 1_000_000 for path in tracked_paths)

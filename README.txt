@@ -1,7 +1,7 @@
 ReqCodingAgent 迭代一 v1.3
 仓库：https://github.com/PiIIowFighter/ReqCodingAgent
 
-本阶段提供冻结的 15 题 SWE-bench 配对数据、官方 harness replay、Agent/evaluator 隔离和可审计结果。需 Python 3.11；Windows 使用 WSL2 与 Linux Docker Engine，缓存放在项目外。
+本阶段提供冻结的 15 题 SWE-bench 配对数据、官方 harness replay、Agent/evaluator 隔离和可审计结果。需 Python 3.11；Windows 使用 WSL2 与 Linux Docker Engine，缓存放在项目外。在 replay 使用的同一默认 Ubuntu distribution 中，于固定 checkout 执行 `uv sync --locked --python python3.11`；先验证该 checkout 的 `.venv/bin/python`，再将 `EVALSYS_WSL_PYTHON` 指向它。
 
 默认快速测试：
 pytest -m "not integration"

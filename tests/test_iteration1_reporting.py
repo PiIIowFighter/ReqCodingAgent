@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from evalsys.acceptance import ACCEPTANCE_KEYS, evaluate_acceptance
+from evalsys.acceptance import ACCEPTANCE_KEYS, _contains_secret, evaluate_acceptance
 from evalsys.reporting import _outcome_counts, generate_report, generate_smoke_report, publish_audit
 from evalsys import cli
 from evalsys.recovery import compute_input_fingerprint, write_completed_run
@@ -271,6 +271,12 @@ def test_cli_exposes_report_and_validate_all_resume_options():
     assert parser.parse_args(["report", "run"]).run_directory == Path("run")
     args = parser.parse_args(["validate-all", "--resume", "--run-id", "v", "--noop-run-id", "n", "--gold-run-id", "g"])
     assert (args.resume, args.run_id, args.noop_run_id, args.gold_run_id) == (True, "v", "n", "g")
+
+
+@pytest.mark.parametrize("name,quote", [("API_KEY", '"'), ("token", "'")])
+def test_secret_scan_detects_quoted_credentials(name: str, quote: str):
+    value = "sk-proj-" + "abcdefghijklmnop"
+    assert _contains_secret(f"{name}={quote}{value}{quote}")
 
 
 def test_acceptance_rejects_fabricated_checks_rows_and_weak_audit(tmp_path: Path):
