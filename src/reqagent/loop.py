@@ -90,6 +90,7 @@ class AgentLoop:
             "diff_hash": self.workspace.diff_hash(),
             "protected_fingerprint": self.workspace.protected_fingerprint(protected),
             "adapter_position": getattr(self.adapter, "position", None),
+            "adapter_identity_hash": canonical_hash(getattr(self.adapter, "identity", {"provider": "scripted"})),
             "budgets": self.config.budgets,
             "task_hash": hashlib.sha256(self.context.task.encode("utf-8")).hexdigest(),
             "elapsed_seconds": self.elapsed_before_resume + time.monotonic() - self.started,

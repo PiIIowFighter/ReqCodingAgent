@@ -27,7 +27,8 @@
     "max_patch_files": 5,
     "max_patch_lines": 500,
     "max_patch_bytes": 131072,
-    "protected_paths": []
+    "protected_paths": [],
+    "container_image": "__FILL_BEFORE_LIVE_RUN__"
   },
   "script": []
 }

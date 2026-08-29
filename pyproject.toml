@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Frozen reproducible SWE-bench evaluation environment"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "anthropic>=0.105,<0.106",
   "jsonschema[format]>=4.23,<5",
   "pyarrow>=17,<20",
 ]

@@ -21,7 +21,7 @@ _BUDGET_KEYS = {
     "command_timeout_seconds", "max_invalid_outputs", "max_retries",
     "context_trigger_ratio", "keep_recent_rounds",
 }
-_WORKSPACE_KEYS = {"max_patch_files", "max_patch_lines", "max_patch_bytes", "protected_paths"}
+_WORKSPACE_KEYS = {"max_patch_files", "max_patch_lines", "max_patch_bytes", "protected_paths", "container_image"}
 
 
 def _exact(value: dict[str, Any], expected: set[str], where: str) -> None:
@@ -33,7 +33,10 @@ def _exact(value: dict[str, Any], expected: set[str], where: str) -> None:
 
 def _redact_url(value: str) -> str:
     parts = urlsplit(value)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    host = parts.hostname or ""
+    if parts.port is not None:
+        host += f":{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,14 @@ class AgentConfig:
         _exact(self.workspace, _WORKSPACE_KEYS, "workspace")
         if self.mode not in {"scripted", "live"}:
             raise ValueError("mode must be scripted or live")
+        if self.mode == "live" and not any(
+            isinstance(self.model[key], str) and self.model[key].startswith(_PLACEHOLDER)
+            for key in ("provider", "protocol", "native_tool_calling")
+        ):
+            if self.model["provider"] != "local_reverse_proxy" or self.model["protocol"] != "anthropic_messages":
+                raise ValueError("live mode supports only local_reverse_proxy with anthropic_messages")
+            if self.model["native_tool_calling"] is not True:
+                raise ValueError("live mode requires native tool calling")
         integer_fields = [key for key in _BUDGET_KEYS if key not in {"context_trigger_ratio"}]
         for key in integer_fields:
             value = self.budgets[key]
@@ -92,6 +103,12 @@ class AgentConfig:
         for key in ("max_patch_files", "max_patch_lines", "max_patch_bytes"):
             if not isinstance(self.workspace[key], int) or self.workspace[key] <= 0:
                 raise ValueError(f"workspace {key} must be a positive integer")
+        image = self.workspace["container_image"]
+        if image is not None and (
+            not isinstance(image, str)
+            or (not image.startswith(_PLACEHOLDER) and "@sha256:" not in image)
+        ):
+            raise ValueError("container_image must be null, a placeholder, or pinned by sha256 digest")
         if not isinstance(self.workspace["protected_paths"], list) or not all(
             isinstance(item, str) and item for item in self.workspace["protected_paths"]
         ):
@@ -105,16 +122,23 @@ class AgentConfig:
             ModelResponse.from_dict(response)
         if live:
             missing = []
+            unsupported_allowed = {"temperature", "seed"}
             for key, value in self.model.items():
-                if isinstance(value, str) and (not value or value.startswith(_PLACEHOLDER)):
+                if isinstance(value, str) and (
+                    not value
+                    or value.startswith(_PLACEHOLDER)
+                    or (value == "unsupported" and key not in unsupported_allowed)
+                ):
                     missing.append(key)
             for key in ("base_url_env", "api_key_env"):
                 env_name = self.model[key]
                 if isinstance(env_name, str) and not env_name.startswith(_PLACEHOLDER) and not os.environ.get(env_name):
                     missing.append(f"env:{env_name}")
+            image = self.workspace["container_image"]
+            if image is None or (isinstance(image, str) and image.startswith(_PLACEHOLDER)):
+                missing.append("container_image")
             if missing:
                 raise ValueError("live configuration is incomplete: " + ", ".join(sorted(set(missing))))
-            raise ValueError("live model adapter is not implemented or confirmed")
 
     def public_dict(self) -> dict[str, Any]:
         value = json.loads(json.dumps(self.raw))

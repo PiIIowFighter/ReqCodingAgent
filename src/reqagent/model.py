@@ -83,6 +83,7 @@ class ModelResponse:
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: str = "stop"
     provider_request_id: str | None = None
+    actual_model: str | None = None
 
     def __post_init__(self) -> None:
         if self.finish_reason not in FINISH_REASONS:
@@ -100,11 +101,12 @@ class ModelResponse:
             "usage": self.usage,
             "finish_reason": self.finish_reason,
             "provider_request_id": self.provider_request_id,
+            "actual_model": self.actual_model,
         }
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ModelResponse":
-        allowed = {"text", "tool_calls", "usage", "finish_reason", "provider_request_id"}
+        allowed = {"text", "tool_calls", "usage", "finish_reason", "provider_request_id", "actual_model"}
         if set(value) - allowed:
             raise ValueError("invalid model response fields")
         calls = []
@@ -118,6 +120,7 @@ class ModelResponse:
             usage=dict(value.get("usage", {})),
             finish_reason=value.get("finish_reason", "stop"),
             provider_request_id=value.get("provider_request_id"),
+            actual_model=value.get("actual_model"),
         )
 
 
@@ -139,6 +142,7 @@ class ScriptedModel:
             for response in responses
         )
         self.position = position
+        self.identity = {"provider": "scripted"}
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         del request

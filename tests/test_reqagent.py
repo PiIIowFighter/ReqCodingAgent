@@ -84,6 +84,13 @@ def test_workspace_rejects_absolute_traversal_git_and_symlink(tmp_path: Path):
         policy.resolve("link/file.txt")
 
 
+def test_apply_patch_accepts_apply_patch_marker_format(tmp_path: Path):
+    workspace = GitWorkspace.create(repository(tmp_path))
+    patch = "*** Begin Patch\n*** Update File: hello.py\n@@\n-VALUE = 1\n+VALUE = 2\n*** End Patch"
+    apply_patch_atomic(workspace, patch)
+    assert (workspace.root / "hello.py").read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_apply_patch_is_atomic_on_failure(tmp_path: Path):
     source = repository(tmp_path)
     workspace = GitWorkspace.create(source)

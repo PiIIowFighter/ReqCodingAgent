@@ -33,6 +33,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, tuple[ToolDefinition, Handler]] = {}
         self.history: list[dict[str, Any]] = []
+        self.adapter_identity: dict[str, Any] = {"provider": "scripted"}
 
     def register(self, definition: ToolDefinition, handler: Handler) -> None:
         if definition.name in self._tools:

@@ -22,7 +22,7 @@ REQUIRED_RESUME_FIELDS = frozenset({
     "diff_hash", "protected_fingerprint", "budgets", "next_state", "elapsed_seconds",
     "steps", "tool_calls", "invalid_outputs", "usage", "adapter_position",
     "repeat_fingerprint", "repeat_count", "warnings", "messages", "context_summary",
-    "tool_history", "pending_tool_calls", "next_tool_index",
+    "tool_history", "pending_tool_calls", "next_tool_index", "adapter_identity_hash",
 })
 _ALLOWED_NEXT_STATES = frozenset({"call_model", "execute"})
 _IDENTITY_LABELS = {
@@ -30,6 +30,7 @@ _IDENTITY_LABELS = {
     "code_hash": "code", "config_hash": "config", "system_prompt_hash": "system prompt",
     "protocol_prompt_hash": "protocol prompt", "tool_schema_hash": "tool schema",
     "task_hash": "task", "diff_hash": "workspace", "protected_fingerprint": "protected fingerprint",
+    "adapter_identity_hash": "adapter identity",
 }
 
 

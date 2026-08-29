@@ -9,6 +9,7 @@ from pathlib import Path
 from .checkpoint import CheckpointStore, canonical_hash, validate_resume_payload
 from .config import AgentConfig
 from .context import ContextLedger, ContextSummary
+from .live import build_live_runtime
 from .loop import AgentLoop
 from .model import ModelMessage, ScriptedModel
 from .tools import build_registry
@@ -18,6 +19,10 @@ from .workspace import GitWorkspace
 
 def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def run_kind(mode: str) -> str:
+    return "live" if mode == "live" else "offline"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +68,7 @@ def _resume_identity(store: RunStore, config: AgentConfig, workspace: GitWorkspa
         "task_hash": hashlib.sha256(task.encode("utf-8")).hexdigest(),
         "diff_hash": workspace.diff_hash(),
         "protected_fingerprint": workspace.protected_fingerprint(protected),
+        "adapter_identity_hash": canonical_hash(getattr(registry, "adapter_identity", {"provider": config.mode})),
     }
 
 
@@ -72,9 +78,16 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
     ledger = ContextLedger(system + "\n" + protocol, task, context_window=int(config.model["context_window_tokens"]), trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
     if messages is not None:
         ledger.messages = [ModelMessage.from_dict(message) for message in messages]
-    model = ScriptedModel(config.script, position=position)
-    registry = build_registry(workspace, config.raw, artifact_dir=run_store.path / "commands")
-    atomic_json(run_store.path / "run-manifest.json", {"run_id": run_store.run_id, "source": str(source), "workspace": str(workspace.root), "task": task, "base_commit": workspace.base_commit, "config_path": str(config.source)})
+    if config.mode == "live":
+        model, executor = build_live_runtime(config, run_id=run_store.run_id)
+    else:
+        model, executor = ScriptedModel(config.script, position=position), None
+    registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=run_store.path / "commands")
+    registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
+    manifest = {"run_id": run_store.run_id, "source": str(source), "workspace": str(workspace.root), "task": task, "base_commit": workspace.base_commit, "config_path": str(config.source)}
+    if config.mode == "live":
+        manifest["adapter_identity"] = registry.adapter_identity
+    atomic_json(run_store.path / "run-manifest.json", manifest)
     atomic_json(run_store.path / "config.snapshot.json", config.public_dict())
     result = AgentLoop(model, registry, workspace, config, ledger, run_store).run()
     return result
@@ -86,13 +99,15 @@ def main(argv: list[str] | None = None) -> int:
         config = AgentConfig.load(args.config)
         if args.command == "doctor":
             config.validate(live=args.live)
-            print(json.dumps({"status": "passed", "mode": config.mode, "config_hash": config.canonical_hash()}, sort_keys=True))
+            report = {"status": "passed", "mode": config.mode, "config_hash": config.canonical_hash()}
+            if args.live:
+                adapter, executor = build_live_runtime(config, run_id="doctor")
+                report.update({"adapter": adapter.identity, "container_image": executor.image})
+            print(json.dumps(report, sort_keys=True))
             return 0
-        if config.mode != "scripted":
-            raise ValueError("only scripted mode is available at this implementation checkpoint")
         if args.command == "run":
             task = args.task if args.task is not None else args.task_file.read_text(encoding="utf-8")
-            store = RunStore.create(args.artifact_root)
+            store = RunStore.create(args.artifact_root, kind=run_kind(config.mode))
             result = _execute(args.workspace, task, config, store)
         else:
             store = RunStore.open(args.artifact_root / args.run_id)
@@ -103,14 +118,18 @@ def main(argv: list[str] | None = None) -> int:
             if not workspace_path.is_dir():
                 raise ValueError("resume refused: workspace is missing")
             workspace = GitWorkspace(source, workspace_path, manifest["base_commit"])
-            registry = build_registry(workspace, config.raw, artifact_dir=store.path / "commands")
+            if config.mode == "live":
+                model, executor = build_live_runtime(config, run_id=store.run_id)
+            else:
+                model, executor = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0), None
+            registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=store.path / "commands")
+            registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
             expected = _resume_identity(store, config, workspace, manifest["task"], registry)
             validate_resume_payload(checkpoint, expected, config.budgets)
             system, protocol = _prompts()
             ledger = ContextLedger(system + "\n" + protocol, manifest["task"], context_window=checkpoint["context_window"], trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
             ledger.messages = [ModelMessage.from_dict(message) for message in checkpoint["messages"]]
             ledger.summary = ContextSummary.from_dict(checkpoint["context_summary"])
-            model = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0)
             loop = AgentLoop(model, registry, workspace, config, ledger, store)
             loop.restore(checkpoint)
             result = loop.run()

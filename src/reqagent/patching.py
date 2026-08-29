@@ -123,6 +123,63 @@ def _restore_tree(root: Path, backup: Path) -> None:
             shutil.copy2(child, destination)
 
 
+def _apply_marker_patch(workspace: GitWorkspace, patch: str, protected_paths: tuple[str, ...]) -> bool:
+    lines = patch.replace("\r\n", "\n").splitlines()
+    if not lines or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
+        return False
+    policy = workspace.policy(protected_paths)
+    index = 1
+    while index < len(lines) - 1:
+        header = lines[index]
+        if header.startswith("*** Update File: "):
+            path = header.removeprefix("*** Update File: ")
+            target = policy.resolve(path, must_exist=True)
+            original = target.read_text(encoding="utf-8")
+            index += 1
+            if index < len(lines) - 1 and lines[index].startswith("@@"):
+                index += 1
+            old_parts: list[str] = []
+            new_parts: list[str] = []
+            while index < len(lines) - 1 and not lines[index].startswith("*** "):
+                line = lines[index]
+                if line.startswith("-"):
+                    old_parts.append(line[1:])
+                elif line.startswith("+"):
+                    new_parts.append(line[1:])
+                else:
+                    value = line[1:] if line.startswith(" ") else line
+                    old_parts.append(value)
+                    new_parts.append(value)
+                index += 1
+            old = "\n".join(old_parts)
+            new = "\n".join(new_parts)
+            if old not in original or original.count(old) != 1:
+                raise ValueError(f"patch check failed: update context is not unique in {path}")
+            target.write_text(original.replace(old, new, 1), encoding="utf-8", newline="\n")
+            continue
+        if header.startswith("*** Delete File: "):
+            policy.resolve(header.removeprefix("*** Delete File: "), must_exist=True).unlink()
+            index += 1
+            continue
+        if header.startswith("*** Add File: "):
+            path = header.removeprefix("*** Add File: ")
+            target = policy.resolve(path)
+            if target.exists() or target.is_symlink():
+                raise ValueError(f"patch check failed: add target exists: {path}")
+            index += 1
+            content = []
+            while index < len(lines) - 1 and not lines[index].startswith("*** "):
+                if not lines[index].startswith("+"):
+                    raise ValueError(f"patch check failed: invalid add line for {path}")
+                content.append(lines[index][1:])
+                index += 1
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("\n".join(content) + "\n", encoding="utf-8", newline="\n")
+            continue
+        raise ValueError(f"patch check failed: unsupported marker line {header}")
+    return True
+
+
 def apply_patch_atomic(
     workspace: GitWorkspace,
     patch: str,
@@ -138,19 +195,20 @@ def apply_patch_atomic(
     backup = _snapshot_tree(workspace.root)
     patch_file = Path(tempfile.mkdtemp(prefix="reqagent-patch-")) / "candidate.patch"
     try:
-        patch_file.write_text(patch.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
-        check = subprocess.run(
-            ["git", "-C", str(workspace.root), "apply", "--check", "--whitespace=nowarn", str(patch_file)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-        )
-        if check.returncode:
-            raise ValueError(f"patch check failed: {check.stderr.strip()}")
-        applied = subprocess.run(
-            ["git", "-C", str(workspace.root), "apply", "--whitespace=nowarn", str(patch_file)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-        )
-        if applied.returncode:
-            raise ValueError(f"patch apply failed: {applied.stderr.strip()}")
+        if not _apply_marker_patch(workspace, patch, protected_paths):
+            patch_file.write_text(patch.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+            check = subprocess.run(
+                ["git", "-C", str(workspace.root), "apply", "--check", "--whitespace=nowarn", str(patch_file)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            )
+            if check.returncode:
+                raise ValueError(f"patch check failed: {check.stderr.strip()}")
+            applied = subprocess.run(
+                ["git", "-C", str(workspace.root), "apply", "--whitespace=nowarn", str(patch_file)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            )
+            if applied.returncode:
+                raise ValueError(f"patch apply failed: {applied.stderr.strip()}")
         return _validate_result(workspace, effective_limits, protected_paths)
     except Exception:
         _restore_tree(workspace.root, backup)

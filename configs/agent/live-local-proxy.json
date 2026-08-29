@@ -1,0 +1,34 @@
+{
+  "mode": "live",
+  "model": {
+    "provider": "local_reverse_proxy",
+    "base_url_env": "ANTHROPIC_BASE_URL",
+    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+    "model": "gpt-5.6-sol",
+    "protocol": "anthropic_messages",
+    "native_tool_calling": true,
+    "context_window_tokens": 32768,
+    "max_output_tokens": 4096,
+    "temperature": "unsupported",
+    "seed": "unsupported"
+  },
+  "budgets": {
+    "max_steps": 6,
+    "max_tool_calls": 12,
+    "wall_clock_seconds": 600,
+    "model_timeout_seconds": 180,
+    "command_timeout_seconds": 120,
+    "max_invalid_outputs": 2,
+    "max_retries": 1,
+    "context_trigger_ratio": 0.8,
+    "keep_recent_rounds": 2
+  },
+  "workspace": {
+    "max_patch_files": 5,
+    "max_patch_lines": 500,
+    "max_patch_bytes": 131072,
+    "protected_paths": [],
+    "container_image": "ubuntu@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d"
+  },
+  "script": []
+}

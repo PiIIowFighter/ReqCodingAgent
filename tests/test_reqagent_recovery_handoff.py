@@ -73,6 +73,7 @@ def test_cli_resume_continues_incomplete_run_and_rejects_changed_workspace(tmp_p
     loaded = AgentConfig.load(config_path)
     registry = build_registry(workspace, loaded.raw, artifact_dir=store.path / "commands")
     from reqagent.cli import _resume_identity
+    registry.adapter_identity = model.identity
     payload = {**_resume_identity(store, loaded, workspace, "task", registry), "next_state": "call_model", "steps": 1, "tool_calls": 0, "invalid_outputs": 0, "usage": {}, "messages": [message.to_dict() for message in ledger.messages], "context_window": 10000, "context_summary": ledger.summary.to_dict(), "adapter_position": 1, "budgets": loaded.budgets, "elapsed_seconds": 1.0, "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "tool_history": [], "pending_tool_calls": [], "next_tool_index": 0}
     CheckpointStore(store.path).save(1, payload)
     command = [sys.executable, "-m", "reqagent.cli", "resume", "--run-id", store.run_id, "--artifact-root", str(artifact_root), "--config", str(config_path)]
@@ -104,11 +105,11 @@ def test_resume_validation_rejects_identity_changes_looser_budget_and_state():
         "steps": 1, "tool_calls": 2, "invalid_outputs": 0, "usage": {"input_tokens": 4},
         "adapter_position": 2, "repeat_fingerprint": "repeat", "repeat_count": 1,
         "warnings": ["warn"], "messages": [], "context_summary": {}, "tool_history": [],
-        "pending_tool_calls": [], "next_tool_index": 0,
+        "pending_tool_calls": [], "next_tool_index": 0, "adapter_identity_hash": "adapter",
     }
     expected = {key: payload[key] for key in (
         "run_id", "source", "base_commit", "code_hash", "config_hash", "system_prompt_hash",
-        "protocol_prompt_hash", "tool_schema_hash", "task_hash", "diff_hash", "protected_fingerprint",
+        "protocol_prompt_hash", "tool_schema_hash", "task_hash", "diff_hash", "protected_fingerprint", "adapter_identity_hash",
     )}
     assert validate_resume_payload(payload, expected, {"max_steps": 3}) is payload
     for key in ("code_hash", "system_prompt_hash", "protocol_prompt_hash", "tool_schema_hash", "task_hash", "diff_hash", "protected_fingerprint"):
@@ -249,11 +250,12 @@ def test_resume_validation_rejects_pending_index_and_content_mismatch():
         "invalid_outputs": 0, "usage": {}, "adapter_position": 1,
         "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "context_summary": {},
         "tool_history": [], "pending_tool_calls": [call], "next_tool_index": 0,
+        "adapter_identity_hash": "adapter",
         "messages": [{"role": "assistant", "text": "", "tool_calls": [call], "tool_results": []}],
     }
     expected = {key: payload[key] for key in (
         "run_id", "source", "base_commit", "code_hash", "config_hash", "system_prompt_hash",
-        "protocol_prompt_hash", "tool_schema_hash", "task_hash", "diff_hash", "protected_fingerprint",
+        "protocol_prompt_hash", "tool_schema_hash", "task_hash", "diff_hash", "protected_fingerprint", "adapter_identity_hash",
     )}
     validate_resume_payload(payload, expected, {"max_steps": 3})
     with pytest.raises(ValueError, match="no pending"):

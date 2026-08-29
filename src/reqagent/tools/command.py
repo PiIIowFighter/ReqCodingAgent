@@ -114,6 +114,7 @@ class ContainerCommandExecutor:
         memory: str = "2g",
         cpus: str = "2",
         pids_limit: int = 256,
+        path_converter: Callable[[Path], str] | None = None,
     ):
         if not command_prefix or not image or not run_id:
             raise ValueError("container command prefix, image, and run id are required")
@@ -124,6 +125,7 @@ class ContainerCommandExecutor:
         self.memory = memory
         self.cpus = cpus
         self.pids_limit = pids_limit
+        self.path_converter = path_converter or (lambda path: str(path))
 
     def execute(
         self,
@@ -136,13 +138,15 @@ class ContainerCommandExecutor:
     ) -> CommandExecution:
         relative_cwd = cwd.relative_to(workspace.root).as_posix()
         container_name = f"reqagent-{self.run_id}"
+        mount_root = self.path_converter(workspace.root)
+        git_mount = self.path_converter(workspace.root / ".git")
         argv = [
-            *self.command_prefix, "run", "--rm", "--name", container_name,
+            *self.command_prefix, "run", "--pull", "never", "--rm", "--name", container_name,
             "--network", "none", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges", "--memory", self.memory,
             "--cpus", self.cpus, "--pids-limit", str(self.pids_limit),
-            "--mount", f"type=bind,src={workspace.root},dst=/workspace",
-            "--mount", f"type=bind,src={workspace.root / '.git'},dst=/workspace/.git,readonly",
+            "--mount", f"type=bind,src={mount_root},dst=/workspace",
+            "--mount", f"type=bind,src={git_mount},dst=/workspace/.git,readonly",
             "--workdir", "/workspace" if relative_cwd == "." else f"/workspace/{relative_cwd}",
             "--env", "HOME=/tmp", "--env", "PYTHONDONTWRITEBYTECODE=1",
             self.image, "bash", "-lc", command,
