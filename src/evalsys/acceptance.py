@@ -16,11 +16,40 @@ ACCEPTANCE_KEYS = (
     "materials_untracked_plan_isolated", "origin_exact", "sanitized_audit",
 )
 _REQUIRED_ORIGIN = "git@github.com:PiIIowFighter/ReqCodingAgent.git"
-_SECRET = re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*(['\"]?)(?!\[?redacted\]?|secret\b|test\b|placeholder\b)[A-Za-z0-9_./+=-]{12,}\2|ssh-(rsa|ed25519)\s+[A-Za-z0-9+/]{64,}")
+_SECRET = re.compile(r"(?i)(?<![A-Za-z0-9_])(api[_-]?key|token|password|secret)\s*[=:]\s*(['\"]?)(?!\[?redacted\]?|secret\b|test\b|placeholder\b)[^\s'\"]{12,}\2|ssh-(rsa|ed25519)\s+[A-Za-z0-9+/]{64,}")
 
 
 def _contains_secret(text: str) -> bool:
     return bool(_SECRET.search(text))
+
+
+def _tracked_blob(root: Path, relative: str) -> bytes:
+    result = subprocess.run(["git", "show", f":{relative}"], cwd=root, capture_output=True, check=False)
+    return result.stdout if result.returncode == 0 else b""
+
+
+def _tracked_text(root: Path, relative: str) -> str:
+    return _tracked_blob(root, relative).decode("utf-8")
+
+
+def _is_valid_isolation_proof(proof: dict[str, Any]) -> bool:
+    positive = {"task_repo", "single_public_prompt"}
+    negative = {"benchmark_private", "oracle", "gold_patch", "test_patch", "hints", "plan", "materials", "evaluator_logs", "evaluator_cache", "private_canaries"}
+    sha256 = re.compile(r"[0-9a-f]{64}")
+    return (
+        proof.get("status") == "passed"
+        and proof.get("sanitized") is True
+        and proof.get("host_probe") == {"positive": True, "negative": True}
+        and proof.get("container_probe") == {"positive": True, "negative": True}
+        and proof.get("container_mount_count") == 1
+        and proof.get("project_root_mounted") is False
+        and proof.get("forbidden_mounts") == []
+        and proof.get("forbidden_allowlist_entries") == []
+        and set(proof.get("positive_probe_categories", [])) == positive
+        and set(proof.get("negative_probe_categories", [])) == negative
+        and sha256.fullmatch(str(proof.get("prompt_file_sha256", ""))) is not None
+        and sha256.fullmatch(str(proof.get("workspace_manifest_sha256", ""))) is not None
+    )
 
 
 def _git(root: Path, *args: str) -> tuple[int, str]:
@@ -28,12 +57,37 @@ def _git(root: Path, *args: str) -> tuple[int, str]:
     return result.returncode, result.stdout.strip()
 
 
+def _smoke_rows_bound(root: Path, rows: list[dict[str, Any]]) -> bool:
+    from .evidence import select_current_runs
+    from .recovery import load_reusable_run, sha256_file
+    try:
+        index = json.loads((root / "audit/iteration1/index.json").read_text(encoding="utf-8"))
+        replay = [entry for entry in index["runs"] if entry.get("run_type") in {"replay_noop", "replay_gold"}]
+        leaves = {entry["run_id"]: entry for entry in select_current_runs(replay)}
+        for row in rows:
+            run_id, mode = row["run_id"], row["mode"]
+            entry = leaves.get(run_id)
+            expected_raw = f"artifacts/runs/iteration1/{run_id}"
+            if not entry or entry.get("status") != "passed" or entry.get("raw_path") != expected_raw:
+                return False
+            case = root / expected_raw / "cases/D-O1-full" / mode
+            marker = json.loads((case / "COMPLETE").read_text(encoding="utf-8"))
+            result = load_reusable_run(case, marker["input_fingerprint"])
+            if result is None or result["instance_id"] != "django__django-11133" or result["mode"] != mode:
+                return False
+            if sha256_file(case / "result.json") != row["raw_result_sha256"]:
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+
+
 def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *, unit_tests_passed: bool) -> dict[str, Any]:
     root = project_root.resolve()
     rows = validation_report.get("results", [])
     expected_cells = {("django__django-11133", mode) for mode in ("noop", "gold")}
     actual_cells = {(row.get("instance_id"), row.get("mode")) for row in rows}
-    rows_valid = len(rows) == 2 and actual_cells == expected_cells
+    rows_valid = len(rows) == 2 and actual_cells == expected_cells and _smoke_rows_bound(root, rows)
     noop = [row for row in rows if row.get("mode") == "noop"]
     gold = [row for row in rows if row.get("mode") == "gold"]
     readme = root / "README.txt"
@@ -48,14 +102,15 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
     _, protected_changes = _git(root, "status", "--porcelain=v1", "--", "计划", "资料")
     suspicious = re.compile(r"(?i)(^|/)(artifacts|\.env|cache)(/|$)|\.(log|parquet)$")
     unsafe_content = False
+    oversized = False
     for relative in tracked_paths:
-        path = root / relative
-        if path.is_file() and path.stat().st_size <= 1_000_000:
+        blob = _tracked_blob(root, relative)
+        oversized = oversized or len(blob) > 1_000_000
+        if len(blob) <= 1_000_000:
             try:
-                unsafe_content = unsafe_content or _contains_secret(path.read_text(encoding="utf-8"))
+                unsafe_content = unsafe_content or _contains_secret(blob.decode("utf-8"))
             except UnicodeDecodeError:
                 pass
-    oversized = any((root / path).is_file() and (root / path).stat().st_size > 1_000_000 for path in tracked_paths)
     git_clean = not any(suspicious.search(path) for path in tracked_paths) and not unsafe_content and not oversized
     audit = root / "audit/iteration1"
     smoke_artifacts_ok = False
@@ -66,7 +121,7 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
         from .recovery import sha256_file
         smoke_artifacts_ok = published_smoke == validation_report and published_smoke.get("matrix_sha256") == sha256_file(matrix_path)
         proof = json.loads((audit / "isolation-proof.json").read_text(encoding="utf-8"))
-        proof_ok = proof.get("status") == "passed" and proof.get("host_probe") == {"positive": True, "negative": True} and proof.get("container_probe") == {"positive": True, "negative": True} and proof.get("project_root_mounted") is False and proof.get("container_mount_count") == 1
+        proof_ok = _is_valid_isolation_proof(proof)
     except (OSError, json.JSONDecodeError):
         pass
     from .evidence import scan_audit_local_paths
@@ -76,7 +131,14 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
     if isinstance(receipt, dict):
         try:
             validate_json(receipt, "validation-receipt")
-            receipt_ok = True
+            from .recovery import sha256_file
+            lock = json.loads((root / "benchmark/source-lock.json").read_text(encoding="utf-8"))
+            expected_heads = {name: item["revision"] for name, item in lock["sources"].items()}
+            expected_inputs = {
+                "public_manifest_sha256": sha256_file(root / "benchmark/manifests/paired-cases.jsonl"),
+                "oracle_manifest_sha256": sha256_file(root / "benchmark/private/oracles.jsonl"),
+            }
+            receipt_ok = receipt["source_heads"] == expected_heads and receipt["inputs"] == expected_inputs
         except Exception:
             pass
     criteria = {

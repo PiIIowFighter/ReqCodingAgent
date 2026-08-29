@@ -460,6 +460,28 @@
         "20260828T175439561074Z_validate_data_f48086de03"
       ],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260829T003446124781Z_replay_gold_a6aaf9bb82",
+      "config_hash": "f6f5a8cce6",
+      "raw_path": "artifacts/runs/iteration1/20260829T003446124781Z_replay_gold_a6aaf9bb82",
+      "run_id": "20260829T003446124781Z_replay_gold_a6aaf9bb82",
+      "run_type": "replay_gold",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration1/runs/20260829T005555359175Z_replay_gold_a6aaf9bb82",
+      "config_hash": "ab2b7eca35",
+      "raw_path": "artifacts/runs/iteration1/20260829T005555359175Z_replay_gold_a6aaf9bb82",
+      "run_id": "20260829T005555359175Z_replay_gold_a6aaf9bb82",
+      "run_type": "replay_gold",
+      "status": "passed",
+      "supersedes": [
+        "20260829T003446124781Z_replay_gold_a6aaf9bb82"
+      ],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",

@@ -1,0 +1,35 @@
+{
+  "container_mount_count": 1,
+  "container_probe": {
+    "negative": true,
+    "positive": true
+  },
+  "forbidden_allowlist_entries": [],
+  "forbidden_mounts": [],
+  "host_probe": {
+    "negative": true,
+    "positive": true
+  },
+  "negative_probe_categories": [
+    "benchmark_private",
+    "oracle",
+    "gold_patch",
+    "test_patch",
+    "hints",
+    "plan",
+    "materials",
+    "evaluator_logs",
+    "evaluator_cache",
+    "private_canaries"
+  ],
+  "positive_probe_categories": [
+    "task_repo",
+    "single_public_prompt"
+  ],
+  "project_root_mounted": false,
+  "prompt_file_sha256": "16a84aae0ee39b5a095e0ca5e6fdc07267d5ade1470006e053df522cb6d5a2ab",
+  "sanitized": true,
+  "schema_version": "1.0",
+  "status": "passed",
+  "workspace_manifest_sha256": "c8ac089716495bd75e3b94e4dc763bf943a77391a441ee5d2fdec4dfa857b928"
+}

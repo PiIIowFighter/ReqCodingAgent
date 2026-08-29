@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from evalsys.acceptance import ACCEPTANCE_KEYS, _contains_secret, evaluate_acceptance
+from evalsys.acceptance import ACCEPTANCE_KEYS, _contains_secret, _is_valid_isolation_proof, _tracked_text, evaluate_acceptance
 from evalsys.reporting import _outcome_counts, generate_report, generate_smoke_report, publish_audit
 from evalsys import cli
 from evalsys.recovery import compute_input_fingerprint, write_completed_run
@@ -277,6 +278,40 @@ def test_cli_exposes_report_and_validate_all_resume_options():
 def test_secret_scan_detects_quoted_credentials(name: str, quote: str):
     value = "sk-proj-" + "abcdefghijklmnop"
     assert _contains_secret(f"{name}={quote}{value}{quote}")
+
+
+def test_secret_scan_detects_unquoted_punctuation_credentials():
+    value = "P@ssw0rd!" + "Production2026"
+    assert _contains_secret(f"password={value}")
+
+
+def test_tracked_text_reads_staged_blob_not_worktree(tmp_path: Path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    path = tmp_path / "config.txt"
+    path.write_text("safe\n", encoding="utf-8")
+    subprocess.run(["git", "add", "config.txt"], cwd=tmp_path, check=True)
+    staged_secret = "API_KEY=" + "abcdefghijklmnop" + "\n"
+    path.write_text(staged_secret, encoding="utf-8")
+    subprocess.run(["git", "add", "config.txt"], cwd=tmp_path, check=True)
+    path.write_text("safe\n", encoding="utf-8")
+    assert _tracked_text(tmp_path, "config.txt") == staged_secret
+
+
+def test_isolation_acceptance_requires_complete_sanitized_proof():
+    proof = {
+        "status": "passed", "sanitized": True,
+        "host_probe": {"positive": True, "negative": True},
+        "container_probe": {"positive": True, "negative": True},
+        "container_mount_count": 1, "project_root_mounted": False,
+        "forbidden_mounts": [], "forbidden_allowlist_entries": [],
+        "positive_probe_categories": ["task_repo", "single_public_prompt"],
+        "negative_probe_categories": ["benchmark_private", "oracle", "gold_patch", "test_patch", "hints", "plan", "materials", "evaluator_logs", "evaluator_cache", "private_canaries"],
+        "prompt_file_sha256": "a" * 64, "workspace_manifest_sha256": "b" * 64,
+    }
+    assert _is_valid_isolation_proof(proof)
+    assert not _is_valid_isolation_proof({**proof, "sanitized": False})
+    assert not _is_valid_isolation_proof({**proof, "forbidden_mounts": ["project"]})
+    assert not _is_valid_isolation_proof({**proof, "prompt_file_sha256": "short"})
 
 
 def test_acceptance_rejects_fabricated_checks_rows_and_weak_audit(tmp_path: Path):
