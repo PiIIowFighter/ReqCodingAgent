@@ -18,6 +18,12 @@ from reqagent.tools.command import ContainerCommandExecutor
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def isolated_live_environment(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "test-placeholder")
+
+
 class FakeMessages:
     def __init__(self, response=None, error=None):
         self.response = response
@@ -114,6 +120,16 @@ def test_adapter_classifies_transport_errors(tmp_path: Path, error: Exception, c
         adapter.complete(request())
     assert caught.value.category == category and caught.value.retryable
     assert "abc" not in str(caught.value)
+
+
+def test_live_validation_without_proxy_environment_is_stable_and_offline(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    cfg = config(tmp_path)
+    with pytest.raises(ValueError, match="live configuration is incomplete") as caught:
+        cfg.validate(live=True)
+    assert "ANTHROPIC_BASE_URL" in str(caught.value)
+    assert "ANTHROPIC_AUTH_TOKEN" in str(caught.value)
 
 
 def test_live_runtime_uses_env_references_and_container_executor(tmp_path: Path, monkeypatch):

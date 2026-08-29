@@ -21,4 +21,4 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -m "not integration"
 
 live-template.json 仅为占位模板；doctor --live 在 provider、协议、模型、endpoint 或凭据未确认时拒绝且不联网。生产 run_command 在隔离执行器未注入时 fail closed，不回退宿主 shell。
 
-真实模型 API、Docker smoke、开发集、E1/E2 和 baseline freeze 均未完成。迭代一 smoke-report 保留；15×2 replay 与 validate-all 仍是 optional full profile。integration 测试须显式运行：pytest -m integration。
+本地反向代理 API capability probe 与 synthetic Docker 隔离 live smoke 已通过；live-local-proxy.json 仍是 provisional smoke 配置，不是 baseline-v1。开发集、E1/E2 和 baseline freeze 尚未运行。迭代一 smoke-report 保留；15×2 replay 与 validate-all 仍是 optional full profile。integration 测试须显式运行：pytest -m integration。
