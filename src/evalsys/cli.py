@@ -55,6 +55,18 @@ def build_parser() -> argparse.ArgumentParser:
     validate_all.add_argument("--gold-run-id")
     validate_all.add_argument("--task-repo", type=Path)
     validate_all.add_argument("--isolation-workspace", type=Path)
+    agent_run = sub.add_parser("agent-run", help="protected future Agent benchmark entry point")
+    agent_run.add_argument("--config", type=Path, required=True)
+    agent_run.add_argument("--confirm", action="store_true")
+    run_dev = sub.add_parser("run-dev", help="protected future development matrix entry point")
+    run_dev.add_argument("--config", type=Path, required=True)
+    run_dev.add_argument("--confirm", action="store_true")
+    freeze = sub.add_parser("freeze-baseline", help="protected future baseline freeze entry point")
+    freeze.add_argument("--name", required=True)
+    freeze.add_argument("--confirm", action="store_true")
+    formal = sub.add_parser("run-formal", help="protected future formal evaluation entry point")
+    formal.add_argument("--name", required=True)
+    formal.add_argument("--confirm", action="store_true")
     return parser
 
 
@@ -90,6 +102,16 @@ def main(argv: list[str] | None = None) -> int:
                 validation_receipt=validation_receipt,
             )
             report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "machine_json": str(paths.machine_json), "markdown": str(paths.markdown)}
+        elif args.command in {"agent-run", "run-dev", "freeze-baseline", "run-formal"}:
+            from .agent_runner import preflight_agent_config
+            from .baseline import refuse_unimplemented, require_frozen_baseline
+            if not args.confirm:
+                raise EvalError(f"{args.command} requires --confirm", category="invalid")
+            if args.command in {"agent-run", "run-dev"}:
+                preflight_agent_config(args.config, confirmed=True)
+            if args.command == "run-formal":
+                require_frozen_baseline(settings.project_root, args.name)
+            refuse_unimplemented(args.command)
         elif args.command == "validate-all":
             if args.resume and not args.run_id:
                 raise EvalError("--run-id is required with --resume for validate-all")
