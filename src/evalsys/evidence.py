@@ -11,6 +11,7 @@ from typing import Any
 
 from .persistence import atomic_json as _atomic_json, file_lock, utf8_lf as _lf_bytes, write_text_lf as _write_text_lf
 from .recovery import fingerprint, safe_relative_path, sha256_file
+from .schema import strict_json_loads
 
 _REQUIRED_AUDIT = ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json")
 _RESULT_FIELDS = (
@@ -128,6 +129,45 @@ def verify_active_audit_runs(project_root: Path, *, iteration: int) -> dict[str,
         run_dir = safe_relative_path(root, supplied, expected_type="directory")
         result[run_id] = verify_checksums(run_dir)
     return result
+
+
+def verify_audit_index_metadata(project_root: Path, *, iteration: int) -> list[str]:
+    root = project_root.resolve()
+    try:
+        index = strict_json_loads((root / f"audit/iteration{iteration}/index.json").read_bytes().decode("utf-8"))
+        runs = index["runs"]
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return ["index:invalid"]
+    mismatches = []
+    for entry in runs:
+        if not isinstance(entry, dict):
+            mismatches.append("index:entry")
+            continue
+        run_id = entry.get("run_id")
+        if not isinstance(run_id, str):
+            mismatches.append("index:run_id")
+            continue
+        expected = f"audit/iteration{iteration}/runs/{run_id}"
+        if entry.get("audit_path") != expected:
+            mismatches.append(f"{run_id}:audit_path")
+            continue
+        try:
+            summary_path = safe_relative_path(root, f"{expected}/summary.json")
+            summary = strict_json_loads(summary_path.read_bytes().decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            mismatches.append(f"{run_id}:summary")
+            continue
+        if not isinstance(summary, dict):
+            mismatches.append(f"{run_id}:summary")
+            continue
+        for field in ("run_id", "run_type", "status", "config_hash"):
+            if field not in entry or field not in summary or entry[field] != summary[field]:
+                mismatches.append(f"{run_id}:{field}")
+        if entry.get("supersedes", []) != summary.get("supersedes", []):
+            revision = entry.get("metadata_revision")
+            if not isinstance(revision, str) or not revision.strip():
+                mismatches.append(f"{run_id}:supersedes")
+    return mismatches
 
 
 def scan_audit_local_paths(project_root: Path) -> list[str]:

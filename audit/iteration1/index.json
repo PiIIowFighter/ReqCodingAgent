@@ -481,7 +481,8 @@
       "supersedes": [
         "20260829T003446124781Z_replay_gold_a6aaf9bb82"
       ],
-      "validity": "active"
+      "validity": "active",
+      "metadata_revision": "Index-level supersedes classification added after the successful gold retry; immutable run evidence and summary remain unchanged, and the failed gold run is fully retained rather than deleted or invalidated."
     }
   ],
   "schema_version": "1.0",

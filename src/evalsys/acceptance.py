@@ -124,8 +124,14 @@ def evaluate_acceptance(project_root: Path, validation_report: dict[str, Any], *
         proof_ok = _is_valid_isolation_proof(proof)
     except (OSError, json.JSONDecodeError):
         pass
-    from .evidence import scan_audit_local_paths
-    audit_ok = smoke_artifacts_ok and not scan_audit_local_paths(root)
+    from .evidence import scan_audit_local_paths, select_current_runs, verify_active_audit_runs, verify_audit_index_metadata
+    try:
+        index = json.loads((audit / "index.json").read_text(encoding="utf-8"))
+        graph_ok = bool(select_current_runs(index["runs"]))
+        checksums_ok = not any(verify_active_audit_runs(root, iteration=1).values())
+        audit_ok = smoke_artifacts_ok and graph_ok and checksums_ok and not scan_audit_local_paths(root) and not verify_audit_index_metadata(root, iteration=1)
+    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        audit_ok = False
     receipt = validation_report.get("validation_receipt")
     receipt_ok = False
     if isinstance(receipt, dict):

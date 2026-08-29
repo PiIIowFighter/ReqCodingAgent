@@ -75,6 +75,68 @@ def test_checkout_verifier_skips_preserved_invalid_legacy_runs(tmp_path: Path):
     assert verify_active_audit_runs(tmp_path, iteration=1) == {"new": []}
 
 
+def _audit_identity_fixture(tmp_path: Path, *, index_supersedes=None, summary_supersedes=None, metadata_revision=None) -> None:
+    run_id = "20260829T010000Z_replay_gold_aaaaaaaaaa"
+    audit = tmp_path / "audit/iteration1"
+    run = audit / "runs" / run_id
+    run.mkdir(parents=True)
+    summary = {
+        "run_id": run_id, "run_type": "replay_gold", "status": "passed",
+        "config_hash": "aaaaaaaaaa", "supersedes": list(summary_supersedes or []),
+    }
+    (run / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    entry = {
+        "run_id": run_id, "run_type": "replay_gold", "status": "passed",
+        "config_hash": "aaaaaaaaaa", "audit_path": f"audit/iteration1/runs/{run_id}",
+        "raw_path": f"artifacts/runs/iteration1/{run_id}",
+        "supersedes": list(index_supersedes or []), "validity": "active",
+    }
+    if metadata_revision is not None:
+        entry["metadata_revision"] = metadata_revision
+    (audit / "index.json").write_text(json.dumps({"runs": [entry]}), encoding="utf-8")
+
+
+def test_audit_index_metadata_accepts_matching_summary(tmp_path: Path):
+    from evalsys.evidence import verify_audit_index_metadata
+    _audit_identity_fixture(tmp_path)
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == []
+
+
+def test_audit_index_metadata_accepts_explained_supersedes_revision(tmp_path: Path):
+    from evalsys.evidence import verify_audit_index_metadata
+    _audit_identity_fixture(tmp_path, index_supersedes=["failed-run"], metadata_revision="Index-level classification added after a successful retry; immutable evidence remains unchanged.")
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == []
+
+
+def test_audit_index_metadata_rejects_unexplained_supersedes_mismatch(tmp_path: Path):
+    from evalsys.evidence import verify_audit_index_metadata
+    _audit_identity_fixture(tmp_path, index_supersedes=["failed-run"])
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == ["20260829T010000Z_replay_gold_aaaaaaaaaa:supersedes"]
+
+
+def test_audit_index_metadata_rejects_non_object_entries(tmp_path: Path):
+    from evalsys.evidence import verify_audit_index_metadata
+    audit = tmp_path / "audit/iteration1"
+    audit.mkdir(parents=True)
+    (audit / "index.json").write_text('{"runs": [null]}', encoding="utf-8")
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == ["index:entry"]
+
+
+def test_audit_index_metadata_rejects_missing_identity_fields(tmp_path: Path):
+    from evalsys.evidence import verify_audit_index_metadata
+    _audit_identity_fixture(tmp_path)
+    audit = tmp_path / "audit/iteration1"
+    index = json.loads((audit / "index.json").read_text(encoding="utf-8"))
+    run_id = index["runs"][0]["run_id"]
+    del index["runs"][0]["status"]
+    (audit / "index.json").write_text(json.dumps(index), encoding="utf-8")
+    summary_path = audit / "runs" / run_id / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    del summary["status"]
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == [f"{run_id}:status"]
+
+
 def test_checked_in_index_has_a_valid_complete_supersession_graph():
     root = Path(__file__).parents[1]
     index = json.loads((root / "audit/iteration1/index.json").read_text(encoding="utf-8"))
