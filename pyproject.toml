@@ -17,6 +17,7 @@ test = ["pytest>=8.3,<9"]
 
 [project.scripts]
 evalsys = "evalsys.cli:main"
+reqagent = "reqagent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -24,7 +25,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 markers = [
   "integration: requires external benchmark data or Docker",
 ]
