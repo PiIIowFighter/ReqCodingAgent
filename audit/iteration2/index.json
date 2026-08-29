@@ -12,6 +12,24 @@
       "kind": "offline-scripted-safety-regression",
       "status": "passed",
       "summary": "runs/20260829T122107486288Z-offline-2240/summary.json"
+    },
+    {
+      "run_id": "20260829T132032959588Z-offline-77ac",
+      "kind": "synthetic-live-proxy-docker-smoke",
+      "status": "failed",
+      "summary": "runs/20260829T132032959588Z-live-77ac/summary.json"
+    },
+    {
+      "run_id": "20260829T130000000000Z-live-capability",
+      "kind": "live-native-tool-capability-probe",
+      "status": "passed",
+      "summary": "runs/20260829T130000000000Z-live-capability/summary.json"
+    },
+    {
+      "run_id": "20260829T140158336541Z-live-6c28",
+      "kind": "synthetic-live-proxy-docker-smoke",
+      "status": "passed",
+      "summary": "runs/20260829T140158336541Z-live-6c28/summary.json"
     }
   ]
 }

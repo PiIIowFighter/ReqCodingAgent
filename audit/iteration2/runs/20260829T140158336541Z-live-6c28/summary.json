@@ -1,0 +1,56 @@
+{
+  "run_id": "20260829T140158336541Z-live-6c28",
+  "run_mode": "live",
+  "kind": "synthetic-live-proxy-docker-smoke",
+  "status": "passed",
+  "stop_reason": "submitted",
+  "provider": "local_reverse_proxy",
+  "protocol": "anthropic_messages",
+  "configured_model": "gpt-5.6-sol",
+  "actual_model": "gpt-5.6-sol",
+  "environment_variables": [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN"
+  ],
+  "endpoint_fingerprint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+  "temperature": "unsupported",
+  "seed": "unsupported",
+  "native_tool_calling": "verified",
+  "context_window_tokens": {
+    "value": 32768,
+    "status": "provisional_client_limit"
+  },
+  "max_output_tokens": 4096,
+  "api_requests": 4,
+  "usage": {
+    "input_tokens": 3114,
+    "output_tokens": 199,
+    "cache_creation_input_tokens": 1421,
+    "cache_read_input_tokens": 1046
+  },
+  "container": {
+    "image": "ubuntu@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d",
+    "pull": "never",
+    "network": "none",
+    "cap_drop": "ALL",
+    "no_new_privileges": true,
+    "cleanup": "passed",
+    "remaining_run_containers": 0
+  },
+  "tool_sequence": [
+    "read_file",
+    "apply_patch",
+    "run_command",
+    "submit"
+  ],
+  "command_exit_code": 0,
+  "patch": {
+    "sha256": "39d74125c0dea0aac16c514a6fb6046d6cca101a2eea193e9132d843948ccffe",
+    "files": 1,
+    "additions": 1,
+    "deletions": 1,
+    "fresh_clone_apply": "passed",
+    "fresh_clone_value": "VALUE=2"
+  },
+  "raw_artifact_location": "external temporary directory"
+}

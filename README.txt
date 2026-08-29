@@ -1,7 +1,7 @@
 ReqCodingAgent 迭代二实现检查点
 仓库：https://github.com/PiIIowFighter/ReqCodingAgent
 
-项目保留迭代一 SWE-bench 评测环境，并提供独立基础 Coding Agent 包 reqagent。它维护模型—工具—反馈循环，含 list_files、read_file、search_text、apply_patch、run_command、submit 六个本地工具，以及路径保护、预算、重复动作检测、上下文压缩、checkpoint/resume 和 patch 收集。
+项目保留迭代一 SWE-bench 环境，并提供独立基础 Coding Agent 包 reqagent。它维护模型—工具循环，含六个本地工具、路径保护、预算、重复检测、上下文压缩、checkpoint/resume 和 patch 收集。
 
 环境：Python 3.11；迭代一 Docker 流程使用 WSL2。
 
