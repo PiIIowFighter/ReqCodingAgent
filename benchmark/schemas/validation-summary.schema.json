@@ -7,6 +7,6 @@
     "schema_version": {"const": "1.0"},
     "run_id": {"type": "string", "minLength": 1},
     "status": {"enum": ["passed", "failed", "invalid"]},
-    "results": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["instance_id", "mode", "status", "result"], "properties": {"instance_id": {"type": "string"}, "mode": {"enum": ["noop", "gold"]}, "status": {"enum": ["passed", "test_failed", "infra_failed", "timeout", "invalid"]}, "result": {"type": "string"}}}}
+    "results": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["instance_id", "mode", "status", "result"], "properties": {"instance_id": {"type": "string"}, "mode": {"enum": ["noop", "gold", "agent"]}, "status": {"enum": ["passed", "test_failed", "resolved", "unresolved", "infra_failed", "timeout", "invalid"]}, "result": {"type": "string"}}}}
   }
 }

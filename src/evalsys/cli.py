@@ -41,8 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--resume", action="store_true")
     replay.add_argument("--run-id", help="existing run id required with --resume")
     replay.add_argument("--instance-id", help="run one frozen instance (smoke/recovery)")
-    report = sub.add_parser("report", help="aggregate a validate-all run directory")
-    report.add_argument("run_directory", type=Path)
+    report = sub.add_parser("report", help="aggregate iteration-1 evidence or a frozen iteration-2 baseline")
+    report_target = report.add_mutually_exclusive_group(required=True)
+    report_target.add_argument("run_directory", type=Path, nargs="?")
+    report_target.add_argument("--name", help="frozen iteration-2 baseline name")
     smoke = sub.add_parser("smoke-report", help="aggregate one django__django-11133 noop/gold pair")
     smoke.add_argument("--noop-run", type=Path, required=True)
     smoke.add_argument("--gold-run", type=Path, required=True)
@@ -55,14 +57,22 @@ def build_parser() -> argparse.ArgumentParser:
     validate_all.add_argument("--gold-run-id")
     validate_all.add_argument("--task-repo", type=Path)
     validate_all.add_argument("--isolation-workspace", type=Path)
-    agent_run = sub.add_parser("agent-run", help="protected future Agent benchmark entry point")
+    agent_run = sub.add_parser("agent-run", help="run one protected Agent benchmark cell")
+    agent_run.add_argument("--case-id", required=True)
+    agent_run.add_argument("--variant", choices=("full", "fuzzy"), required=True)
     agent_run.add_argument("--config", type=Path, required=True)
     agent_run.add_argument("--confirm", action="store_true")
-    run_dev = sub.add_parser("run-dev", help="protected future development matrix entry point")
+    agent_run.add_argument("--resume", action="store_true")
+    agent_run.add_argument("--run-id")
+    run_dev = sub.add_parser("run-dev", help="run the protected development matrix")
+    run_dev.add_argument("--version", required=True)
     run_dev.add_argument("--config", type=Path, required=True)
     run_dev.add_argument("--confirm", action="store_true")
-    freeze = sub.add_parser("freeze-baseline", help="protected future baseline freeze entry point")
+    run_dev.add_argument("--resume", action="store_true")
+    freeze = sub.add_parser("freeze-baseline", help="freeze an accepted development baseline")
     freeze.add_argument("--name", required=True)
+    freeze.add_argument("--dev-version", required=True)
+    freeze.add_argument("--config", type=Path, required=True)
     freeze.add_argument("--confirm", action="store_true")
     formal = sub.add_parser("run-formal", help="protected future formal evaluation entry point")
     formal.add_argument("--name", required=True)
@@ -89,10 +99,24 @@ def main(argv: list[str] | None = None) -> int:
                 raise EvalError(f"Instance is not in the selected frozen split: {args.instance_id}")
             report = replay_cases(settings, cases, prepared.source_rows, args.mode, harness_revision=prepared.lock_heads["harness"], timeout_s=args.timeout, workers=args.workers, resume=args.resume, run_id=args.run_id)
         elif args.command == "report":
-            prepared = load_prepared(settings)
-            instance_ids = list(CASE_IDS)
-            paths = generate_report(args.run_directory, expected_instance_ids=instance_ids)
-            report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "run_directory": str(args.run_directory), "machine_json": str(paths.machine_json), "machine_jsonl": str(paths.machine_jsonl), "markdown": str(paths.markdown)}
+            if args.name:
+                from .iteration2 import summarize_formal_results, verify_frozen_baseline
+                verify_frozen_baseline(settings.project_root / "configs/frozen" / args.name)
+                formal_root = settings.artifact_root / "runs/iteration2/formal" / args.name / "cells"
+                result_paths = sorted(formal_root.glob("*/cell-result.json")) if formal_root.is_dir() else []
+                rows = [json.loads(path.read_text(encoding="utf-8")) for path in result_paths]
+                if len(rows) != 24:
+                    raise EvalError(f"formal report requires 24 completed cells; found {len(rows)}", category="invalid")
+                report = summarize_formal_results(rows)
+                destination = settings.project_root / "audit/iteration2/reports" / f"{args.name}.json"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                report = {"status": "passed", "report": str(destination), **report}
+            else:
+                prepared = load_prepared(settings)
+                instance_ids = list(CASE_IDS)
+                paths = generate_report(args.run_directory, expected_instance_ids=instance_ids)
+                report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "run_directory": str(args.run_directory), "machine_json": str(paths.machine_json), "machine_jsonl": str(paths.machine_jsonl), "markdown": str(paths.markdown)}
         elif args.command == "smoke-report":
             validation_receipt = validate_benchmark(load_prepared(settings))["validation_receipt"]
             paths = generate_smoke_report(
@@ -103,15 +127,53 @@ def main(argv: list[str] | None = None) -> int:
             )
             report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "machine_json": str(paths.machine_json), "markdown": str(paths.markdown)}
         elif args.command in {"agent-run", "run-dev", "freeze-baseline", "run-formal"}:
+            from reqagent.config import AgentConfig
             from .agent_runner import preflight_agent_config
-            from .baseline import refuse_unimplemented, require_frozen_baseline
+            from .baseline import require_frozen_baseline
+            from .iteration2 import (
+                development_cells, freeze_baseline, load_public_records, run_agent_cell,
+                run_development, run_formal_plan, select_public_case, verify_frozen_baseline,
+                verify_git_gate,
+            )
             if not args.confirm:
                 raise EvalError(f"{args.command} requires --confirm", category="invalid")
-            if args.command in {"agent-run", "run-dev"}:
-                preflight_agent_config(args.config, confirmed=True)
-            if args.command == "run-formal":
-                require_frozen_baseline(settings.project_root, args.name)
-            refuse_unimplemented(args.command)
+            if args.command in {"agent-run", "run-dev", "freeze-baseline"}:
+                config = preflight_agent_config(args.config, confirmed=True)
+            prepared = load_prepared(settings)
+            source_rows = {
+                instance_id: {**row, "harness_revision": prepared.lock_heads["harness"]}
+                for instance_id, row in prepared.source_rows.items()
+            }
+            records = load_public_records(settings.project_root)
+            if args.command == "agent-run":
+                if args.resume != bool(args.run_id):
+                    raise EvalError("--resume and --run-id must be supplied together", category="invalid")
+                if args.resume:
+                    raise EvalError("single-cell resume is managed by run-dev/run-formal", category="invalid")
+                case = select_public_case(records, args.case_id, args.variant, allowed_split="dev")
+                report = run_agent_cell(settings, case, source_rows[case["instance_id"]], config, run_root=settings.artifact_root / "runs/iteration2/dev/manual")
+                report = {"status": "passed", "cell": report}
+            elif args.command == "run-dev":
+                report = {"status": "passed", "development": run_development(settings, args.version, config, source_rows, resume=args.resume)}
+            elif args.command == "freeze-baseline":
+                commit = verify_git_gate(settings.project_root)
+                development_path = settings.project_root / "audit/iteration2/development" / f"{args.dev_version}.json"
+                if not development_path.is_file():
+                    raise EvalError("development record is missing", category="invalid")
+                development = json.loads(development_path.read_text(encoding="utf-8"))
+                inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
+                if not inventory_path.is_file():
+                    raise EvalError("task image inventory is missing", category="invalid")
+                images = json.loads(inventory_path.read_text(encoding="utf-8"))
+                destination = freeze_baseline(settings.project_root, args.name, config.raw, records, development=development, image_identities=images, authorized=True, git_commit=commit)
+                report = {"status": "passed", "baseline": str(destination)}
+            else:
+                baseline_root = require_frozen_baseline(settings.project_root, args.name)
+                frozen = verify_frozen_baseline(baseline_root)
+                verify_git_gate(settings.project_root)
+                frozen_config = AgentConfig(frozen["baseline"]["config"], baseline_root / "baseline.json")
+                frozen_config.validate(live=True)
+                report = {"status": "passed", **run_formal_plan(settings, args.name, frozen_config, source_rows)}
         elif args.command == "validate-all":
             if args.resume and not args.run_id:
                 raise EvalError("--run-id is required with --resume for validate-all")

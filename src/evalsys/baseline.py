@@ -1,8 +1,49 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
+from typing import Any
 
 from .errors import EvalError
+
+
+FORMAL_SEED = 20260828
+
+
+def build_formal_plan(records: list[dict[str, Any]], *, seed: int = FORMAL_SEED) -> list[dict[str, Any]]:
+    """Build the frozen paired plan without exposing private case fields."""
+    by_instance: dict[str, dict[str, dict[str, Any]]] = {}
+    for record in records:
+        if record.get("split") != "test" or record.get("prompt_variant") not in {"full", "fuzzy"}:
+            continue
+        by_instance.setdefault(record["instance_id"], {})[record["prompt_variant"]] = record
+    if len(by_instance) != 12 or any(set(pair) != {"full", "fuzzy"} for pair in by_instance.values()):
+        raise EvalError("formal plan requires exactly 12 complete test pairs", category="invalid")
+    instance_ids = sorted(by_instance)
+    rng = random.Random(seed)
+    rng.shuffle(instance_ids)
+    full_first = set(rng.sample(instance_ids, 6))
+    plan: list[dict[str, Any]] = []
+    for instance_id in instance_ids:
+        variants = ("full", "fuzzy") if instance_id in full_first else ("fuzzy", "full")
+        for variant in variants:
+            record = by_instance[instance_id][variant]
+            plan.append({
+                "sequence": len(plan) + 1,
+                "case_id": record["case_id"],
+                "instance_id": instance_id,
+                "variant": variant,
+                "experiment": "E1" if variant == "full" else "E2",
+                "ambiguity_type": record["ambiguity_type"],
+                "prompt_sha256": record["prompt_sha256"],
+                "base_commit": record["base_commit"],
+            })
+    return plan
+
+
+def verify_formal_plan(plan: list[dict[str, Any]], records: list[dict[str, Any]], *, seed: int = FORMAL_SEED) -> None:
+    if plan != build_formal_plan(records, seed=seed):
+        raise EvalError("formal plan does not match the deterministic frozen plan", category="invalid")
 
 
 def require_frozen_baseline(project_root: Path, name: str) -> Path:

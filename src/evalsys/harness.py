@@ -24,7 +24,7 @@ class HarnessInvocation:
 
 
 def build_harness_command(invocation: HarnessInvocation, *, platform_name: str = sys.platform, python_executable: str | None = None, wsl_python: str = "python3.11", path_converter: Callable[[Path], str] = str) -> list[str]:
-    if invocation.mode not in {"noop", "gold"}:
+    if invocation.mode not in {"noop", "gold", "agent"}:
         raise ValueError(f"unsupported replay mode: {invocation.mode}")
     if invocation.max_workers < 1:
         raise ValueError("max_workers must be positive")

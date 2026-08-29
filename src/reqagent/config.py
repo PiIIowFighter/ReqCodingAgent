@@ -18,7 +18,7 @@ _MODEL_KEYS = {
 }
 _BUDGET_KEYS = {
     "max_steps", "max_tool_calls", "wall_clock_seconds", "model_timeout_seconds",
-    "command_timeout_seconds", "max_invalid_outputs", "max_retries",
+    "command_timeout_seconds", "max_consecutive_invalid_outputs", "max_total_invalid_outputs", "max_retries",
     "context_trigger_ratio", "keep_recent_rounds",
 }
 _WORKSPACE_KEYS = {"max_patch_files", "max_patch_lines", "max_patch_bytes", "protected_paths", "container_image"}
@@ -53,6 +53,11 @@ class AgentConfig:
             raise ValueError(f"cannot load config: {exc}") from exc
         if not isinstance(value, dict):
             raise ValueError("config root must be an object")
+        budgets = value.get("budgets")
+        if isinstance(budgets, dict) and "max_invalid_outputs" in budgets:
+            legacy = budgets.pop("max_invalid_outputs")
+            budgets["max_consecutive_invalid_outputs"] = legacy
+            budgets["max_total_invalid_outputs"] = legacy
         config = cls(value, source)
         config.validate()
         return config
@@ -106,7 +111,7 @@ class AgentConfig:
         image = self.workspace["container_image"]
         if image is not None and (
             not isinstance(image, str)
-            or (not image.startswith(_PLACEHOLDER) and "@sha256:" not in image)
+            or (not image.startswith(_PLACEHOLDER) and "@sha256:" not in image and not re.fullmatch(r"sha256:[0-9a-f]{64}", image))
         ):
             raise ValueError("container_image must be null, a placeholder, or pinned by sha256 digest")
         if not isinstance(self.workspace["protected_paths"], list) or not all(

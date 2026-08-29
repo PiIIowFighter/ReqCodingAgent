@@ -1,0 +1,100 @@
+{
+  "astropy__astropy-14995": {
+    "available": true,
+    "image_id": "sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874"
+    ],
+    "requested": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995:latest"
+  },
+  "django__django-10914": {
+    "available": true,
+    "image_id": "sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9"
+    ],
+    "requested": "swebench/sweb.eval.x86_64.django_1776_django-10914:latest"
+  },
+  "django__django-11133": {
+    "available": true,
+    "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+    ],
+    "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133:latest"
+  },
+  "django__django-13933": {
+    "available": true,
+    "image_id": "sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc"
+    ],
+    "requested": "swebench/sweb.eval.x86_64.django_1776_django-13933:latest"
+  },
+  "matplotlib__matplotlib-23476": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476:latest"
+  },
+  "matplotlib__matplotlib-25311": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311:latest"
+  },
+  "matplotlib__matplotlib-25332": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332:latest"
+  },
+  "psf__requests-2317": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.psf_1776_requests-2317:latest"
+  },
+  "pydata__xarray-4094": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094:latest"
+  },
+  "pytest-dev__pytest-7432": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432:latest"
+  },
+  "scikit-learn__scikit-learn-13439": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439:latest"
+  },
+  "scikit-learn__scikit-learn-13779": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779:latest"
+  },
+  "scikit-learn__scikit-learn-14983": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983:latest"
+  },
+  "sphinx-doc__sphinx-8595": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595:latest"
+  },
+  "sphinx-doc__sphinx-8721": {
+    "available": false,
+    "image_id": null,
+    "repo_digests": [],
+    "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721:latest"
+  }
+}

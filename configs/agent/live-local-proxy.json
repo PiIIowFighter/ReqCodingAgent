@@ -13,13 +13,14 @@
     "seed": "unsupported"
   },
   "budgets": {
-    "max_steps": 6,
-    "max_tool_calls": 12,
-    "wall_clock_seconds": 600,
+    "max_steps": 30,
+    "max_tool_calls": 60,
+    "wall_clock_seconds": 1800,
     "model_timeout_seconds": 180,
-    "command_timeout_seconds": 120,
-    "max_invalid_outputs": 2,
-    "max_retries": 1,
+    "command_timeout_seconds": 300,
+    "max_consecutive_invalid_outputs": 3,
+    "max_total_invalid_outputs": 6,
+    "max_retries": 3,
     "context_trigger_ratio": 0.8,
     "keep_recent_rounds": 2
   },

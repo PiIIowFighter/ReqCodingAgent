@@ -53,6 +53,7 @@ class AgentLoop:
         self.steps = 0
         self.tool_calls = 0
         self.invalid_outputs = 0
+        self.consecutive_invalid_outputs = 0
         self.usage: dict[str, int] = {}
         self.warnings: list[str] = []
         self.started = time.monotonic()
@@ -77,6 +78,7 @@ class AgentLoop:
             "steps": self.steps,
             "tool_calls": self.tool_calls,
             "invalid_outputs": self.invalid_outputs,
+            "consecutive_invalid_outputs": self.consecutive_invalid_outputs,
             "usage": self.usage,
             "messages": [message.to_dict() for message in self.context.messages],
             "context_window": self.context.context_window,
@@ -109,6 +111,7 @@ class AgentLoop:
         self.steps = checkpoint["steps"]
         self.tool_calls = checkpoint["tool_calls"]
         self.invalid_outputs = checkpoint["invalid_outputs"]
+        self.consecutive_invalid_outputs = checkpoint.get("consecutive_invalid_outputs", checkpoint["invalid_outputs"])
         self.usage = dict(checkpoint["usage"])
         self.elapsed_before_resume = float(checkpoint["elapsed_seconds"])
         self._repeat_fingerprint = checkpoint["repeat_fingerprint"]
@@ -137,7 +140,13 @@ class AgentLoop:
                 self.run_store.event("model_retry", attempt=attempts, category=getattr(exc, "category", "unknown"))
                 time.sleep(min(0.1 * 2 ** (attempts - 1), 1.0))
 
+    def _write_static_evidence(self) -> None:
+        atomic_text(self.run_store.path / "prompt.snapshot.txt", self.context.messages[0].text + "\n\n" + self.context.task + "\n")
+        atomic_json(self.run_store.path / "tool-schemas.json", [definition.__dict__ for definition in self.registry.definitions])
+        atomic_json(self.run_store.path / "workspace-before.json", {"base_commit": self.workspace.base_commit, "diff_sha256": hashlib.sha256(b"").hexdigest()})
+
     def run(self) -> AgentResult:
+        self._write_static_evidence()
         stop_reason = "internal_error"
         try:
             while True:
@@ -159,14 +168,19 @@ class AgentLoop:
                         break
                     if not response.tool_calls:
                         self.invalid_outputs += 1
+                        self.consecutive_invalid_outputs += 1
                         self.pending_tool_calls = ()
                         self.next_tool_index = 0
                         self.next_state = "call_model"
                         self._checkpoint(self.next_state)
-                        if self.invalid_outputs >= self.config.budgets["max_invalid_outputs"]:
+                        if (
+                            self.consecutive_invalid_outputs >= self.config.budgets["max_consecutive_invalid_outputs"]
+                            or self.invalid_outputs >= self.config.budgets["max_total_invalid_outputs"]
+                        ):
                             stop_reason = "invalid_output_limit"
                             break
                         continue
+                    self.consecutive_invalid_outputs = 0
                     self.pending_tool_calls = response.tool_calls
                     self.next_tool_index = 0
                     self.next_state = "execute"
@@ -186,6 +200,9 @@ class AgentLoop:
                     self.tool_calls += 1
                     if not result.ok and result.error and result.error["kind"] in {"invalid_arguments", "unknown_tool"}:
                         self.invalid_outputs += 1
+                        self.consecutive_invalid_outputs += 1
+                    else:
+                        self.consecutive_invalid_outputs = 0
                     after = self.workspace.diff_hash()
                     stable_result = {"ok": result.ok, "data": result.data, "error": result.error, "truncated": result.truncated}
                     outcome = hashlib.sha256(json.dumps(stable_result, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
@@ -219,7 +236,10 @@ class AgentLoop:
                         self.next_state = "call_model"
                     self._checkpoint(self.next_state)
                     self._interrupt("after_tool_checkpoint")
-                    if self.invalid_outputs >= self.config.budgets["max_invalid_outputs"]:
+                    if (
+                        self.consecutive_invalid_outputs >= self.config.budgets["max_consecutive_invalid_outputs"]
+                        or self.invalid_outputs >= self.config.budgets["max_total_invalid_outputs"]
+                    ):
                         stop_reason = "invalid_output_limit"
                         break
                     if stop_reason == "repeated_action":
@@ -245,5 +265,12 @@ class AgentLoop:
         atomic_text(self.run_store.path / "agent.patch", patch.text)
         result = AgentResult(self.run_store.run_id, stop_reason, self.submitted, self.usage, self.steps, self.tool_calls, patch, tuple(self.warnings))
         atomic_json(self.run_store.path / "result.json", result.to_dict())
+        atomic_json(self.run_store.path / "workspace-after.json", {"base_commit": self.workspace.base_commit, "diff_sha256": self.workspace.diff_hash()})
+        names = [
+            "agent.patch", "events.jsonl", "prompt.snapshot.txt", "result.json",
+            "tool-schemas.json", "workspace-after.json", "workspace-before.json",
+        ]
+        lines = [f"{hashlib.sha256((self.run_store.path / name).read_bytes()).hexdigest()}  {name}" for name in names]
+        atomic_text(self.run_store.path / "checksums.sha256", "\n".join(lines) + "\n")
         atomic_text(self.run_store.path / "COMPLETE", "complete\n")
         return result

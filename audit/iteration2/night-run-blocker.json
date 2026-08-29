@@ -1,0 +1,17 @@
+{
+  "available_images": 4,
+  "development_cells_started": 0,
+  "formal_cells_started": 0,
+  "missing_images": 11,
+  "pulls_attempted": 0,
+  "reason": "Docker host data disk free space was 30415994880 bytes, below the user-authorized 40 GB minimum for pulling missing official task images.",
+  "recorded_at": "2026-08-29T15:49:44.179202Z",
+  "safety_actions": [
+    "No image pull attempted",
+    "No Docker prune/reset/delete/build performed",
+    "Existing image inventory was read only"
+  ],
+  "schema_version": "1.0",
+  "stage": "pre-development-image-inventory",
+  "status": "blocked"
+}

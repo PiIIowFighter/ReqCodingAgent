@@ -82,19 +82,26 @@ def _case_dataset(source_row: dict, destination: Path) -> None:
     destination.write_text(json.dumps([source_row], ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _prediction(instance_id: str, destination: Path) -> None:
+def _prediction(instance_id: str, destination: Path, *, patch: str | None = None) -> None:
     # Upstream filters empty model_patch records before run_instances. This sentinel
     # is never applied because the pinned adapter forces official skip_patch=True.
-    destination.write_text(json.dumps({"instance_id": instance_id, "model_name_or_path": "evalsys-noop", "model_patch": "EVALSYS_SKIP_PATCH_SENTINEL"}) + "\n", encoding="utf-8")
+    model_patch = "EVALSYS_SKIP_PATCH_SENTINEL" if patch is None else patch
+    destination.write_text(json.dumps({"instance_id": instance_id, "model_name_or_path": "reqagent-baseline", "model_patch": model_patch}) + "\n", encoding="utf-8")
 
 
-def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: str, *, run_id: str, timeout_s: int, workers: int, resume: bool) -> dict:
-    if mode not in {"noop", "gold"}:
+def _agent_prediction(instance_id: str, destination: Path, patch_path: Path) -> None:
+    _prediction(instance_id, destination, patch=patch_path.read_text(encoding="utf-8"))
+
+
+def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: str, *, run_id: str, timeout_s: int, workers: int, resume: bool, patch_path: Path | None = None, unit_root: Path | None = None) -> dict:
+    if mode not in {"noop", "gold", "agent"}:
         raise EvalError(f"Unsupported replay mode: {mode}")
+    if mode == "agent" and (patch_path is None or not patch_path.is_file()):
+        raise EvalError("Agent evaluation requires a patch file")
     for component in (run_id, public_case["instance_id"], public_case["case_id"], mode):
         if not RUN_ID.fullmatch(component):
             raise EvalError(f"Unsafe replay path component: {component}")
-    unit = settings.artifact_root / "runs" / "iteration1" / run_id / "cases" / public_case["case_id"] / mode
+    unit = unit_root or (settings.artifact_root / "runs" / "iteration1" / run_id / "cases" / public_case["case_id"] / mode)
     replay_input = {"case": public_case, "mode": mode, "harness_revision": source_row["harness_revision"], "data_revision": public_case["source_revision"], "timeout_s": timeout_s}
     existed = unit.exists()
     if existed and not resume:
@@ -104,7 +111,11 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
         dataset = unit / "dataset.json"
         prediction = unit / "prediction.jsonl"
         _case_dataset(source_row, dataset)
-        _prediction(public_case["instance_id"], prediction)
+        if mode == "agent":
+            assert patch_path is not None
+            _agent_prediction(public_case["instance_id"], prediction, patch_path)
+        else:
+            _prediction(public_case["instance_id"], prediction)
     else:
         dataset = unit / "dataset.json"
         prediction = unit / "prediction.jsonl"
@@ -154,8 +165,13 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     except StopIteration:
         pass
     except ProcessTimeout as exc:
-        stdout, stderr, status, classification, failed_stage = exc.stdout, exc.stderr, "timeout", "process_tree_timeout", "tests"
-        error = {"category": "timeout", "message": str(exc), "stage": "tests"}
+        stdout, stderr, failed_stage = exc.stdout, exc.stderr, "tests"
+        if mode == "agent":
+            status, classification = "infra_failed", "official_harness_timeout"
+            error = {"category": "infra_failed", "message": str(exc), "stage": "tests"}
+        else:
+            status, classification = "timeout", "process_tree_timeout"
+            error = {"category": "timeout", "message": str(exc), "stage": "tests"}
     except (EvalError, ValueError, OSError, json.JSONDecodeError) as exc:
         category = getattr(exc, "category", "invalid")
         status = "infra_failed" if category == "infra_failed" else "invalid"

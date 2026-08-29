@@ -141,6 +141,9 @@ def test_fake_model_end_to_end_and_patch_applies_fresh(tmp_path: Path):
     result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=store.path / "commands"), workspace, cfg, ledger, store).run()
     assert result.stop_reason == "submitted"
     assert result.patch.files == 1 and result.patch.additions == 1
+    for name in ("prompt.snapshot.txt", "tool-schemas.json", "workspace-before.json", "workspace-after.json", "checksums.sha256"):
+        assert (store.path / name).is_file()
+    assert (store.path / "prompt.snapshot.txt").read_text(encoding="utf-8").endswith("change value\n")
     fresh = tmp_path / "fresh"
     subprocess.run(["git", "clone", "-q", str(source), str(fresh)], check=True)
     patch_file = tmp_path / "result.patch"
