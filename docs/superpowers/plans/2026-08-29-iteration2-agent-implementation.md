@@ -1,6 +1,6 @@
 # Iteration 2 Coding Agent Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution policy:** Continue implementation and testing directly in one root-agent session. Subagents, delegated reviews, and parallel agent workflows may be used only when the user explicitly authorizes them. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the complete offline-verifiable baseline Coding Agent implementation checkpoint without running any live model, SWE-bench development, or formal evaluation.
 
@@ -136,7 +136,7 @@
 
 - [ ] Update README within 1000 Chinese characters with standalone CLI, scripted offline mode, safety boundaries, and explicit live/evaluation deferral.
 - [ ] Run targeted suites once per coherent implementation boundary; fix only observed defects.
-- [ ] Invoke project runtime verification and code review before committing source changes.
+- [ ] Run direct root-agent runtime verification before committing source changes.
 - [ ] Run final `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -m "not integration"`, one scripted temporary-repository E2E, and `git diff --check`.
 - [ ] Scan tracked/untracked changes for secret-shaped values, user absolute paths, files over the chosen repository threshold, `资料/`, raw artifacts, `.env`, `.claude`, task workspaces, and caches; count README characters.
 - [ ] Generate one non-overwriting redacted audit summary from the real offline E2E artifact, including run ID, stop reason, tool trace summary, patch hash/stats, exact command results, and deferred list.

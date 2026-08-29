@@ -6,6 +6,12 @@
       "kind": "offline-scripted-cli-verification",
       "status": "passed",
       "summary": "runs/20260829T090505433557Z-offline-4df0/summary.json"
+    },
+    {
+      "run_id": "20260829T122107486288Z-offline-2240",
+      "kind": "offline-scripted-safety-regression",
+      "status": "passed",
+      "summary": "runs/20260829T122107486288Z-offline-2240/summary.json"
     }
   ]
 }
