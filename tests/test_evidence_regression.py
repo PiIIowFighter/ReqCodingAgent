@@ -62,17 +62,26 @@ def test_checkout_verifier_skips_preserved_invalid_legacy_runs(tmp_path: Path):
     (old_dir / "checksums.sha256").write_text(f"{'0' * 64}  summary.json\n", encoding="utf-8")
     active_dir = audit / "runs/new"
     active_dir.mkdir(parents=True)
+    summary = {"run_id": "new", "run_type": "unit_tests", "status": "passed", "config_hash": "aaaaaaaaaa", "supersedes": []}
+    payloads = {
+        "summary.json": (json.dumps(summary) + "\n").encode(),
+        "command.txt": b"pytest\n",
+        "config-summary.json": b"{}\n",
+        "result-summary.json": b"{}\n",
+        "log-index.json": b"{}\n",
+    }
     lines = []
-    for name in ("summary.json", "command.txt", "config-summary.json", "result-summary.json", "log-index.json"):
-        payload = (name + "\n").encode()
+    for name, payload in payloads.items():
         (active_dir / name).write_bytes(payload)
         lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
     (active_dir / "checksums.sha256").write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
     (audit / "index.json").write_text(json.dumps({"runs": [
         {"run_id": "old", "validity": "invalid", "audit_path": "audit/iteration1/runs/old"},
-        {"run_id": "new", "validity": "active", "audit_path": "audit/iteration1/runs/new"},
+        {"run_id": "new", "run_type": "unit_tests", "status": "passed", "config_hash": "aaaaaaaaaa", "supersedes": [], "validity": "active", "audit_path": "audit/iteration1/runs/new"},
     ]}), encoding="utf-8")
     assert verify_active_audit_runs(tmp_path, iteration=1) == {"new": []}
+    from evalsys.evidence import verify_audit_index_metadata
+    assert verify_audit_index_metadata(tmp_path, iteration=1) == []
 
 
 def _audit_identity_fixture(tmp_path: Path, *, index_supersedes=None, summary_supersedes=None, metadata_revision=None) -> None:

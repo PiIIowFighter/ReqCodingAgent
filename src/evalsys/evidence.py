@@ -143,6 +143,8 @@ def verify_audit_index_metadata(project_root: Path, *, iteration: int) -> list[s
         if not isinstance(entry, dict):
             mismatches.append("index:entry")
             continue
+        if entry.get("validity") != "active":
+            continue
         run_id = entry.get("run_id")
         if not isinstance(run_id, str):
             mismatches.append("index:run_id")
