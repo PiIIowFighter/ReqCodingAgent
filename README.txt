@@ -1,18 +1,24 @@
-ReqCodingAgent 迭代一 v1.3
+ReqCodingAgent 迭代二实现检查点
 仓库：https://github.com/PiIIowFighter/ReqCodingAgent
 
-本阶段提供冻结的 15 题 SWE-bench 配对数据、官方 harness replay、Agent/evaluator 隔离和可审计结果。需 Python 3.11；Windows 使用 WSL2 与 Linux Docker Engine，缓存放在项目外。在 replay 使用的同一默认 Ubuntu distribution 中，于固定 checkout 执行 `uv sync --locked --python python3.11`；先验证该 checkout 的 `.venv/bin/python`，再将 `EVALSYS_WSL_PYTHON` 指向它。
+项目包含冻结的迭代一 SWE-bench 评测环境，以及独立的基础 Coding Agent 包 reqagent。基础 Agent 自行维护模型—工具—反馈循环，提供 list_files、read_file、search_text、apply_patch、run_command、submit 六个本地工具；默认在干净 Git 仓库的隔离副本中工作，实施路径保护、预算、重复动作检测、上下文压缩、checkpoint/resume 和最终 patch 收集。
+
+环境要求：Python 3.11。安装后可用命令行入口，也可直接运行模块。
+
+离线配置检查：
+python -m reqagent.cli doctor --config configs/agent/offline-scripted.json
+
+查看命令：
+python -m reqagent.cli --help
+python -m reqagent.cli run --help
+python -m reqagent.cli resume --help
+
+离线手工运行：
+python -m reqagent.cli run --workspace CLEAN_GIT_REPO --task "任务文本" --config CONFIG.json
 
 默认快速测试：
-pytest -m "not integration"
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -m "not integration"
 
-离线数据准备与校验：
-python -m evalsys.cli prepare-data
-python -m evalsys.cli validate-data
+live-template.json 仅是显式占位模板。doctor --live 会在 provider、协议、模型、endpoint 环境变量或凭据未确认时拒绝，并且不会发起网络请求。当前未实现或运行真实模型 API、SWE-bench 开发/正式矩阵、E1/E2、baseline 冻结或第三次迭代澄清功能。evalsys 中的新入口保持关闭，只有配置、确认和冻结证据完备后才能开放。
 
-Docker 健康且任务镜像、probe 镜像均已在本地时，仅运行开发题 django__django-11133：
-python -m evalsys.cli replay --mode noop --split dev --instance-id django__django-11133
-python -m evalsys.cli replay --mode gold --split dev --instance-id django__django-11133
-python -m evalsys.cli smoke-report --noop-run NOOP_RUN --gold-run GOLD_RUN
-
-迭代一强制验收为静态 15 题校验、默认快速测试、一次真实隔离证明及上述 1×2 smoke。15×2 replay 与 validate-all 保留为 optional full profile，不是完成门槛。integration 显式运行：pytest -m integration。
+迭代一的数据准备、replay、smoke-report 和 validate-all 命令仍保留；完整用法见计划与 audit。integration 测试需显式运行：pytest -m integration。
