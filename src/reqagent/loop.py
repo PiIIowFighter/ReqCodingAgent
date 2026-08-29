@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .checkpoint import CheckpointStore
+from .checkpoint import CheckpointStore, canonical_hash
 from .config import AgentConfig
 from .context import ContextLedger
 from .model import ModelAdapter, ModelMessage, ModelRequest, ModelResponse, NormalizedToolCall
@@ -52,13 +52,19 @@ class AgentLoop:
         self.usage: dict[str, int] = {}
         self.warnings: list[str] = []
         self.started = time.monotonic()
+        self.elapsed_before_resume = 0.0
         self.submitted: dict[str, Any] | None = None
         self._repeat_fingerprint: str | None = None
         self._repeat_count = 0
 
     def _checkpoint(self, next_state: str) -> None:
+        project = Path(__file__).resolve().parent
+        system_path = project.parents[1] / "prompts/baseline/system.txt"
+        protocol_path = project.parents[1] / "prompts/baseline/protocol.txt"
+        protected = tuple(self.config.workspace["protected_paths"])
         self.checkpoints.save(self.steps + self.tool_calls + self.invalid_outputs, {
             "run_id": self.run_store.run_id,
+            "source": str(self.workspace.source),
             "next_state": next_state,
             "steps": self.steps,
             "tool_calls": self.tool_calls,
@@ -66,12 +72,23 @@ class AgentLoop:
             "usage": self.usage,
             "messages": [message.to_dict() for message in self.context.messages],
             "context_window": self.context.context_window,
+            "context_summary": self.context.summary.to_dict(),
             "config_hash": self.config.canonical_hash(),
+            "code_hash": canonical_hash({path.relative_to(project).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(project.rglob("*.py"))}),
+            "system_prompt_hash": hashlib.sha256(system_path.read_bytes()).hexdigest(),
+            "protocol_prompt_hash": hashlib.sha256(protocol_path.read_bytes()).hexdigest(),
+            "tool_schema_hash": canonical_hash([definition.__dict__ for definition in self.registry.definitions]),
             "base_commit": self.workspace.base_commit,
             "diff_hash": self.workspace.diff_hash(),
-            "script_position": getattr(self.adapter, "position", None),
+            "protected_fingerprint": self.workspace.protected_fingerprint(protected),
+            "adapter_position": getattr(self.adapter, "position", None),
             "budgets": self.config.budgets,
             "task_hash": hashlib.sha256(self.context.task.encode("utf-8")).hexdigest(),
+            "elapsed_seconds": self.elapsed_before_resume + time.monotonic() - self.started,
+            "repeat_fingerprint": self._repeat_fingerprint,
+            "repeat_count": self._repeat_count,
+            "warnings": self.warnings,
+            "tool_history": self.registry.history,
         })
 
     def _call_model(self) -> ModelResponse:
@@ -92,7 +109,7 @@ class AgentLoop:
         stop_reason = "internal_error"
         try:
             while True:
-                if time.monotonic() - self.started >= self.config.budgets["wall_clock_seconds"]:
+                if self.elapsed_before_resume + time.monotonic() - self.started >= self.config.budgets["wall_clock_seconds"]:
                     stop_reason = "wall_clock_timeout"
                     break
                 if self.steps >= self.config.budgets["max_steps"]:

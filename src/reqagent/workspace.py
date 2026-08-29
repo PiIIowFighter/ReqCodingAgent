@@ -94,14 +94,55 @@ class GitWorkspace:
         return WorkspacePolicy(self.root, tuple(protected_paths))
 
     def diff(self) -> str:
-        _run_git(self.root, "add", "--intent-to-add", "--all")
-        return _run_git(self.root, "diff", "--no-ext-diff", self.base_commit, "--").stdout.replace("\r\n", "\n")
+        with tempfile.TemporaryDirectory(prefix="reqagent-index-") as temporary:
+            env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            prefix = ["git", "-C", str(self.root)]
+            subprocess.run([*prefix, "read-tree", self.base_commit], env=env, check=True, capture_output=True)
+            subprocess.run([*prefix, "add", "-A", "--", "."], env=env, check=True, capture_output=True)
+            completed = subprocess.run(
+                [*prefix, "diff", "--cached", "--no-ext-diff", self.base_commit, "--"],
+                env=env, check=True, capture_output=True,
+            )
+        return completed.stdout.decode("utf-8", errors="surrogateescape").replace("\r\n", "\n")
 
     def diff_hash(self) -> str:
         return hashlib.sha256(self.diff().encode("utf-8")).hexdigest()
 
     def tracked_status(self) -> str:
         return _run_git(self.root, "status", "--porcelain=v1", "--untracked-files=all").stdout
+
+    def protected_fingerprint(self, protected_paths: list[str] | tuple[str, ...]) -> str:
+        digest = hashlib.sha256()
+        for raw in (".git", *protected_paths):
+            path = self.root / raw
+            digest.update(raw.encode("utf-8"))
+            if not path.exists() and not path.is_symlink():
+                digest.update(b"missing")
+                continue
+            if path.is_symlink():
+                digest.update(b"symlink\0" + os.readlink(path).encode("utf-8", errors="surrogateescape"))
+                continue
+            candidates = [path] if path.is_file() else sorted(path.rglob("*"))
+            for candidate in candidates:
+                relative = candidate.relative_to(self.root).as_posix()
+                digest.update(relative.encode("utf-8"))
+                if candidate.is_file() and not candidate.is_symlink():
+                    digest.update(candidate.read_bytes())
+        return digest.hexdigest()
+
+    def restore_paths(self, paths: list[str] | tuple[str, ...]) -> None:
+        for raw in paths:
+            normalized = raw.replace("\\", "/").strip("/")
+            if normalized == ".git":
+                raise WorkspaceViolation(".git was modified and cannot be safely restored")
+            candidate = self.root / normalized
+            tracked = _run_git(self.root, "ls-files", "--error-unmatch", "--", normalized, check=False).returncode == 0
+            if tracked:
+                _run_git(self.root, "restore", "--source", self.base_commit, "--staged", "--worktree", "--", normalized)
+            elif candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate)
+            else:
+                candidate.unlink(missing_ok=True)
 
     def cleanup(self) -> None:
         if self.temporary_root and self.temporary_root.exists():

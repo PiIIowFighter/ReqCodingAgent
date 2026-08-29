@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
 
-from .checkpoint import CheckpointStore
+from .checkpoint import CheckpointStore, canonical_hash, validate_resume_payload
 from .config import AgentConfig
-from .context import ContextLedger
+from .context import ContextLedger, ContextSummary
 from .loop import AgentLoop
 from .model import ModelMessage, ScriptedModel
 from .tools import build_registry
@@ -44,6 +45,27 @@ def _prompts() -> tuple[str, str]:
     return root.joinpath("system.txt").read_text(encoding="utf-8"), root.joinpath("protocol.txt").read_text(encoding="utf-8")
 
 
+def _resume_identity(store: RunStore, config: AgentConfig, workspace: GitWorkspace, task: str, registry) -> dict[str, str]:
+    root = project_root()
+    package = root / "src/reqagent"
+    system_path = root / "prompts/baseline/system.txt"
+    protocol_path = root / "prompts/baseline/protocol.txt"
+    protected = tuple(config.workspace["protected_paths"])
+    return {
+        "run_id": store.run_id,
+        "source": str(workspace.source),
+        "base_commit": workspace.base_commit,
+        "code_hash": canonical_hash({path.relative_to(package).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(package.rglob("*.py"))}),
+        "config_hash": config.canonical_hash(),
+        "system_prompt_hash": hashlib.sha256(system_path.read_bytes()).hexdigest(),
+        "protocol_prompt_hash": hashlib.sha256(protocol_path.read_bytes()).hexdigest(),
+        "tool_schema_hash": canonical_hash([definition.__dict__ for definition in registry.definitions]),
+        "task_hash": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+        "diff_hash": workspace.diff_hash(),
+        "protected_fingerprint": workspace.protected_fingerprint(protected),
+    }
+
+
 def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, *, destination: Path | None = None, position: int = 0, messages: list[dict] | None = None):
     workspace = GitWorkspace.create(source, destination=destination)
     system, protocol = _prompts()
@@ -51,7 +73,7 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
     if messages is not None:
         ledger.messages = [ModelMessage.from_dict(message) for message in messages]
     model = ScriptedModel(config.script, position=position)
-    registry = build_registry(workspace, config.raw)
+    registry = build_registry(workspace, config.raw, artifact_dir=run_store.path / "commands")
     atomic_json(run_store.path / "run-manifest.json", {"run_id": run_store.run_id, "source": str(source), "workspace": str(workspace.root), "task": task, "base_commit": workspace.base_commit, "config_path": str(config.source)})
     atomic_json(run_store.path / "config.snapshot.json", config.public_dict())
     result = AgentLoop(model, registry, workspace, config, ledger, run_store).run()
@@ -76,26 +98,29 @@ def main(argv: list[str] | None = None) -> int:
             store = RunStore.open(args.artifact_root / args.run_id)
             checkpoint = CheckpointStore(store.path).load()
             manifest = json.loads((store.path / "run-manifest.json").read_text(encoding="utf-8"))
-            if checkpoint["config_hash"] != config.canonical_hash():
-                raise ValueError("resume refused: configuration changed")
-            if checkpoint["budgets"] != config.budgets:
-                raise ValueError("resume refused: budgets changed")
             source = Path(manifest["source"])
             workspace_path = Path(manifest["workspace"])
             if not workspace_path.is_dir():
                 raise ValueError("resume refused: workspace is missing")
             workspace = GitWorkspace(source, workspace_path, manifest["base_commit"])
-            if workspace.diff_hash() != checkpoint["diff_hash"]:
-                raise ValueError("resume refused: workspace changed")
+            registry = build_registry(workspace, config.raw, artifact_dir=store.path / "commands")
+            expected = _resume_identity(store, config, workspace, manifest["task"], registry)
+            validate_resume_payload(checkpoint, expected, config.budgets)
             system, protocol = _prompts()
             ledger = ContextLedger(system + "\n" + protocol, manifest["task"], context_window=checkpoint["context_window"], trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
             ledger.messages = [ModelMessage.from_dict(message) for message in checkpoint["messages"]]
-            model = ScriptedModel(config.script, position=checkpoint["script_position"] or 0)
-            loop = AgentLoop(model, build_registry(workspace, config.raw), workspace, config, ledger, store)
+            ledger.summary = ContextSummary.from_dict(checkpoint["context_summary"])
+            model = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0)
+            loop = AgentLoop(model, registry, workspace, config, ledger, store)
             loop.steps = checkpoint["steps"]
             loop.tool_calls = checkpoint["tool_calls"]
             loop.invalid_outputs = checkpoint["invalid_outputs"]
             loop.usage = dict(checkpoint["usage"])
+            loop.elapsed_before_resume = float(checkpoint["elapsed_seconds"])
+            loop._repeat_fingerprint = checkpoint["repeat_fingerprint"]
+            loop._repeat_count = checkpoint["repeat_count"]
+            loop.warnings = list(checkpoint["warnings"])
+            registry.history.extend(checkpoint["tool_history"])
             result = loop.run()
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0

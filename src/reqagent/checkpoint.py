@@ -16,6 +16,44 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+REQUIRED_RESUME_FIELDS = frozenset({
+    "run_id", "source", "base_commit", "code_hash", "config_hash",
+    "system_prompt_hash", "protocol_prompt_hash", "tool_schema_hash", "task_hash",
+    "diff_hash", "protected_fingerprint", "budgets", "next_state", "elapsed_seconds",
+    "steps", "tool_calls", "invalid_outputs", "usage", "adapter_position",
+    "repeat_fingerprint", "repeat_count", "warnings", "messages", "context_summary",
+    "tool_history",
+})
+_ALLOWED_NEXT_STATES = frozenset({"call_model"})
+_IDENTITY_LABELS = {
+    "run_id": "run id", "source": "source", "base_commit": "base commit",
+    "code_hash": "code", "config_hash": "config", "system_prompt_hash": "system prompt",
+    "protocol_prompt_hash": "protocol prompt", "tool_schema_hash": "tool schema",
+    "task_hash": "task", "diff_hash": "workspace", "protected_fingerprint": "protected fingerprint",
+}
+
+
+def validate_resume_payload(payload: dict[str, Any], expected: dict[str, Any], budgets: dict[str, Any]) -> dict[str, Any]:
+    missing = REQUIRED_RESUME_FIELDS - set(payload)
+    if missing:
+        raise ValueError(f"resume checkpoint is incomplete: {sorted(missing)}")
+    if payload["next_state"] not in _ALLOWED_NEXT_STATES:
+        raise ValueError("resume refused: illegal next state")
+    for key, label in _IDENTITY_LABELS.items():
+        if payload[key] != expected[key]:
+            raise ValueError(f"resume refused: {label} changed")
+    original = payload["budgets"]
+    if set(original) != set(budgets):
+        raise ValueError("resume refused: budget keys changed")
+    for key, value in budgets.items():
+        old = original[key]
+        if isinstance(old, (int, float)) and isinstance(value, (int, float)) and value > old:
+            raise ValueError("resume refused: budget was loosened")
+        if not isinstance(old, (int, float)) and value != old:
+            raise ValueError("resume refused: budget changed")
+    return payload
+
+
 class CheckpointStore:
     def __init__(self, run_path: Path):
         self.run_path = run_path

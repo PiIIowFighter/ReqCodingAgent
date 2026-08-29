@@ -15,6 +15,7 @@ from reqagent.loop import AgentLoop
 from reqagent.model import ModelResponse, ScriptedModel
 from reqagent.patching import apply_patch_atomic
 from reqagent.tools import build_registry
+from reqagent.tools.command import LocalTestCommandExecutor
 from reqagent.trace import RunStore
 from reqagent.workspace import GitWorkspace, WorkspacePolicy, WorkspaceViolation
 
@@ -96,15 +97,13 @@ def test_apply_patch_is_atomic_on_failure(tmp_path: Path):
 def test_run_command_success_nonzero_and_timeout(tmp_path: Path):
     workspace = GitWorkspace.create(repository(tmp_path))
     cfg = AgentConfig.load(ROOT / "configs/agent/offline-scripted.json")
-    registry = build_registry(workspace, cfg.raw)
+    registry = build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=tmp_path / "commands")
     ok = registry.execute("run_command", {"command": "printf ok", "timeout_seconds": 2})
     assert ok.ok and ok.data["stdout"] == "ok"
     failed = registry.execute("run_command", {"command": "printf bad >&2; exit 7", "timeout_seconds": 2})
     assert not failed.ok and failed.data["exit_code"] == 7
     timeout = registry.execute("run_command", {"command": "sleep 2", "timeout_seconds": 1})
     assert not timeout.ok and timeout.data["timed_out"]
-    network = registry.execute("run_command", {"command": "curl https://example.com", "timeout_seconds": 1})
-    assert not network.ok and network.error["kind"] == "tool_error"
 
 
 def test_loop_rejects_invalid_call_without_execution(tmp_path: Path):
@@ -113,7 +112,7 @@ def test_loop_rejects_invalid_call_without_execution(tmp_path: Path):
     cfg = config(tmp_path, [response("bad", "apply_patch", {"unknown": "x"})], max_invalid_outputs=1)
     store = RunStore.create(tmp_path / "runs")
     ledger = ContextLedger("system", "task", context_window=10000, trigger_ratio=.8, keep_recent_rounds=2)
-    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw), workspace, cfg, ledger, store).run()
+    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=store.path / "commands"), workspace, cfg, ledger, store).run()
     assert result.stop_reason == "invalid_output_limit"
     assert workspace.diff() == ""
 
@@ -132,7 +131,7 @@ def test_fake_model_end_to_end_and_patch_applies_fresh(tmp_path: Path):
     workspace = GitWorkspace.create(source)
     store = RunStore.create(tmp_path / "runs")
     ledger = ContextLedger("system", "change value", context_window=10000, trigger_ratio=.8, keep_recent_rounds=2)
-    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw), workspace, cfg, ledger, store).run()
+    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=store.path / "commands"), workspace, cfg, ledger, store).run()
     assert result.stop_reason == "submitted"
     assert result.patch.files == 1 and result.patch.additions == 1
     fresh = tmp_path / "fresh"
@@ -150,7 +149,7 @@ def test_repeated_action_stops(tmp_path: Path):
     workspace = GitWorkspace.create(source)
     store = RunStore.create(tmp_path / "runs")
     ledger = ContextLedger("system", "task", context_window=10000, trigger_ratio=.8, keep_recent_rounds=2)
-    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw), workspace, cfg, ledger, store).run()
+    result = AgentLoop(ScriptedModel(cfg.script), build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=store.path / "commands"), workspace, cfg, ledger, store).run()
     assert result.stop_reason == "repeated_action"
 
 

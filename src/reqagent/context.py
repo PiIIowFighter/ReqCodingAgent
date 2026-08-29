@@ -22,6 +22,22 @@ class ContextSummary:
     def text(self) -> str:
         return json.dumps(self.__dict__, ensure_ascii=False, sort_keys=True)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {key: list(value) if isinstance(value, tuple) else value for key, value in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ContextSummary":
+        return cls(
+            inspected_files=tuple(value.get("inspected_files", ())),
+            findings=tuple(value.get("findings", ())),
+            modifications=tuple(value.get("modifications", ())),
+            commands=tuple(value.get("commands", ())),
+            open_issues=tuple(value.get("open_issues", ())),
+            next_actions=tuple(value.get("next_actions", ())),
+            no_progress_actions=tuple(value.get("no_progress_actions", ())),
+            diff_fingerprint=value.get("diff_fingerprint", ""),
+        )
+
 
 class ContextLedger:
     def __init__(self, system: str, task: str, *, context_window: int, trigger_ratio: float, keep_recent_rounds: int):
