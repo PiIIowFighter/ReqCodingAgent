@@ -20,6 +20,25 @@ from .schema import validate_json
 from .verdict import decide_verdict
 
 RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+_AGENT_INFRA_CLASSIFICATIONS = {
+    "container_create_failure", "image_missing", "docker_engine_failure",
+    "harness_start_failure", "private_tests_unavailable", "missing_instance_log",
+    "missing_result_file", "cleanup_failure",
+}
+
+
+def classify_agent_harness_failure(raw: dict) -> dict[str, str]:
+    classification = str(raw.get("classification", "unknown"))
+    stage = str(raw.get("stage", "unknown"))
+    if classification in _AGENT_INFRA_CLASSIFICATIONS or stage in {"environment", "cleanup"}:
+        return {"status": "eval_infra_failed", "classification": classification}
+    if classification == "official_patch_apply_failure" or stage == "patch":
+        return {"status": "unresolved", "classification": "agent_patch_apply_failed"}
+    if classification in {"official_tests_timeout", "process_tree_timeout"}:
+        return {"status": "unresolved", "classification": "tests_timeout"}
+    if classification == "official_tests_error":
+        return {"status": "unresolved", "classification": "tests_error"}
+    return {"status": "unresolved", "classification": "tests_unresolved"}
 
 
 def _docker_output(argv: Sequence[str]) -> str:
@@ -131,7 +150,8 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     events = EventWriter(unit / "events.jsonl", run_id)
     report_dir = unit / "harness"
     report_dir.mkdir()
-    invocation = HarnessInvocation(settings.cache_root / "swe-bench", adapter, dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers, public_case["case_id"])
+    frozen_image = source_row.get("docker_image") if mode == "agent" else None
+    invocation = HarnessInvocation(settings.cache_root / "swe-bench", adapter, dataset, prediction, report_dir, run_id, public_case["instance_id"], mode, timeout_s, workers, public_case["case_id"], frozen_image)
     runner = CommandRunner()
     converter = (lambda path: resolve_wsl_path(path, runner)) if sys.platform == "win32" else str
     wsl_python = validate_wsl_python(settings.wsl_python, runner) if sys.platform == "win32" else settings.wsl_python
@@ -154,8 +174,12 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
             raise EvalError(f"Official harness failed with exit {result.returncode}: {stderr[-1000:]}", category="infra_failed")
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
         if raw.get("status") in {"timeout", "infra_failed", "invalid"}:
-            status, classification = raw["status"], raw.get("classification", "harness_failure")
             failed_stage = raw.get("stage", "environment")
+            if mode == "agent":
+                classified = classify_agent_harness_failure(raw)
+                status, classification = classified["status"], classified["classification"]
+            else:
+                status, classification = raw["status"], raw.get("classification", "harness_failure")
             error = {"category": status, "message": raw.get("message", classification), "stage": failed_stage}
             raise StopIteration
         tests_executed = bool(raw.get("tests_executed"))
@@ -167,8 +191,8 @@ def replay_case(settings: Settings, public_case: dict, source_row: dict, mode: s
     except ProcessTimeout as exc:
         stdout, stderr, failed_stage = exc.stdout, exc.stderr, "tests"
         if mode == "agent":
-            status, classification = "infra_failed", "official_harness_timeout"
-            error = {"category": "infra_failed", "message": str(exc), "stage": "tests"}
+            status, classification = "unresolved", "tests_timeout"
+            error = {"category": "unresolved", "message": str(exc), "stage": "tests"}
         else:
             status, classification = "timeout", "process_tree_timeout"
             error = {"category": "timeout", "message": str(exc), "stage": "tests"}

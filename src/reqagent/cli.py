@@ -72,7 +72,7 @@ def _resume_identity(store: RunStore, config: AgentConfig, workspace: GitWorkspa
     }
 
 
-def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, *, destination: Path | None = None, position: int = 0, messages: list[dict] | None = None):
+def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, *, destination: Path | None = None, position: int = 0, messages: list[dict] | None = None, finalize: bool = True):
     workspace = GitWorkspace.create(source, destination=destination)
     system, protocol = _prompts()
     ledger = ContextLedger(system + "\n" + protocol, task, context_window=int(config.model["context_window_tokens"]), trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
@@ -84,12 +84,57 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
         model, executor = ScriptedModel(config.script, position=position), None
     registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=run_store.path / "commands")
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
-    manifest = {"run_id": run_store.run_id, "source": str(source), "workspace": str(workspace.root), "task": task, "base_commit": workspace.base_commit, "config_path": str(config.source)}
+    manifest_path = run_store.path / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    manifest.update({"run_id": run_store.run_id, "source": str(source), "workspace": str(workspace.root), "task": task, "base_commit": workspace.base_commit, "config_path": str(config.source)})
     if config.mode == "live":
         manifest["adapter_identity"] = registry.adapter_identity
-    atomic_json(run_store.path / "run-manifest.json", manifest)
-    atomic_json(run_store.path / "config.snapshot.json", config.public_dict())
+    atomic_json(manifest_path, manifest)
+    snapshot_path = run_store.path / "config.snapshot.json"
+    if snapshot_path.is_file():
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if "run_id" in manifest:
+            snapshot["agent"] = config.public_dict()
+    else:
+        snapshot = config.public_dict()
+    atomic_json(snapshot_path, snapshot)
     result = AgentLoop(model, registry, workspace, config, ledger, run_store).run()
+    if not finalize:
+        (run_store.path / "result.json").replace(run_store.path / "agent-result.json")
+        (run_store.path / "COMPLETE").replace(run_store.path / "AGENT_COMPLETE")
+    if finalize and (run_store.path / "COMPLETE").is_file():
+        workspace.cleanup()
+    return result
+
+
+def _resume_execute(config: AgentConfig, store: RunStore, *, finalize: bool = True):
+    checkpoint = CheckpointStore(store.path).load()
+    manifest = json.loads((store.path / "run-manifest.json").read_text(encoding="utf-8"))
+    source = Path(manifest["source"])
+    workspace_path = Path(manifest["workspace"])
+    if not workspace_path.is_dir():
+        raise ValueError("resume refused: workspace is missing")
+    workspace = GitWorkspace(source, workspace_path, manifest["base_commit"])
+    if config.mode == "live":
+        model, executor = build_live_runtime(config, run_id=store.run_id)
+    else:
+        model, executor = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0), None
+    registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=store.path / "commands")
+    registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
+    expected = _resume_identity(store, config, workspace, manifest["task"], registry)
+    validate_resume_payload(checkpoint, expected, config.budgets)
+    system, protocol = _prompts()
+    ledger = ContextLedger(system + "\n" + protocol, manifest["task"], context_window=checkpoint["context_window"], trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
+    ledger.messages = [ModelMessage.from_dict(message) for message in checkpoint["messages"]]
+    ledger.summary = ContextSummary.from_dict(checkpoint["context_summary"])
+    loop = AgentLoop(model, registry, workspace, config, ledger, store)
+    loop.restore(checkpoint)
+    result = loop.run()
+    if not finalize:
+        (store.path / "result.json").replace(store.path / "agent-result.json")
+        (store.path / "COMPLETE").replace(store.path / "AGENT_COMPLETE")
+    elif (store.path / "COMPLETE").is_file():
+        workspace.cleanup()
     return result
 
 
@@ -111,28 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             result = _execute(args.workspace, task, config, store)
         else:
             store = RunStore.open(args.artifact_root / args.run_id)
-            checkpoint = CheckpointStore(store.path).load()
-            manifest = json.loads((store.path / "run-manifest.json").read_text(encoding="utf-8"))
-            source = Path(manifest["source"])
-            workspace_path = Path(manifest["workspace"])
-            if not workspace_path.is_dir():
-                raise ValueError("resume refused: workspace is missing")
-            workspace = GitWorkspace(source, workspace_path, manifest["base_commit"])
-            if config.mode == "live":
-                model, executor = build_live_runtime(config, run_id=store.run_id)
-            else:
-                model, executor = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0), None
-            registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=store.path / "commands")
-            registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
-            expected = _resume_identity(store, config, workspace, manifest["task"], registry)
-            validate_resume_payload(checkpoint, expected, config.budgets)
-            system, protocol = _prompts()
-            ledger = ContextLedger(system + "\n" + protocol, manifest["task"], context_window=checkpoint["context_window"], trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
-            ledger.messages = [ModelMessage.from_dict(message) for message in checkpoint["messages"]]
-            ledger.summary = ContextSummary.from_dict(checkpoint["context_summary"])
-            loop = AgentLoop(model, registry, workspace, config, ledger, store)
-            loop.restore(checkpoint)
-            result = loop.run()
+            result = _resume_execute(config, store)
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0
     except (OSError, ValueError) as exc:

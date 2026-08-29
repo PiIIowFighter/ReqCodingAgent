@@ -255,6 +255,8 @@ class EvidenceRun:
         _write_text_lf(self.raw_dir / "stderr.log", stderr)
         _atomic_json(self.raw_dir / "result.json", result)
         raw_names = ["run-manifest.json", "config.snapshot.json", "events.jsonl", "stdout.log", "stderr.log", "result.json"]
+        if (self.raw_dir / "cell-result.json").is_file():
+            raw_names.append("cell-result.json")
         _checksums(self.raw_dir, raw_names)
         sanitized_config = sanitize(self.config, project_root=self.recorder.project_root)
         result_summary = {
@@ -324,6 +326,20 @@ class EvidenceRecorder:
         _atomic_json(raw_dir / "config.snapshot.json", config)
         _write_text_lf(raw_dir / "events.jsonl", "")
         return EvidenceRun(self, run_id, run_type, config_hash, raw_dir, audit_dir, command, config, relationship)
+
+    def resume_pending(self, run_id: str, run_type: str, config: dict[str, Any], command: list[str]) -> EvidenceRun:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+            raise ValueError("unsafe run_id")
+        raw_dir = (self.raw_root / run_id).resolve()
+        if not raw_dir.is_dir():
+            raise ValueError("pending run directory is missing")
+        if (raw_dir / "COMPLETE").exists() or (raw_dir / "FAILED").exists():
+            raise ValueError("pending run already has a terminal marker")
+        manifest = strict_json_loads((raw_dir / "run-manifest.json").read_text(encoding="utf-8"))
+        config_hash = fingerprint(config)[:10]
+        if manifest.get("run_id") != run_id or manifest.get("run_type") != run_type or manifest.get("config_hash") != config_hash:
+            raise ValueError("pending run identity mismatch")
+        return EvidenceRun(self, run_id, run_type, config_hash, raw_dir, self.audit_root / "runs" / run_id, command, config, list(manifest.get("supersedes", [])))
 
     def start_explicit(self, run_id: str, run_type: str, config: dict[str, Any], command: list[str], *, existing_raw_dir: Path, resume: bool = False, supersedes: list[str] | None = None) -> EvidenceRun:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):

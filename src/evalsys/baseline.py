@@ -8,6 +8,20 @@ from .errors import EvalError
 
 
 FORMAL_SEED = 20260828
+FORMAL_INSTANCES = (
+    "astropy__astropy-14995",
+    "pydata__xarray-4094",
+    "pytest-dev__pytest-7432",
+    "matplotlib__matplotlib-25311",
+    "django__django-10914",
+    "matplotlib__matplotlib-23476",
+    "scikit-learn__scikit-learn-13439",
+    "sphinx-doc__sphinx-8595",
+    "django__django-13933",
+    "psf__requests-2317",
+    "scikit-learn__scikit-learn-13779",
+    "sphinx-doc__sphinx-8721",
+)
 
 
 def build_formal_plan(records: list[dict[str, Any]], *, seed: int = FORMAL_SEED) -> list[dict[str, Any]]:
@@ -19,7 +33,9 @@ def build_formal_plan(records: list[dict[str, Any]], *, seed: int = FORMAL_SEED)
         by_instance.setdefault(record["instance_id"], {})[record["prompt_variant"]] = record
     if len(by_instance) != 12 or any(set(pair) != {"full", "fuzzy"} for pair in by_instance.values()):
         raise EvalError("formal plan requires exactly 12 complete test pairs", category="invalid")
-    instance_ids = sorted(by_instance)
+    if set(by_instance) != set(FORMAL_INSTANCES):
+        raise EvalError("formal plan instances do not match the canonical task list", category="invalid")
+    instance_ids = list(FORMAL_INSTANCES)
     rng = random.Random(seed)
     rng.shuffle(instance_ids)
     full_first = set(rng.sample(instance_ids, 6))

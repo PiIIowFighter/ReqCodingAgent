@@ -21,6 +21,7 @@ class HarnessInvocation:
     timeout_s: int
     max_workers: int = 1
     case_id: str | None = None
+    frozen_image: str | None = None
 
 
 def build_harness_command(invocation: HarnessInvocation, *, platform_name: str = sys.platform, python_executable: str | None = None, wsl_python: str = "python3.11", path_converter: Callable[[Path], str] = str) -> list[str]:
@@ -36,6 +37,10 @@ def build_harness_command(invocation: HarnessInvocation, *, platform_name: str =
     command = prefix + [convert(invocation.adapter_path), "--pgid-file", pgid_file, "--harness-checkout", convert(invocation.harness_checkout), "--dataset", convert(invocation.dataset_path), "--predictions", predictions, "--report-dir", convert(invocation.report_dir), "--run-id", invocation.run_id, "--instance-id", invocation.instance_id, "--timeout", str(invocation.timeout_s), "--max-workers", str(invocation.max_workers), "--label", f"evalsys.run_id={invocation.run_id}"]
     if invocation.case_id:
         command += ["--label", f"evalsys.case_id={invocation.case_id}"]
+    if invocation.frozen_image:
+        if "@sha256:" not in invocation.frozen_image:
+            raise ValueError("frozen evaluator image must be a RepoDigest")
+        command += ["--frozen-image", invocation.frozen_image]
     if invocation.mode == "noop":
         command.append("--skip-patch")
     return command

@@ -1,35 +1,70 @@
 {
-  "schema_version": 1,
   "runs": [
     {
-      "run_id": "20260829T090505433557Z-offline-4df0",
       "kind": "offline-scripted-cli-verification",
+      "run_id": "20260829T090505433557Z-offline-4df0",
       "status": "passed",
       "summary": "runs/20260829T090505433557Z-offline-4df0/summary.json"
     },
     {
-      "run_id": "20260829T122107486288Z-offline-2240",
       "kind": "offline-scripted-safety-regression",
+      "run_id": "20260829T122107486288Z-offline-2240",
       "status": "passed",
       "summary": "runs/20260829T122107486288Z-offline-2240/summary.json"
     },
     {
-      "run_id": "20260829T132032959588Z-offline-77ac",
       "kind": "synthetic-live-proxy-docker-smoke",
+      "run_id": "20260829T132032959588Z-offline-77ac",
       "status": "failed",
       "summary": "runs/20260829T132032959588Z-live-77ac/summary.json"
     },
     {
-      "run_id": "20260829T130000000000Z-live-capability",
       "kind": "live-native-tool-capability-probe",
+      "run_id": "20260829T130000000000Z-live-capability",
       "status": "passed",
       "summary": "runs/20260829T130000000000Z-live-capability/summary.json"
     },
     {
-      "run_id": "20260829T140158336541Z-live-6c28",
       "kind": "synthetic-live-proxy-docker-smoke",
+      "run_id": "20260829T140158336541Z-live-6c28",
       "status": "passed",
       "summary": "runs/20260829T140158336541Z-live-6c28/summary.json"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260829T221030629846Z_integration_5a09c15e39",
+      "config_hash": "5a09c15e39",
+      "raw_path": "artifacts/runs/iteration2/20260829T221030629846Z_integration_5a09c15e39",
+      "run_id": "20260829T221030629846Z_integration_5a09c15e39",
+      "run_type": "integration",
+      "status": "failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260829T221639448767Z_integration_b42514b0be",
+      "config_hash": "b42514b0be",
+      "raw_path": "artifacts/runs/iteration2/20260829T221639448767Z_integration_b42514b0be",
+      "run_id": "20260829T221639448767Z_integration_b42514b0be",
+      "run_type": "integration",
+      "status": "failed",
+      "supersedes": [
+        "20260829T221030629846Z_integration_5a09c15e39"
+      ],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260829T222008381509Z_integration_a6bd435972",
+      "config_hash": "a6bd435972",
+      "raw_path": "artifacts/runs/iteration2/20260829T222008381509Z_integration_a6bd435972",
+      "run_id": "20260829T222008381509Z_integration_a6bd435972",
+      "run_type": "integration",
+      "status": "failed",
+      "supersedes": [
+        "20260829T221639448767Z_integration_b42514b0be"
+      ],
+      "validity": "active"
     }
-  ]
+  ],
+  "schema_version": 1,
+  "validity_semantics": "active means evidence checksums are valid; current results are active leaves of the supersedes graph"
 }

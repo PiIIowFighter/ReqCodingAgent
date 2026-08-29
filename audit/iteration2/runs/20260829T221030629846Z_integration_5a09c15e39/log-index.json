@@ -1,0 +1,18 @@
+{
+  "checksums.sha256": {
+    "bytes": 482,
+    "sha256": "22bdcb0691c762c8883e98f42b62834e290f3672956cc20b44906faf21e3e335"
+  },
+  "result.json": {
+    "bytes": 133,
+    "sha256": "88e0ce899575e082f854336184c533c8a54a4a467fdd4c770d62c09affe9b668"
+  },
+  "stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

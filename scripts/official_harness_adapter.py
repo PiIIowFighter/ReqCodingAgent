@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-workers", type=int, required=True)
     parser.add_argument("--label", action="append", default=[])
     parser.add_argument("--skip-patch", action="store_true")
+    parser.add_argument("--frozen-image")
     return parser.parse_args()
 
 
@@ -51,6 +52,12 @@ def main() -> int:
     labels = dict(label.split("=", 1) for label in args.label)
 
     def labelled_create(test_spec, client, run_id, logger):
+        if args.frozen_image:
+            test_spec.image = args.frozen_image
+        original_pull = client.images.pull
+        def refuse_pull(*positional, **keywords):
+            raise RuntimeError("frozen evaluator image is unavailable; pulling is forbidden")
+        client.images.pull = refuse_pull
         original = client.containers.create
         def create(*positional, **keywords):
             merged = dict(keywords.pop("labels", {}) or {})
@@ -61,6 +68,7 @@ def main() -> int:
             return original_create(test_spec, client, run_id, logger)
         finally:
             client.containers.create = original
+            client.images.pull = original_pull
 
     module.create_container = labelled_create
     if args.skip_patch:

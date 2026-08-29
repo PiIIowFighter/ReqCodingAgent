@@ -74,9 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     freeze.add_argument("--dev-version", required=True)
     freeze.add_argument("--config", type=Path, required=True)
     freeze.add_argument("--confirm", action="store_true")
-    formal = sub.add_parser("run-formal", help="protected future formal evaluation entry point")
+    formal = sub.add_parser("run-formal", help="protected formal evaluation entry point")
     formal.add_argument("--name", required=True)
     formal.add_argument("--confirm", action="store_true")
+    formal.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -151,10 +152,14 @@ def main(argv: list[str] | None = None) -> int:
                 if args.resume:
                     raise EvalError("single-cell resume is managed by run-dev/run-formal", category="invalid")
                 case = select_public_case(records, args.case_id, args.variant, allowed_split="dev")
-                report = run_agent_cell(settings, case, source_rows[case["instance_id"]], config, run_root=settings.artifact_root / "runs/iteration2/dev/manual")
+                inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
+                inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+                report = run_agent_cell(settings, case, source_rows[case["instance_id"]], config, image_identity=inventory[case["instance_id"]], run_type="manual_cell")
                 report = {"status": "passed", "cell": report}
             elif args.command == "run-dev":
-                report = {"status": "passed", "development": run_development(settings, args.version, config, source_rows, resume=args.resume)}
+                inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
+                inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+                report = {"status": "passed", "development": run_development(settings, args.version, config, source_rows, inventory, resume=args.resume)}
             elif args.command == "freeze-baseline":
                 commit = verify_git_gate(settings.project_root)
                 development_path = settings.project_root / "audit/iteration2/development" / f"{args.dev_version}.json"
@@ -173,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 verify_git_gate(settings.project_root)
                 frozen_config = AgentConfig(frozen["baseline"]["config"], baseline_root / "baseline.json")
                 frozen_config.validate(live=True)
-                report = {"status": "passed", **run_formal_plan(settings, args.name, frozen_config, source_rows)}
+                report = {"status": "passed", **run_formal_plan(settings, args.name, frozen_config, source_rows, resume=args.resume)}
         elif args.command == "validate-all":
             if args.resume and not args.run_id:
                 raise EvalError("--run-id is required with --resume for validate-all")

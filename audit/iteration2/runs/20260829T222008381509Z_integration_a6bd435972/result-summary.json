@@ -1,0 +1,10 @@
+{
+  "classification": "integration_failure",
+  "duration": null,
+  "exit_code": null,
+  "failed": 0,
+  "passed": 0,
+  "reason": "Command '['wsl.exe', '--', 'docker', 'run', '--rm', '--pull', 'never', '--label', 'evalsys.run_id=20260829T222008381509Z_integration_a6bd435972', '--network', 'none', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--mount', 'type=bind,src=<ABSOLUTE_PATH>', 'swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf', 'bash', '-lc', 'cp -R /testbed/. /export/ && git config --global --add safe.directory /export && git -C /export checkout --detach 879cc3da6249e920b8d54518a0ae06de835d7373 && git -C /export reset --hard 879cc3da6249e920b8d54518a0ae06de835d7373 && git -C /export clean -ffd']' timed out after 300 seconds",
+  "skipped": 0,
+  "status": "failed"
+}

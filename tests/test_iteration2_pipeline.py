@@ -10,17 +10,29 @@ from evalsys.agent_runner import AgentRunRequest
 from evalsys.baseline import FORMAL_SEED, build_formal_plan, verify_formal_plan
 from evalsys.cli import build_parser
 from evalsys.errors import EvalError
+from evalsys.evidence import EvidenceRecorder, sanitize, select_current_runs, verify_active_audit_runs, verify_audit_index_metadata
 from evalsys.harness import HarnessInvocation, build_harness_command
+from evalsys.verdict import decide_verdict
+from evalsys.replay import classify_agent_harness_failure
 from evalsys.iteration2 import (
+    FORMAL_INSTANCES,
     build_agent_container_command,
     development_cells,
     prepare_task_repository,
+    cell_resume_action,
     classify_cell_for_resume,
     freeze_baseline,
+    ensure_experiment_manifest,
+    extract_actual_model,
+    record_experiment_cell,
+    start_infra_retry,
+    verify_cell_evidence,
     official_image_name,
     resolve_image_identity,
     select_public_case,
     summarize_formal_results,
+    behavior_tree_hash,
+    current_tool_schema_bytes,
     verify_git_gate,
     verify_frozen_baseline,
 )
@@ -31,6 +43,7 @@ from reqagent.model import ScriptedModel
 from reqagent.tools import build_registry
 from reqagent.tools.command import LocalTestCommandExecutor
 from reqagent.trace import RunStore
+from reqagent.cli import _execute
 from reqagent.workspace import GitWorkspace
 
 
@@ -64,10 +77,29 @@ def test_iteration2_cli_has_required_protected_arguments():
     assert dev.version == "v001"
     freeze = parser.parse_args(["freeze-baseline", "--name", "baseline-v1", "--dev-version", "v001", "--config", "agent.json", "--confirm"])
     assert freeze.dev_version == "v001"
-    formal = parser.parse_args(["run-formal", "--name", "baseline-v1", "--confirm"])
-    assert not hasattr(formal, "config") and not hasattr(formal, "variant")
+    formal = parser.parse_args(["run-formal", "--name", "baseline-v1", "--confirm", "--resume"])
+    assert formal.resume and not hasattr(formal, "config") and not hasattr(formal, "variant")
     report = parser.parse_args(["report", "--name", "baseline-v1"])
     assert report.name == "baseline-v1"
+
+
+def test_formal_plan_uses_canonical_spec_order_before_shuffle():
+    test_records = [record for record in _records() if record["split"] == "test"]
+    plan = build_formal_plan(list(reversed(test_records)), seed=FORMAL_SEED)
+    assert [(plan[index]["instance_id"], plan[index]["variant"], plan[index + 1]["variant"]) for index in range(0, 24, 2)] == [
+        ("psf__requests-2317", "fuzzy", "full"),
+        ("pytest-dev__pytest-7432", "full", "fuzzy"),
+        ("scikit-learn__scikit-learn-13439", "fuzzy", "full"),
+        ("astropy__astropy-14995", "fuzzy", "full"),
+        ("pydata__xarray-4094", "fuzzy", "full"),
+        ("django__django-13933", "full", "fuzzy"),
+        ("scikit-learn__scikit-learn-13779", "full", "fuzzy"),
+        ("sphinx-doc__sphinx-8595", "fuzzy", "full"),
+        ("django__django-10914", "full", "fuzzy"),
+        ("matplotlib__matplotlib-25311", "full", "fuzzy"),
+        ("sphinx-doc__sphinx-8721", "fuzzy", "full"),
+        ("matplotlib__matplotlib-23476", "full", "fuzzy"),
+    ]
 
 
 def test_formal_plan_is_deterministic_paired_and_balanced():
@@ -114,11 +146,12 @@ def test_agent_handoff_accepts_prompt_field_and_hides_experiment_identity(tmp_pa
     assert all(word not in serialized for word in ("fuzzy", "omission", "secret-id", "secret test"))
 
 
-def test_agent_evaluator_harness_applies_prediction_patch(tmp_path: Path):
-    invocation = HarnessInvocation(tmp_path, tmp_path / "adapter.py", tmp_path / "dataset.json", tmp_path / "prediction.jsonl", tmp_path / "report", "run", "instance", "agent", 1800)
+def test_agent_evaluator_harness_applies_prediction_patch_with_frozen_image(tmp_path: Path):
+    invocation = HarnessInvocation(tmp_path, tmp_path / "adapter.py", tmp_path / "dataset.json", tmp_path / "prediction.jsonl", tmp_path / "report", "run", "instance", "agent", 1800, frozen_image="repo/task@sha256:" + "a" * 64)
     command = build_harness_command(invocation, platform_name="linux", python_executable="python")
     assert "--skip-patch" not in command
     assert command[command.index("--predictions") + 1] == str(invocation.predictions_path)
+    assert command[command.index("--frozen-image") + 1] == invocation.frozen_image
 
 
 def test_legacy_invalid_output_budget_migrates_to_both_limits(tmp_path: Path):
@@ -158,30 +191,35 @@ def test_image_identity_records_id_and_digest():
     assert identity["pinned"] == "swebench/task@sha256:" + "b" * 64
 
 
-def test_prepare_task_repository_exports_only_testbed_at_base_commit(tmp_path: Path, monkeypatch):
+def test_prepare_task_repository_exports_only_testbed_at_base_commit(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "-C", str(source), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    (source / "tracked.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "initial"], check=True)
+    base_commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     captured = []
     def runner(argv, **kwargs):
         captured.append(argv)
-        destination = Path(argv[argv.index("--mount") + 1].split("src=", 1)[1].split(",", 1)[0])
-        subprocess.run(["git", "-C", str(destination), "init", "-q"], check=True)
-        subprocess.run(["git", "-C", str(destination), "config", "user.email", "test@example.invalid"], check=True)
-        subprocess.run(["git", "-C", str(destination), "config", "user.name", "Test"], check=True)
-        (destination / "tracked.txt").write_text("content\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(destination), "add", "tracked.txt"], check=True)
-        subprocess.run(["git", "-C", str(destination), "commit", "-qm", "initial"], check=True)
+        staging = Path(argv[argv.index("--mount") + 1].split("src=", 1)[1].split(",", 1)[0])
+        subprocess.run(["git", "-C", str(source), "bundle", "create", str(staging / "run-1.bundle"), "--all"], check=True)
         return subprocess.CompletedProcess(argv, 0, "", "")
-    destination = tmp_path / "task"
-    monkeypatch.setattr("evalsys.iteration2._git", lambda root, *args: "b" * 40 if args[0] == "rev-parse" else "")
+    destination = tmp_path / "staging" / "task"
     result = prepare_task_repository(
         docker_prefix=["docker"], image="sha256:" + "a" * 64,
-        base_commit="b" * 40, destination=destination, run_id="run-1", runner=runner,
+        base_commit=base_commit, destination=destination, run_id="run-1", runner=runner,
     )
     assert result == destination.resolve()
     assert (destination / "tracked.txt").read_text(encoding="utf-8") == "content\n"
+    assert not (destination.parent / "run-1.bundle").exists()
     command = captured[0]
     assert command[command.index("--pull") + 1] == "never"
     assert command[command.index("--network") + 1] == "none"
-    assert "checkout --detach " + "b" * 40 in command[-1]
+    assert "cp -a" not in command[-1] and "cp -R" not in command[-1]
+    assert "git -C /testbed bundle create /export/run-1.bundle --all" in command[-1]
 
 
 def test_agent_container_command_is_task_image_only_and_hardened(tmp_path: Path):
@@ -205,6 +243,127 @@ def test_resume_never_retries_valid_agent_outcomes():
     assert classify_cell_for_resume(None) == "not_started"
 
 
+def test_harness_failures_default_to_valid_unresolved():
+    for raw, classification in (
+        ({"status": "invalid", "classification": "official_patch_apply_failure", "stage": "patch"}, "agent_patch_apply_failed"),
+        ({"status": "timeout", "classification": "official_tests_timeout", "stage": "tests"}, "tests_timeout"),
+        ({"status": "infra_failed", "classification": "official_tests_error", "stage": "tests"}, "tests_error"),
+        ({"status": "invalid", "classification": "unknown", "stage": "unknown"}, "tests_unresolved"),
+    ):
+        result = classify_agent_harness_failure(raw)
+        assert result == {"status": "unresolved", "classification": classification}
+    assert classify_agent_harness_failure({"status": "infra_failed", "classification": "missing_instance_log", "stage": "environment"}) == {"status": "eval_infra_failed", "classification": "missing_instance_log"}
+    assert classify_agent_harness_failure({"status": "infra_failed", "classification": "cleanup_failure", "stage": "cleanup"}) == {"status": "eval_infra_failed", "classification": "cleanup_failure"}
+
+
+def test_agent_patch_and_test_failures_are_valid_unresolved():
+    patch_apply = decide_verdict("agent", {}, [], [], failure_kind="patch_apply")
+    assert patch_apply == {"status": "unresolved", "classification": "agent_patch_apply_failed", "fail_to_pass": {}, "pass_to_pass": {}}
+    timeout = decide_verdict("agent", {}, [], [], failure_kind="test_timeout")
+    assert timeout["status"] == "unresolved" and timeout["classification"] == "tests_timeout"
+    error = decide_verdict("agent", {"fixed": "ERROR"}, ["fixed"], [])
+    assert error["status"] == "unresolved" and error["classification"] == "tests_error"
+    for result in (patch_apply, timeout, error):
+        assert classify_cell_for_resume({**result, "evaluator_recorded": True}) == "complete"
+
+
+def test_completed_cell_reuse_requires_explicit_resume():
+    complete = {"status": "unresolved", "evaluator_recorded": True}
+    with pytest.raises(EvalError, match="explicit --resume"):
+        cell_resume_action(complete, resume=False)
+    assert cell_resume_action(complete, resume=True) == "reuse"
+    assert cell_resume_action(None, resume=False) == "start"
+
+
+def test_experiment_manifest_is_stable_and_rejects_drift(tmp_path: Path):
+    root = tmp_path / "formal"
+    manifest = {"baseline": "baseline-v1", "plan_sha256": "a" * 64, "cells": 24}
+    assert ensure_experiment_manifest(root, manifest) == root / "experiment-manifest.json"
+    assert ensure_experiment_manifest(root, manifest) == root / "experiment-manifest.json"
+    with pytest.raises(EvalError, match="manifest mismatch"):
+        ensure_experiment_manifest(root, {**manifest, "cells": 23})
+
+
+def test_experiment_manifest_tracks_pending_and_completed_run_ids(tmp_path: Path):
+    root = tmp_path / "formal"
+    ensure_experiment_manifest(root, {"baseline": "baseline-v1", "cells": 24})
+    record_experiment_cell(root, "T-O1-full", "run-pending", "pending")
+    manifest = json.loads((root / "experiment-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["cell_runs"]["T-O1-full"] == {"run_id": "run-pending", "state": "pending"}
+    record_experiment_cell(root, "T-O1-full", "run-pending", "complete")
+    manifest = json.loads((root / "experiment-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["cell_runs"]["T-O1-full"]["state"] == "complete"
+    with pytest.raises(EvalError, match="run_id"):
+        record_experiment_cell(root, "T-O1-full", "different", "complete")
+
+
+def test_completed_cell_evidence_requires_complete_and_cell_checksum(tmp_path: Path):
+    raw = tmp_path / "run"
+    raw.mkdir()
+    cell = {"run_id": "run-1", "status": "unresolved", "evaluator_recorded": True}
+    (raw / "cell-result.json").write_text(json.dumps(cell), encoding="utf-8")
+    digest = __import__("hashlib").sha256((raw / "cell-result.json").read_bytes()).hexdigest()
+    (raw / "checksums.sha256").write_text(f"{digest}  cell-result.json\n", encoding="utf-8")
+    (raw / "COMPLETE").write_text("complete\n", encoding="utf-8")
+    assert verify_cell_evidence(raw, expected_run_id="run-1") == cell
+    (raw / "COMPLETE").unlink()
+    with pytest.raises(EvalError, match="COMPLETE"):
+        verify_cell_evidence(raw, expected_run_id="run-1")
+
+
+def test_pending_evidence_reopens_same_run_without_overwrite(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    recorder = EvidenceRecorder(project, iteration=2)
+    run = recorder.start("formal_cell", {"cell": "T-O1-full"}, ["evalsys", "run-formal"])
+    (run.raw_dir / "LATEST").write_text("000001.json\n", encoding="utf-8")
+    resumed = recorder.resume_pending(run.run_id, "formal_cell", {"cell": "T-O1-full"}, ["evalsys", "run-formal"])
+    assert resumed.run_id == run.run_id and resumed.raw_dir == run.raw_dir
+    assert json.loads((run.raw_dir / "run-manifest.json").read_text(encoding="utf-8"))["run_id"] == run.run_id
+    (run.raw_dir / "COMPLETE").write_text("done\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="terminal"):
+        recorder.resume_pending(run.run_id, "formal_cell", {"cell": "T-O1-full"}, ["evalsys", "run-formal"])
+
+
+def test_evaluator_infra_retry_creates_superseding_evidence(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    recorder = EvidenceRecorder(project, iteration=2)
+    old = recorder.start("formal_cell", {"cell": "T-O1-full"}, ["evalsys", "run-formal"])
+    old.finish({"status": "eval_infra_failed", "classification": "docker_engine"})
+    retry = start_infra_retry(recorder, {"run_id": old.run_id, "status": "eval_infra_failed", "evaluator_recorded": True}, {"cell": "T-O1-full"}, ["evalsys", "run-formal"])
+    assert retry.run_id != old.run_id and retry.supersedes == [old.run_id]
+    retry.finish({"status": "unresolved", "classification": "tests_failed"})
+    index = json.loads((project / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+    assert [entry["run_id"] for entry in select_current_runs(index["runs"])] == [retry.run_id]
+    assert verify_active_audit_runs(project, iteration=2) == {old.run_id: [], retry.run_id: []}
+    assert verify_audit_index_metadata(project, iteration=2) == []
+
+
+def test_actual_returned_model_is_extracted_from_agent_events(tmp_path: Path):
+    events = tmp_path / "events.jsonl"
+    events.write_text(json.dumps({"kind": "model_response", "response": {"actual_model": "gpt-5.6-sol-build-42"}}) + "\n", encoding="utf-8")
+    assert extract_actual_model(events) == "gpt-5.6-sol-build-42"
+    events.write_text("", encoding="utf-8")
+    assert extract_actual_model(events) == "unavailable"
+
+
+def test_iteration2_evidence_sanitizes_cell_result_and_keeps_legacy_index(tmp_path: Path):
+    project = tmp_path / "project"
+    legacy = {"schema_version": 1, "runs": [{"run_id": "legacy", "kind": "offline", "status": "passed", "summary": "runs/legacy/summary.json"}]}
+    (project / "audit/iteration2").mkdir(parents=True)
+    (project / "audit/iteration2/index.json").write_text(json.dumps(legacy), encoding="utf-8")
+    recorder = EvidenceRecorder(project, iteration=2)
+    run = recorder.start("integration", {"token": "secret", "path": str(project / "private")}, ["evalsys", "integration"])
+    (run.raw_dir / "cell-result.json").write_text(json.dumps({"status": "unresolved"}), encoding="utf-8")
+    run.finish({"status": "unresolved", "classification": "tests_failed", "reason": f"token=abc {project / 'private'}"})
+    index = json.loads((project / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+    assert index["runs"][0] == legacy["runs"][0]
+    public = (run.audit_dir / "result-summary.json").read_text(encoding="utf-8")
+    assert "token=abc" not in public and str(project) not in public
+    assert "cell-result.json" in (run.raw_dir / "checksums.sha256").read_text(encoding="utf-8")
+
+
 def test_formal_report_counts_pairs_categories_and_usage():
     rows = []
     categories = ["omission"] * 4 + ["specificity_reduction"] * 4 + ["referential_ambiguity"] * 4
@@ -224,6 +383,10 @@ def test_formal_report_counts_pairs_categories_and_usage():
     assert report["absolute_drop"] == 11
     assert report["paired_outcomes"] == {"both": 1, "full_only": 11, "fuzzy_only": 0, "neither": 0}
     assert report["categories"]["omission"]["E2"] == {"count": 1, "total": 4}
+    incomplete = [dict(row) for row in rows]
+    incomplete[0]["status"] = "eval_infra_failed"
+    with pytest.raises(EvalError, match="incomplete"):
+        summarize_formal_results(incomplete)
     with pytest.raises(EvalError, match="24 cells"):
         summarize_formal_results(rows[:-1])
     duplicate = list(rows)
@@ -286,6 +449,30 @@ def test_git_gate_rejects_dirty_unpushed_and_hash_mismatch(tmp_path: Path):
         verify_git_gate(repo)
 
 
+def _valid_development_record(config: dict | None = None) -> dict:
+    cells = []
+    for index, record in enumerate(development_cells(_records())):
+        cells.append({
+            "case_id": record["case_id"], "instance_id": record["instance_id"],
+            "variant": record["prompt_variant"], "run_id": f"run-{index}",
+            "status": "unresolved", "checksum": "a" * 64,
+            "evaluator_recorded": True,
+        })
+    return {
+        "source_run_ids": [cell["run_id"] for cell in cells], "cells": cells,
+        "config_hash": __import__("hashlib").sha256(json.dumps(config or {}, sort_keys=True, separators=(",", ":")).encode()).hexdigest(), "system_prompt_hash": "c" * 64,
+        "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64,
+        "code_commit": "f" * 40, "code_hash": "1" * 64,
+        "test_receipt": {"status": "passed", "checksum": "2" * 64},
+        "isolation_proof": {"status": "passed", "checksum": "3" * 64},
+    }
+
+
+def _valid_images() -> dict:
+    ids = {record["instance_id"] for record in development_cells(_records())} | set(FORMAL_INSTANCES)
+    return {instance_id: {"available": True, "image_id": "sha256:" + "a" * 64, "repo_digests": [f"swebench/{instance_id}@sha256:" + "b" * 64]} for instance_id in ids}
+
+
 def test_freeze_requires_authorization_development_and_image_identities(tmp_path: Path):
     records = [record for record in _records() if record["split"] == "test"]
     config = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
@@ -295,10 +482,22 @@ def test_freeze_requires_authorization_development_and_image_identities(tmp_path
         freeze_baseline(tmp_path, "baseline-v1", config, records, development=None, image_identities={}, authorized=False, git_commit="a" * 40)
     with pytest.raises(EvalError, match="development"):
         freeze_baseline(tmp_path, "baseline-v1", config, records, development=None, image_identities={}, authorized=True, git_commit="a" * 40)
-    development = {"source_run_ids": [f"run-{index}" for index in range(6)]}
-    missing = {f"image-{index}": {"available": index != 14, "image_id": "sha256:" + "a" * 64 if index != 14 else None} for index in range(15)}
+    development = _valid_development_record(config)
+    missing = _valid_images()
+    missing[next(iter(missing))] = {"available": False, "image_id": None}
     with pytest.raises(EvalError, match="must be resolved"):
         freeze_baseline(tmp_path, "baseline-v1", config, records, development=development, image_identities=missing, authorized=True, git_commit="a" * 40)
+    fake_keys = {f"fake-{index}": {"available": True, "image_id": "sha256:" + "a" * 64, "repo_digests": ["fake@sha256:" + "b" * 64]} for index in range(15)}
+    with pytest.raises(EvalError, match="image inventory keys"):
+        freeze_baseline(tmp_path, "baseline-v1", config, records, development=development, image_identities=fake_keys, authorized=True, git_commit="a" * 40)
+    invalid = _valid_development_record(config)
+    invalid["cells"][0]["status"] = "eval_infra_failed"
+    with pytest.raises(EvalError, match="development cell"):
+        freeze_baseline(tmp_path, "baseline-v1", config, records, development=invalid, image_identities=_valid_images(), authorized=True, git_commit="a" * 40)
+    missing_receipts = _valid_development_record(config)
+    missing_receipts.pop("test_receipt")
+    with pytest.raises(EvalError, match="test receipt"):
+        freeze_baseline(tmp_path, "baseline-v1", config, records, development=missing_receipts, image_identities=_valid_images(), authorized=True, git_commit="a" * 40)
 
 
 def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch):
@@ -309,10 +508,19 @@ def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch
     (tmp_path / "benchmark/manifests/paired-cases.jsonl").write_text("manifest\n", encoding="utf-8")
     (tmp_path / "benchmark/source-lock.json").write_text("{}\n", encoding="utf-8")
     (tmp_path / "uv.lock").write_text("lock\n", encoding="utf-8")
+    (tmp_path / "src/evalsys").mkdir(parents=True)
+    (tmp_path / "src/evalsys/baseline.py").write_text("generator\n", encoding="utf-8")
     monkeypatch.setattr("evalsys.iteration2._tool_schemas", lambda root, config: [{"name": "tool"}])
     config = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
-    development = {"source_run_ids": [f"run-{index}" for index in range(6)]}
-    images = {f"image-{index}": {"image_id": "sha256:" + "a" * 64} for index in range(15)}
+    development = _valid_development_record(config)
+    schema_bytes = current_tool_schema_bytes(tmp_path, config)
+    development.update({
+        "system_prompt_hash": __import__("hashlib").sha256((tmp_path / "prompts/baseline/system.txt").read_bytes()).hexdigest(),
+        "protocol_prompt_hash": __import__("hashlib").sha256((tmp_path / "prompts/baseline/protocol.txt").read_bytes()).hexdigest(),
+        "tool_schema_hash": __import__("hashlib").sha256(schema_bytes).hexdigest(),
+        "code_hash": behavior_tree_hash(tmp_path),
+    })
+    images = _valid_images()
     root = freeze_baseline(tmp_path, "baseline-v1", config, [record for record in _records() if record["split"] == "test"], development=development, image_identities=images, authorized=True, git_commit="a" * 40)
     manifest = json.loads((root / "baseline.json").read_text(encoding="utf-8"))
     assert manifest["provider_hard_context_limit"] == "unavailable"
@@ -321,18 +529,116 @@ def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch
     verify_frozen_baseline(root)
 
 
-def test_verify_frozen_baseline_detects_hash_mismatch(tmp_path: Path):
+def test_verify_frozen_baseline_requires_all_snapshots_and_detects_hash_mismatch(tmp_path: Path):
     root = tmp_path / "baseline"
     root.mkdir()
-    (root / "baseline.json").write_text("{}\n", encoding="utf-8")
-    (root / "plan.json").write_text("[]\n", encoding="utf-8")
-    baseline_hash = __import__("hashlib").sha256((root / "baseline.json").read_bytes()).hexdigest()
-    plan_hash = __import__("hashlib").sha256((root / "plan.json").read_bytes()).hexdigest()
-    (root / "checksums.sha256").write_text(f"{baseline_hash}  baseline.json\n{plan_hash}  plan.json\n", encoding="utf-8")
+    files = {"baseline.json": "{}\n", "plan.json": "[]\n"}
+    for name, content in files.items():
+        (root / name).write_text(content, encoding="utf-8")
+    hashes = {name: __import__("hashlib").sha256((root / name).read_bytes()).hexdigest() for name in files}
+    (root / "checksums.sha256").write_text("".join(f"{digest}  {name}\n" for name, digest in hashes.items()), encoding="utf-8")
+    with pytest.raises(EvalError, match="checksum paths"):
+        verify_frozen_baseline(root)
+    for name in ("system.txt", "protocol.txt", "tool-schemas.json"):
+        (root / name).write_text(name + "\n", encoding="utf-8")
+    hashes = {name: __import__("hashlib").sha256(path.read_bytes()).hexdigest() for name in files | {"system.txt": "", "protocol.txt": "", "tool-schemas.json": ""} if (path := root / name)}
+    (root / "checksums.sha256").write_text("".join(f"{digest}  {name}\n" for name, digest in hashes.items()), encoding="utf-8")
     verify_frozen_baseline(root)
     (root / "plan.json").write_text("[1]\n", encoding="utf-8")
     with pytest.raises(EvalError, match="checksum"):
         verify_frozen_baseline(root)
+
+
+def test_current_tool_schema_is_canonical_json(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("evalsys.iteration2._tool_schemas", lambda root, config: [{"name": "z"}, {"name": "a"}])
+    assert current_tool_schema_bytes(tmp_path, {}) == b'[\n  {\n    "name": "z"\n  },\n  {\n    "name": "a"\n  }\n]\n'
+
+
+def test_behavior_tree_hash_changes_for_behavior_source(tmp_path: Path):
+    (tmp_path / "src/evalsys").mkdir(parents=True)
+    (tmp_path / "src/reqagent").mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "src/evalsys/a.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "src/reqagent/b.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "scripts/official_harness_adapter.py").write_text("VALUE = 1\n", encoding="utf-8")
+    before = behavior_tree_hash(tmp_path)
+    (tmp_path / "src/reqagent/b.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert behavior_tree_hash(tmp_path) != before
+
+
+def test_frozen_image_identity_drift_is_rejected(tmp_path: Path):
+    root = tmp_path / "baseline"
+    root.mkdir()
+    baseline = {"image_identities": {"case": {"image_id": "sha256:" + "a" * 64, "repo_digests": ["repo@sha256:" + "b" * 64]}}}
+    for name, content in {"baseline.json": json.dumps(baseline), "plan.json": "[]", "system.txt": "s", "protocol.txt": "p", "tool-schemas.json": "[]"}.items():
+        (root / name).write_text(content + "\n", encoding="utf-8")
+    hashes = {path.name: __import__("hashlib").sha256(path.read_bytes()).hexdigest() for path in root.iterdir()}
+    (root / "checksums.sha256").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
+    with pytest.raises(EvalError, match="image identity drift"):
+        verify_frozen_baseline(root, image_resolver=lambda instance_id: {"image_id": "sha256:" + "c" * 64, "repo_digests": ["repo@sha256:" + "d" * 64]})
+
+
+def test_current_behavior_manifest_prompt_and_lock_drift_are_rejected(tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    for directory in ("src/evalsys", "src/reqagent", "scripts", "benchmark/manifests", "benchmark", "prompts/baseline"):
+        (project / directory).mkdir(parents=True, exist_ok=True)
+    files = {
+        "src/evalsys/baseline.py": "generator\n", "src/reqagent/core.py": "code\n",
+        "scripts/official_harness_adapter.py": "adapter\n",
+        "benchmark/manifests/paired-cases.jsonl": "manifest\n", "benchmark/source-lock.json": "{}\n",
+        "uv.lock": "lock\n", "prompts/baseline/system.txt": "system\n", "prompts/baseline/protocol.txt": "protocol\n",
+    }
+    for name, content in files.items():
+        (project / name).write_text(content, encoding="utf-8")
+    frozen = tmp_path / "frozen"
+    frozen.mkdir()
+    system = project / "prompts/baseline/system.txt"
+    protocol = project / "prompts/baseline/protocol.txt"
+    config = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr("evalsys.iteration2._tool_schemas", lambda root, value: [])
+    tool_schema = current_tool_schema_bytes(project, config)
+    manifest = {
+        "public_manifest_sha256": __import__("hashlib").sha256((project / "benchmark/manifests/paired-cases.jsonl").read_bytes()).hexdigest(),
+        "source_lock_sha256": __import__("hashlib").sha256((project / "benchmark/source-lock.json").read_bytes()).hexdigest(),
+        "dependency_lock_sha256": __import__("hashlib").sha256((project / "uv.lock").read_bytes()).hexdigest(),
+        "plan_generator_sha256": __import__("hashlib").sha256((project / "src/evalsys/baseline.py").read_bytes()).hexdigest(),
+        "behavior_tree_sha256": behavior_tree_hash(project),
+        "system_prompt_sha256": __import__("hashlib").sha256(system.read_bytes()).hexdigest(),
+        "protocol_prompt_sha256": __import__("hashlib").sha256(protocol.read_bytes()).hexdigest(),
+        "tool_schema_sha256": __import__("hashlib").sha256(tool_schema).hexdigest(),
+        "config": config,
+        "config_sha256": __import__("hashlib").sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+    }
+    contents = {"baseline.json": (json.dumps(manifest) + "\n").encode(), "plan.json": b"[]\n", "system.txt": system.read_bytes(), "protocol.txt": protocol.read_bytes(), "tool-schemas.json": tool_schema}
+    for name, content in contents.items():
+        (frozen / name).write_bytes(content)
+    hashes = {name: __import__("hashlib").sha256((frozen / name).read_bytes()).hexdigest() for name in contents}
+    (frozen / "checksums.sha256").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
+    verify_frozen_baseline(frozen, project_root=project)
+    (project / "src/reqagent/core.py").write_text("changed\n", encoding="utf-8")
+    with pytest.raises(EvalError, match="behavior_tree"):
+        verify_frozen_baseline(frozen, project_root=project)
+
+
+def test_execute_cleans_normal_temporary_clone(tmp_path: Path):
+    repo = tmp_path / "source"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    (repo / "x").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "x"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True)
+    raw = json.loads((ROOT / "configs/agent/offline-scripted.json").read_text(encoding="utf-8"))
+    raw["script"] = [{"text": "", "tool_calls": [{"call_id": "submit", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "one"}]
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    config = AgentConfig.load(config_path)
+    store = RunStore.create(tmp_path / "runs")
+    result = _execute(repo, "task", config, store)
+    manifest = json.loads((store.path / "run-manifest.json").read_text(encoding="utf-8"))
+    assert result.stop_reason == "submitted"
+    assert not Path(manifest["workspace"]).exists()
 
 
 def test_workspace_base_commit_is_verified(tmp_path: Path):
