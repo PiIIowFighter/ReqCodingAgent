@@ -1,0 +1,10 @@
+{
+  "classification": "integration_failure",
+  "duration": null,
+  "exit_code": null,
+  "failed": 0,
+  "passed": 0,
+  "reason": "integration acceptance failed: {\"cleanup\": {\"message\": null, \"status\": \"passed\"}, \"stages\": {\"environment\": \"failed\", \"patch\": \"pending\", \"tests\": \"pending\"}, \"status\": \"infra_failed\", \"tests_executed\": false}",
+  "skipped": 0,
+  "status": "failed"
+}
