@@ -1,5 +1,5 @@
 {
-  "behavior_tree_sha256": "f0d86f77d79b62b219f77b735c7052754599cd7b6dc1c9ac28d85e08b9e0351e",
+  "behavior_tree_sha256": "142f8006508d3aa4db063e7949d05911de9d0066ac1b2072bb20ea608000812f",
   "cleanup": {
     "actual": "passed",
     "expected": "passed"
@@ -114,7 +114,7 @@
   ],
   "protocol_prompt_hash": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
   "residual_containers": [],
-  "run_id": "20260830T-p0-isolation-proof-v001",
+  "run_id": "20260830T-parallel2-isolation-proof-v001",
   "runtime": {
     "cap_drop": "ALL",
     "network": "none",
