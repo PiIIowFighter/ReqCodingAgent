@@ -1,0 +1,133 @@
+{
+  "cleanup": {
+    "actual": "passed",
+    "expected": "passed"
+  },
+  "container": {
+    "created": false,
+    "exit_code": 1,
+    "exited": true,
+    "started": false
+  },
+  "failed_probes": [
+    "container_started",
+    "credentials_absent",
+    "docker_socket_absent",
+    "git_command",
+    "host_paths_absent",
+    "network_absent",
+    "private_paths_absent",
+    "python_command",
+    "workspace_read",
+    "workspace_write",
+    "mount_inventory"
+  ],
+  "failure_reason": "w\u0000s\u0000l\u0000:\u0000 \u0000�hKm0R \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006tM�n\f�FO*g\\��P0R \u0000W\u0000S\u0000L\u0000\u00020N\u0000A\u0000T\u0000 \u0000!j\u000f_\u000bN�v \u0000W\u0000S\u0000L\u0000 \u0000\nN/e\u0001c \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006t\u00020\n\u0000\n\u0000Traceback (most recent call last):\n  File \"<stdin>\", line 15, in <module>\n  File \"<stdin>\", line 15, in <genexpr>\n  File \"/opt/miniconda3/envs/testbed/lib/python3.6/pathlib.py\", line 1336, in exists\n    self.stat()\n  File \"/opt/miniconda3/envs/testbed/lib/python3.6/pathlib.py\", line 1158, in stat\n    return self._accessor.stat(self)\n  File \"/opt/miniconda3/envs/testbed/lib/python3.6/pathlib.py\", line 387, in wrapped\n    return strfunc(str(pathobj), *args)\nUnicodeEncodeError: 'ascii' codec can't encode characters in position 11-12: ordinal not in range(128)\n",
+  "forbidden_mounts": [],
+  "image": {
+    "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+    ],
+    "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+  },
+  "matrix": [
+    {
+      "actual": true,
+      "expected": true,
+      "passed": true,
+      "probe": "cleanup"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "container_started"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "credentials_absent"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "docker_socket_absent"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "git_command"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "host_paths_absent"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "network_absent"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "private_paths_absent"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "python_command"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "workspace_read"
+    },
+    {
+      "actual": null,
+      "expected": true,
+      "passed": false,
+      "probe": "workspace_write"
+    },
+    {
+      "actual": [],
+      "expected": [
+        {
+          "readonly": false,
+          "target": "/workspace"
+        }
+      ],
+      "passed": false,
+      "probe": "mount_inventory"
+    }
+  ],
+  "mount_count": 0,
+  "mounts": [],
+  "protected_paths": [
+    "benchmark/private",
+    "oracles.jsonl",
+    "计划",
+    "资料",
+    "project_root",
+    "host_paths"
+  ],
+  "residual_containers": [],
+  "run_id": "20260830T-isolation-proof-v001",
+  "runtime": {
+    "cap_drop": "ALL",
+    "network": "none",
+    "no_new_privileges": true,
+    "pull": "never"
+  },
+  "schema_version": "1.0",
+  "status": "failed"
+}

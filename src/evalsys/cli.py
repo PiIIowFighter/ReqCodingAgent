@@ -101,13 +101,10 @@ def main(argv: list[str] | None = None) -> int:
             report = replay_cases(settings, cases, prepared.source_rows, args.mode, harness_revision=prepared.lock_heads["harness"], timeout_s=args.timeout, workers=args.workers, resume=args.resume, run_id=args.run_id)
         elif args.command == "report":
             if args.name:
-                from .iteration2 import summarize_formal_results, verify_frozen_baseline
-                verify_frozen_baseline(settings.project_root / "configs/frozen" / args.name)
-                formal_root = settings.artifact_root / "runs/iteration2/formal" / args.name / "cells"
-                result_paths = sorted(formal_root.glob("*/cell-result.json")) if formal_root.is_dir() else []
-                rows = [json.loads(path.read_text(encoding="utf-8")) for path in result_paths]
-                if len(rows) != 24:
-                    raise EvalError(f"formal report requires 24 completed cells; found {len(rows)}", category="invalid")
+                from .iteration2 import load_formal_results, summarize_formal_results, verify_frozen_baseline
+                frozen = verify_frozen_baseline(settings.project_root / "configs/frozen" / args.name, project_root=settings.project_root)
+                formal_root = settings.artifact_root / "runs/iteration2/formal" / args.name
+                rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], formal_root / "experiment-manifest.json")
                 report = summarize_formal_results(rows)
                 destination = settings.project_root / "audit/iteration2/reports" / f"{args.name}.json"
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -132,9 +129,9 @@ def main(argv: list[str] | None = None) -> int:
             from .agent_runner import preflight_agent_config
             from .baseline import require_frozen_baseline
             from .iteration2 import (
-                development_cells, freeze_baseline, load_public_records, run_agent_cell,
-                run_development, run_formal_plan, select_public_case, verify_frozen_baseline,
-                verify_git_gate,
+                behavior_tree_hash, current_tool_schema_bytes, development_cells, freeze_baseline,
+                load_provider_identity, load_public_records, run_agent_cell, run_development,
+                run_formal_plan, select_public_case, verify_frozen_baseline, verify_git_gate,
             )
             if not args.confirm:
                 raise EvalError(f"{args.command} requires --confirm", category="invalid")
@@ -146,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
                 for instance_id, row in prepared.source_rows.items()
             }
             records = load_public_records(settings.project_root)
+            provider_identity = load_provider_identity(
+                settings.project_root,
+                "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+            )
             if args.command == "agent-run":
                 if args.resume != bool(args.run_id):
                     raise EvalError("--resume and --run-id must be supplied together", category="invalid")
@@ -154,12 +155,23 @@ def main(argv: list[str] | None = None) -> int:
                 case = select_public_case(records, args.case_id, args.variant, allowed_split="dev")
                 inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
                 inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-                report = run_agent_cell(settings, case, source_rows[case["instance_id"]], config, image_identity=inventory[case["instance_id"]], run_type="manual_cell")
+                report = run_agent_cell(settings, case, source_rows[case["instance_id"]], config, image_identity=inventory[case["instance_id"]], run_type="manual_cell", provider_identity=provider_identity)
                 report = {"status": "passed", "cell": report}
             elif args.command == "run-dev":
+                from .recovery import sha256_file
                 inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
                 inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-                report = {"status": "passed", "development": run_development(settings, args.version, config, source_rows, inventory, resume=args.resume)}
+                def gate_reference(name: str) -> dict[str, str]:
+                    path = settings.project_root / "audit/iteration2" / name
+                    if not path.is_file():
+                        raise EvalError(f"iteration2 gate evidence is missing: {name}", category="invalid")
+                    return {"path": path.relative_to(settings.project_root).as_posix(), "sha256": sha256_file(path)}
+                report = {"status": "passed", "development": run_development(
+                    settings, args.version, config, source_rows, inventory, resume=args.resume,
+                    test_receipt=gate_reference("test-receipt.json"),
+                    isolation_proof=gate_reference("isolation-proof.json"),
+                    provider_identity=provider_identity,
+                )}
             elif args.command == "freeze-baseline":
                 commit = verify_git_gate(settings.project_root)
                 development_path = settings.project_root / "audit/iteration2/development" / f"{args.dev_version}.json"

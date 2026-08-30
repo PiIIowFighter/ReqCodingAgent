@@ -10,6 +10,7 @@ from evalsys.agent_runner import AgentRunRequest
 from evalsys.baseline import FORMAL_SEED, build_formal_plan, verify_formal_plan
 from evalsys.cli import build_parser
 from evalsys.errors import EvalError
+from evalsys.config import Settings
 from evalsys.evidence import EvidenceRecorder, sanitize, select_current_runs, verify_active_audit_runs, verify_audit_index_metadata
 from evalsys.harness import HarnessInvocation, build_harness_command
 from evalsys.verdict import decide_verdict
@@ -33,6 +34,15 @@ from evalsys.iteration2 import (
     summarize_formal_results,
     behavior_tree_hash,
     current_tool_schema_bytes,
+    load_provider_identity,
+    verify_runtime_provider,
+    load_formal_results,
+    run_isolation_diagnostic,
+    write_isolation_proof,
+    write_test_receipt,
+    run_development,
+    verify_development_evidence,
+    verify_gate_receipt,
     verify_git_gate,
     verify_frozen_baseline,
 )
@@ -383,6 +393,13 @@ def test_formal_report_counts_pairs_categories_and_usage():
     assert report["absolute_drop"] == 11
     assert report["paired_outcomes"] == {"both": 1, "full_only": 11, "fuzzy_only": 0, "neither": 0}
     assert report["categories"]["omission"]["E2"] == {"count": 1, "total": 4}
+    assert report["classifications"] == {"unavailable": 24}
+    assert report["stop_reasons"] == {"submitted": 24}
+    assert report["usage"] == {"input_tokens": 240, "output_tokens": 96, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    assert report["totals"]["steps"] == 48 and report["totals"]["tool_calls"] == 72
+    assert report["totals"]["wall_time_seconds"] == 120
+    assert report["patch"] == {"files": 24, "additions": 24, "deletions": 0, "bytes": 480}
+    assert report["infrastructure"] == {"superseded_runs": 0, "infra_failures": 0}
     incomplete = [dict(row) for row in rows]
     incomplete[0]["status"] = "eval_infra_failed"
     with pytest.raises(EvalError, match="incomplete"):
@@ -456,15 +473,16 @@ def _valid_development_record(config: dict | None = None) -> dict:
             "case_id": record["case_id"], "instance_id": record["instance_id"],
             "variant": record["prompt_variant"], "run_id": f"run-{index}",
             "status": "unresolved", "checksum": "a" * 64,
-            "evaluator_recorded": True,
+            "evaluator_recorded": True, "actual_model": "gpt-5.6-sol",
         })
     return {
         "source_run_ids": [cell["run_id"] for cell in cells], "cells": cells,
         "config_hash": __import__("hashlib").sha256(json.dumps(config or {}, sort_keys=True, separators=(",", ":")).encode()).hexdigest(), "system_prompt_hash": "c" * 64,
         "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64,
         "code_commit": "f" * 40, "code_hash": "1" * 64,
-        "test_receipt": {"status": "passed", "checksum": "2" * 64},
-        "isolation_proof": {"status": "passed", "checksum": "3" * 64},
+        "test_receipt": {"path": "audit/iteration2/test-receipt.json", "sha256": "2" * 64},
+        "isolation_proof": {"path": "audit/iteration2/isolation-proof.json", "sha256": "3" * 64},
+        "provider_identity": {"actual_model": "gpt-5.6-sol"},
     }
 
 
@@ -473,7 +491,273 @@ def _valid_images() -> dict:
     return {instance_id: {"available": True, "image_id": "sha256:" + "a" * 64, "repo_digests": [f"swebench/{instance_id}@sha256:" + "b" * 64]} for instance_id in ids}
 
 
-def test_freeze_requires_authorization_development_and_image_identities(tmp_path: Path):
+def _write_gate_file(project: Path, name: str, bindings: dict) -> dict:
+    path = project / "audit/iteration2" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"schema_version": "1.0", "status": "passed", **bindings}
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    return {"path": f"audit/iteration2/{name}", "sha256": __import__("hashlib").sha256(path.read_bytes()).hexdigest()}
+
+
+def test_development_evidence_revalidates_raw_checksum_and_active_leaf(tmp_path: Path):
+    project = tmp_path / "project"
+    raw_root = project / "artifacts/runs/iteration2"
+    audit = project / "audit/iteration2"
+    audit.mkdir(parents=True)
+    cells = []
+    index = {"schema_version": 1, "runs": []}
+    for position, public in enumerate(development_cells(_records())):
+        run_id = f"run-{position}"
+        raw = raw_root / run_id
+        raw.mkdir(parents=True)
+        cell = {"run_id": run_id, "case_id": public["case_id"], "instance_id": public["instance_id"], "variant": public["prompt_variant"], "status": "unresolved", "evaluator_recorded": True}
+        path = raw / "cell-result.json"
+        path.write_text(json.dumps(cell, sort_keys=True), encoding="utf-8")
+        checksum = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+        (raw / "checksums.sha256").write_text(f"{checksum}  cell-result.json\n", encoding="utf-8")
+        (raw / "COMPLETE").write_text("complete\n", encoding="utf-8")
+        index["runs"].append({"run_id": run_id, "run_type": "dev_cell", "status": "unresolved", "config_hash": "cfg", "raw_path": f"artifacts/runs/iteration2/{run_id}", "audit_path": f"audit/iteration2/runs/{run_id}", "validity": "active", "supersedes": []})
+        cells.append({**cell, "checksum": checksum})
+    (audit / "index.json").write_text(json.dumps(index), encoding="utf-8")
+    verified = verify_development_evidence(project, raw_root, cells)
+    assert [cell["checksum"] for cell in verified] == [cell["checksum"] for cell in cells]
+    (raw_root / "run-0/cell-result.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(EvalError, match="checksum"):
+        verify_development_evidence(project, raw_root, cells)
+
+
+def test_gate_receipt_reloads_path_hash_status_and_bindings(tmp_path: Path):
+    project = tmp_path / "project"
+    bindings = {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "system_prompt_hash": "c" * 64, "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64}
+    reference = _write_gate_file(project, "test-receipt.json", bindings)
+    assert verify_gate_receipt(project, reference, bindings, label="test receipt")["status"] == "passed"
+    (project / reference["path"]).write_text("{}", encoding="utf-8")
+    with pytest.raises(EvalError, match="SHA-256"):
+        verify_gate_receipt(project, reference, bindings, label="test receipt")
+
+
+def test_test_receipt_writes_fixed_sanitized_binding(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    bindings = {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "system_prompt_hash": "c" * 64, "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64}
+    reference = write_test_receipt(project, bindings, command="pytest -q", exit_code=0, counts={"passed": 270, "skipped": 5, "deselected": 1})
+    assert reference["path"] == "audit/iteration2/test-receipt.json"
+    payload = verify_gate_receipt(project, reference, bindings, label="test receipt")
+    assert payload["counts"] == {"passed": 270, "skipped": 5, "deselected": 1}
+
+
+def test_isolation_diagnostic_writes_failure_matrix_without_canonical_proof(tmp_path: Path):
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    project.mkdir(); workspace.mkdir()
+    def runner(argv, **kwargs):
+        if "ps" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        payload = {"container_started": True, "workspace_read": False, "workspace_write": True, "network_absent": True, "credentials_absent": True, "docker_socket_absent": True, "private_paths_absent": True, "host_paths_absent": True, "python_command": True, "git_command": True, "mount_inventory": [{"target": "/workspace", "readonly": False}]}
+        return subprocess.CompletedProcess(argv, 7, json.dumps(payload), "read failed at /workspace")
+    result = run_isolation_diagnostic(project, workspace, image="repo/task@sha256:" + "f" * 64, image_identity={"image_id": "sha256:" + "e" * 64, "repo_digests": ["repo/task@sha256:" + "f" * 64]}, docker_prefix=["docker"], runner=runner, path_converter=str, run_id="diag-1")
+    assert result["status"] == "failed"
+    assert result["failed_probes"] == ["workspace_read"]
+    assert "read failed" in result["failure_reason"]
+    assert not (project / "audit/iteration2/isolation-proof.json").exists()
+    receipt = project / "audit/iteration2/isolation-failures/diag-1.json"
+    assert receipt.is_file()
+    text = receipt.read_text(encoding="utf-8")
+    assert str(workspace) not in text
+
+
+def test_utf8_bytes_paths_detect_presence_without_unicode_encoding(tmp_path: Path):
+    import os
+    root = os.fsencode(str(tmp_path))
+    plan_name = b"\xe8\xae\xa1\xe5\x88\x92"
+    materials_name = b"\xe8\xb5\x84\xe6\x96\x99"
+    os.mkdir(os.path.join(root, plan_name))
+    assert os.path.lexists(os.path.join(root, plan_name))
+    assert not os.path.lexists(os.path.join(root, materials_name))
+
+
+def test_isolation_probe_exception_remains_unknown(tmp_path: Path):
+    project = tmp_path / "project"; workspace = tmp_path / "workspace"
+    project.mkdir(); workspace.mkdir()
+    def runner(argv, **kwargs):
+        if "ps" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(argv, 1, "", "probe exception")
+    result = run_isolation_diagnostic(project, workspace, image="repo/task@sha256:" + "f" * 64, image_identity={"image_id": "sha256:" + "e" * 64, "repo_digests": ["repo/task@sha256:" + "f" * 64]}, docker_prefix=["docker"], runner=runner, path_converter=str, run_id="unknown-1")
+    assert result["status"] == "failed"
+    assert all(row["actual"] is None for row in result["matrix"] if row["probe"] not in {"cleanup", "mount_inventory"})
+    assert not (project / "audit/iteration2/isolation-proof.json").exists()
+
+
+def test_isolation_proof_uses_one_hardened_workspace_mount(tmp_path: Path):
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    project.mkdir(); workspace.mkdir()
+    bindings = {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "system_prompt_hash": "c" * 64, "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64}
+    calls = []
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        if "ps" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"container_started": True, "workspace_read": True, "workspace_write": True, "python_command": True, "git_command": True, "network_absent": True, "credentials_absent": True, "docker_socket_absent": True, "private_paths_absent": True, "host_paths_absent": True, "mount_inventory": [{"target": "/workspace", "readonly": False}]}), "")
+    reference = write_isolation_proof(project, workspace, bindings, image="repo/task@sha256:" + "f" * 64, docker_prefix=["docker"], runner=runner, path_converter=str)
+    command = calls[0]
+    command[-1].encode("ascii")
+    assert "计划" not in command[-1] and "资料" not in command[-1]
+    assert "capture_output" not in command[-1]
+    assert "stdout=subprocess.PIPE" in command[-1]
+    assert "os.path.lexists" in command[-1]
+    assert "b'\\xe8\\xae\\xa1\\xe5\\x88\\x92'" in command[-1]
+    assert "b'\\xe8\\xb5\\x84\\xe6\\x96\\x99'" in command[-1]
+    assert command[command.index("--pull") + 1] == "never"
+    assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--cap-drop") + 1] == "ALL"
+    assert [command[index + 1] for index, value in enumerate(command) if value == "--mount"] == [f"type=bind,src={workspace.resolve()},dst=/workspace"]
+    verify_gate_receipt(project, reference, bindings, label="isolation proof")
+
+
+def test_runtime_provider_rejects_endpoint_or_actual_model_drift(monkeypatch):
+    endpoint = "https://example.invalid/proxy"
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint)
+    identity = {"endpoint_sha256": __import__("hashlib").sha256(endpoint.encode()).hexdigest(), "actual_model": "gpt-5.6-sol", "base_url_env": "ANTHROPIC_BASE_URL", "api_key_env": "ANTHROPIC_AUTH_TOKEN"}
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder-token")
+    verify_runtime_provider(identity)
+    with pytest.raises(EvalError, match="actual model"):
+        verify_runtime_provider(identity, actual_model="different-model")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint + "/changed")
+    with pytest.raises(EvalError, match="endpoint"):
+        verify_runtime_provider(identity)
+
+
+def test_formal_loader_revalidates_plan_manifest_raw_and_audit(tmp_path: Path):
+    project = tmp_path / "project"
+    raw_root = project / "artifacts/runs/iteration2"
+    formal = raw_root / "formal/baseline-v1"
+    formal.mkdir(parents=True)
+    recorder = EvidenceRecorder(project, iteration=2, raw_root=raw_root)
+    plan = []
+    cell_runs = {}
+    for position in range(24):
+        variant = "full" if position % 2 == 0 else "fuzzy"
+        pair = position // 2
+        case_id = f"T-{pair}-{variant}"
+        plan.append({"sequence": position + 1, "case_id": case_id, "instance_id": f"instance-{pair}", "variant": variant, "ambiguity_type": "omission"})
+        run = recorder.start("formal_cell", {"case_id": case_id}, ["formal"])
+        cell = {"run_id": run.run_id, "case_id": case_id, "instance_id": f"instance-{pair}", "variant": variant, "ambiguity_type": "omission", "status": "unresolved", "evaluator_recorded": True, "usage": {}, "steps": 1, "tool_calls": 1, "wall_time_seconds": 1, "patch": {"files": 0, "additions": 0, "deletions": 0, "bytes": 0}, "stop_reason": "submitted"}
+        (run.raw_dir / "cell-result.json").write_text(json.dumps(cell, sort_keys=True), encoding="utf-8")
+        run.finish({"status": "unresolved", "classification": "tests_failed"})
+        cell_runs[case_id] = {"run_id": run.run_id, "state": "complete"}
+    (formal / "experiment-manifest.json").write_text(json.dumps({"cell_runs": cell_runs}), encoding="utf-8")
+    rows = load_formal_results(project, raw_root, plan, formal / "experiment-manifest.json")
+    assert len(rows) == 24
+    first = raw_root / rows[0]["run_id"] / "cell-result.json"
+    first.write_text("{}", encoding="utf-8")
+    with pytest.raises(EvalError, match="checksum"):
+        load_formal_results(project, raw_root, plan, formal / "experiment-manifest.json")
+
+
+def test_provider_identity_uses_only_endpoint_hash_and_verified_actual_model(tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    summary = project / "audit/iteration2/runs/capability/summary.json"
+    summary.parent.mkdir(parents=True)
+    endpoint_hash = __import__("hashlib").sha256(b"https://example.invalid/proxy").hexdigest()
+    summary.write_text(json.dumps({"status": "passed", "provider": "local_reverse_proxy", "protocol": "anthropic_messages", "configured_model": "gpt-5.6-sol", "actual_model": "gpt-5.6-sol", "environment_variables": ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"], "endpoint_fingerprint_sha256": endpoint_hash, "temperature": "unsupported", "seed": "unsupported", "native_tool_calling": "passed", "context_window_tokens": {"value": 32768}, "max_output_tokens": 4096}), encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://example.invalid/proxy")
+    identity = load_provider_identity(project, summary.relative_to(project).as_posix(), expected_endpoint_sha256=endpoint_hash)
+    assert identity["actual_model"] == "gpt-5.6-sol"
+    assert "endpoint" not in identity and identity["base_url_env"] == "ANTHROPIC_BASE_URL"
+
+
+@pytest.mark.parametrize("interrupt_point", ["after_model_checkpoint", "after_tool_checkpoint"])
+def test_run_development_resumes_same_pending_run(tmp_path: Path, monkeypatch, interrupt_point: str):
+    from reqagent.loop import AgentInterrupted
+    project = tmp_path / "project"
+    project.mkdir(); (tmp_path / "cache").mkdir()
+    settings = Settings(project, tmp_path / "cache", project / "artifacts")
+    (project / "benchmark/manifests").mkdir(parents=True)
+    (project / "benchmark/manifests/paired-cases.jsonl").write_text("".join(json.dumps(row) + "\n" for row in _records()), encoding="utf-8")
+    (project / "prompts/baseline").mkdir(parents=True)
+    (project / "prompts/baseline/system.txt").write_text("system\n", encoding="utf-8")
+    (project / "prompts/baseline/protocol.txt").write_text("protocol\n", encoding="utf-8")
+    config_raw = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
+    config_path = tmp_path / "config.json"; config_path.write_text(json.dumps(config_raw), encoding="utf-8")
+    config = AgentConfig.load(config_path)
+    monkeypatch.setattr("evalsys.iteration2.current_tool_schema_bytes", lambda root, value: b"schema\n")
+    bindings = {"behavior_tree_sha256": behavior_tree_hash(project), "config_hash": config.canonical_hash(), "system_prompt_hash": __import__("hashlib").sha256((project / "prompts/baseline/system.txt").read_bytes()).hexdigest(), "protocol_prompt_hash": __import__("hashlib").sha256((project / "prompts/baseline/protocol.txt").read_bytes()).hexdigest(), "tool_schema_hash": __import__("hashlib").sha256(b"schema\n").hexdigest()}
+    test_ref = _write_gate_file(project, "test-receipt.json", bindings); isolation_ref = _write_gate_file(project, "isolation-proof.json", bindings)
+    provider = {"actual_model": "gpt-5.6-sol"}
+    calls = []
+    def interrupted(settings, case, source_row, config, **kwargs):
+        calls.append((interrupt_point, kwargs.get("resume_run_id")))
+        kwargs["on_started"]("pending-run")
+        raise AgentInterrupted(interrupt_point)
+    monkeypatch.setattr("evalsys.iteration2.run_agent_cell", interrupted)
+    with pytest.raises(AgentInterrupted):
+        run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider)
+    manifest = json.loads((project / "artifacts/runs/iteration2/dev/v001/experiment-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["cell_runs"]["D-O1-full"] == {"run_id": "pending-run", "state": "pending"}
+    def resumed(settings, case, source_row, config, **kwargs):
+        assert kwargs["resume_run_id"] == "pending-run"
+        raise RuntimeError("resume reached same pending run")
+    monkeypatch.setattr("evalsys.iteration2.run_agent_cell", resumed)
+    with pytest.raises(RuntimeError, match="same pending run"):
+        run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider)
+
+
+def test_run_development_output_freezes_without_manual_fields(tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    settings = Settings(project, cache, project / "artifacts")
+    (project / "benchmark/manifests").mkdir(parents=True)
+    (project / "benchmark/manifests/paired-cases.jsonl").write_text("".join(json.dumps(row) + "\n" for row in _records()), encoding="utf-8")
+    (project / "benchmark/source-lock.json").write_text("{}\n", encoding="utf-8")
+    (project / "prompts/baseline").mkdir(parents=True)
+    (project / "prompts/baseline/system.txt").write_text("system\n", encoding="utf-8")
+    (project / "prompts/baseline/protocol.txt").write_text("protocol\n", encoding="utf-8")
+    (project / "src/evalsys").mkdir(parents=True)
+    (project / "src/evalsys/baseline.py").write_text("generator\n", encoding="utf-8")
+    (project / "uv.lock").write_text("lock\n", encoding="utf-8")
+    config_raw = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config_raw), encoding="utf-8")
+    config = AgentConfig.load(config_path)
+    bindings = {"behavior_tree_sha256": behavior_tree_hash(project), "config_hash": config.canonical_hash(), "system_prompt_hash": __import__("hashlib").sha256((project / "prompts/baseline/system.txt").read_bytes()).hexdigest(), "protocol_prompt_hash": __import__("hashlib").sha256((project / "prompts/baseline/protocol.txt").read_bytes()).hexdigest(), "tool_schema_hash": "e" * 64}
+    monkeypatch.setattr("evalsys.iteration2.current_tool_schema_bytes", lambda root, value: b"schema\n")
+    bindings["tool_schema_hash"] = __import__("hashlib").sha256(b"schema\n").hexdigest()
+    test_ref = _write_gate_file(project, "test-receipt.json", bindings)
+    isolation_ref = _write_gate_file(project, "isolation-proof.json", bindings)
+    endpoint = "https://placeholder.invalid/proxy"
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder-token")
+    provider = {"actual_model": "gpt-5.6-sol", "endpoint_sha256": __import__("hashlib").sha256(endpoint.encode()).hexdigest(), "base_url_env": "ANTHROPIC_BASE_URL", "api_key_env": "ANTHROPIC_AUTH_TOKEN"}
+    recorder = EvidenceRecorder(project, iteration=2, raw_root=project / "artifacts/runs/iteration2")
+    counter = iter(range(6))
+    def fake_cell(settings, case, source_row, config, **kwargs):
+        position = next(counter)
+        run = recorder.start("dev_cell", {"cell": case["case_id"]}, ["fake-cell"])
+        cell = {"run_id": run.run_id, "case_id": case["case_id"], "instance_id": case["instance_id"], "variant": case["prompt_variant"], "status": "unresolved", "evaluator_recorded": True, "actual_model": "gpt-5.6-sol", "usage": {}, "steps": 1, "tool_calls": 1, "wall_time_seconds": 1, "patch": {"files": 0, "additions": 0, "deletions": 0, "bytes": 0}, "stop_reason": "submitted"}
+        (run.raw_dir / "cell-result.json").write_text(json.dumps(cell, sort_keys=True), encoding="utf-8")
+        run.finish({"status": "unresolved", "classification": "tests_failed"})
+        return cell
+    monkeypatch.setattr("evalsys.iteration2.run_agent_cell", fake_cell)
+    monkeypatch.setattr("evalsys.iteration2._git", lambda root, *args: "f" * 40)
+    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider)
+    assert all(len(cell["checksum"]) == 64 for cell in development["cells"])
+    assert development["system_prompt_hash"] == bindings["system_prompt_hash"]
+    frozen = freeze_baseline(project, "baseline-v1", config.raw, _records(), development=development, image_identities=_valid_images(), authorized=True, git_commit="f" * 40, artifact_root=project / "artifacts/runs/iteration2")
+    assert (frozen / "baseline.json").is_file()
+    first = project / "artifacts/runs/iteration2" / development["source_run_ids"][0] / "cell-result.json"
+    first.write_text("{}", encoding="utf-8")
+    with pytest.raises(EvalError, match="checksum"):
+        freeze_baseline(project, "baseline-v2", config.raw, _records(), development=development, image_identities=_valid_images(), authorized=True, git_commit="f" * 40, artifact_root=project / "artifacts/runs/iteration2")
+
+
+def test_freeze_requires_authorization_development_and_image_identities(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("evalsys.iteration2.verify_development_evidence", lambda root, artifacts, cells: cells)
+    monkeypatch.setattr("evalsys.iteration2.verify_gate_receipt", lambda root, reference, bindings, label: {"status": "passed"})
+    monkeypatch.setattr("evalsys.iteration2.verify_runtime_provider", lambda identity, actual_model=None: None)
     records = [record for record in _records() if record["split"] == "test"]
     config = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
     config["budgets"].pop("max_invalid_outputs", None)
@@ -501,6 +785,9 @@ def test_freeze_requires_authorization_development_and_image_identities(tmp_path
 
 
 def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("evalsys.iteration2.verify_development_evidence", lambda root, artifacts, cells: cells)
+    monkeypatch.setattr("evalsys.iteration2.verify_gate_receipt", lambda root, reference, bindings, label: {"status": "passed"})
+    monkeypatch.setattr("evalsys.iteration2.verify_runtime_provider", lambda identity, actual_model=None: None)
     (tmp_path / "prompts/baseline").mkdir(parents=True)
     (tmp_path / "prompts/baseline/system.txt").write_text("system\n", encoding="utf-8")
     (tmp_path / "prompts/baseline/protocol.txt").write_text("protocol\n", encoding="utf-8")

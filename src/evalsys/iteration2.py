@@ -220,10 +220,267 @@ def current_tool_schema_bytes(project_root: Path, config: dict[str, Any]) -> byt
     return (json.dumps(_tool_schemas(project_root, config), ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def verify_development_evidence(project_root: Path, artifact_root: Path, cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from .evidence import select_current_runs
+
+    try:
+        index = json.loads((project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+        leaves = {entry["run_id"]: entry for entry in select_current_runs([entry for entry in index["runs"] if "run_type" in entry])}
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise EvalError("iteration2 audit index is invalid", category="invalid") from exc
+    verified = []
+    for cell in cells:
+        run_id = cell.get("run_id")
+        if not isinstance(run_id, str) or leaves.get(run_id, {}).get("run_type") != "dev_cell":
+            raise EvalError(f"development run is not an active audit leaf: {run_id}", category="invalid")
+        raw = artifact_root / run_id
+        result = verify_cell_evidence(raw, expected_run_id=run_id)
+        for field in ("case_id", "instance_id", "variant", "status", "evaluator_recorded"):
+            if result.get(field) != cell.get(field):
+                raise EvalError(f"development raw {field} mismatch: {run_id}", category="invalid")
+        checksum = sha256_file(raw / "cell-result.json")
+        if cell.get("checksum") != checksum:
+            raise EvalError(f"development checksum mismatch: {run_id}", category="invalid")
+        verified.append({**result, "checksum": checksum})
+    return verified
+
+
+def verify_gate_receipt(project_root: Path, reference: dict[str, Any], bindings: dict[str, str], *, label: str) -> dict[str, Any]:
+    relative = reference.get("path")
+    expected_sha = reference.get("sha256")
+    if not isinstance(relative, str) or Path(relative).is_absolute() or ".." in Path(relative).parts:
+        raise EvalError(f"{label} path is invalid", category="invalid")
+    path = project_root / relative
+    if not path.is_file() or sha256_file(path) != expected_sha:
+        raise EvalError(f"{label} SHA-256 mismatch", category="invalid")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise EvalError(f"{label} JSON is invalid", category="invalid") from exc
+    if payload.get("status") != "passed":
+        raise EvalError(f"{label} did not pass", category="invalid")
+    for field, value in bindings.items():
+        if payload.get(field) != value:
+            raise EvalError(f"{label} {field} binding mismatch", category="invalid")
+    return payload
+
+
+def _write_gate(project_root: Path, name: str, payload: dict[str, Any]) -> dict[str, str]:
+    path = project_root / "audit/iteration2" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sanitized = sanitize(payload, project_root=project_root)
+    path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"path": path.relative_to(project_root).as_posix(), "sha256": sha256_file(path)}
+
+
+def write_test_receipt(project_root: Path, bindings: dict[str, str], *, command: str, exit_code: int, counts: dict[str, int]) -> dict[str, str]:
+    status = "passed" if exit_code == 0 and counts.get("passed", 0) > 0 else "failed"
+    return _write_gate(project_root, "test-receipt.json", {
+        "schema_version": "1.0", "status": status, **bindings,
+        "command": command, "exit_code": exit_code, "counts": counts,
+    })
+
+
+_ISOLATION_PROBES = {
+    "container_started", "workspace_read", "workspace_write", "python_command", "git_command",
+    "network_absent", "credentials_absent", "docker_socket_absent", "private_paths_absent",
+    "host_paths_absent", "cleanup",
+}
+
+
+def _isolation_command(workspace: Path, image: str, docker_prefix: list[str], path_converter, run_id: str) -> list[str]:
+    script = r'''python - <<'PY'
+import json, os, pathlib, socket, subprocess
+root = pathlib.Path('/workspace')
+result = {}
+result['container_started'] = True
+result['workspace_read'] = (root / 'sentinel.txt').read_text(encoding='utf-8').strip() == 'workspace-readable'
+write = root / '.isolation-write'
+write.write_text('probe', encoding='utf-8')
+result['workspace_write'] = write.read_text(encoding='utf-8') == 'probe'
+write.unlink()
+result['python_command'] = True
+result['git_command'] = subprocess.run(['git', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+result['credentials_absent'] = not any(os.environ.get(name) for name in ('ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'))
+result['docker_socket_absent'] = not os.path.lexists(b'/var/run/docker.sock')
+plan_name = b'\xe8\xae\xa1\xe5\x88\x92'
+materials_name = b'\xe8\xb5\x84\xe6\x96\x99'
+private_paths = [b'/workspace/benchmark/private', b'/workspace/oracles.jsonl', b'/workspace/' + plan_name, b'/workspace/' + materials_name]
+host_paths = [b'/project', b'/host']
+result['private_paths_absent'] = all(not os.path.lexists(value) for value in private_paths)
+result['host_paths_absent'] = all(not os.path.lexists(value) for value in host_paths)
+network_absent = False
+try:
+    sock = socket.create_connection(('1.1.1.1', 53), timeout=2)
+    sock.close()
+except OSError:
+    network_absent = True
+result['network_absent'] = network_absent
+mounts = []
+for line in pathlib.Path('/proc/self/mountinfo').read_text(encoding='utf-8').splitlines():
+    fields = line.split()
+    if len(fields) > 5 and fields[4] == '/workspace':
+        mounts.append({'target': fields[4], 'readonly': 'ro' in fields[5].split(',')})
+result['mount_inventory'] = mounts
+result['cleanup'] = True
+print(json.dumps(result, sort_keys=True))
+PY'''
+    source = path_converter(workspace.resolve())
+    return [
+        *docker_prefix, "run", "--rm", "--pull", "never", "--label", f"evalsys.run_id={run_id}",
+        "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--memory", "2g", "--cpus", "2", "--pids-limit", "256",
+        "--mount", f"type=bind,src={source},dst=/workspace", "--workdir", "/workspace",
+        image, "bash", "-lc", script,
+    ]
+
+
+def run_isolation_diagnostic(
+    project_root: Path, workspace: Path, *, image: str, image_identity: dict[str, Any],
+    docker_prefix: list[str], runner=subprocess.run, path_converter=str, run_id: str,
+) -> dict[str, Any]:
+    if "@sha256:" not in image:
+        raise EvalError("isolation diagnostic requires a pinned RepoDigest", category="invalid")
+    command = _isolation_command(workspace, image, docker_prefix, path_converter, run_id)
+    completed = runner(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=120)
+    try:
+        actual = json.loads(completed.stdout) if completed.stdout.strip() else {}
+    except json.JSONDecodeError:
+        actual = {}
+    residual = runner(
+        [*docker_prefix, "ps", "-aq", "--filter", f"label=evalsys.run_id={run_id}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
+    )
+    residual_containers = [line for line in residual.stdout.splitlines() if line.strip()] if residual.returncode == 0 else ["query_failed"]
+    actual["cleanup"] = residual.returncode == 0 and not residual_containers
+    matrix = []
+    for name in sorted(_ISOLATION_PROBES):
+        matrix.append({"probe": name, "expected": True, "actual": actual.get(name), "passed": actual.get(name) is True})
+    mounts = actual.get("mount_inventory", []) if isinstance(actual.get("mount_inventory"), list) else []
+    mount_ok = mounts == [{"target": "/workspace", "readonly": False}]
+    matrix.append({"probe": "mount_inventory", "expected": [{"target": "/workspace", "readonly": False}], "actual": mounts, "passed": mount_ok})
+    failed = [row["probe"] for row in matrix if not row["passed"]]
+    status = "passed" if completed.returncode == 0 and not failed else "failed"
+    reason = "" if status == "passed" else sanitize(completed.stderr[-1000:] or f"failed probes: {', '.join(failed)}", project_root=project_root)
+    result = {
+        "schema_version": "1.0", "run_id": run_id, "status": status,
+        "container": {"created": bool(actual.get("container_started")), "started": bool(actual.get("container_started")), "exit_code": completed.returncode, "exited": True},
+        "image": {"requested": image, "image_id": image_identity.get("image_id"), "repo_digests": image_identity.get("repo_digests", [])},
+        "runtime": {"pull": "never", "network": "none", "cap_drop": "ALL", "no_new_privileges": True},
+        "mounts": mounts, "mount_count": len(mounts), "forbidden_mounts": [mount for mount in mounts if mount.get("target") != "/workspace"],
+        "protected_paths": ["benchmark/private", "oracles.jsonl", "计划", "资料", "project_root", "host_paths"],
+        "matrix": matrix, "failed_probes": failed, "failure_reason": reason,
+        "cleanup": {"expected": "passed", "actual": "passed" if actual.get("cleanup") else "failed"},
+        "residual_containers": residual_containers,
+    }
+    raw = project_root / "artifacts/runs/iteration2" / run_id
+    raw.mkdir(parents=True, exist_ok=False)
+    (raw / "diagnostic.json").write_text(json.dumps(sanitize(result, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if status != "passed":
+        failure = project_root / "audit/iteration2/isolation-failures" / f"{run_id}.json"
+        failure.parent.mkdir(parents=True, exist_ok=True)
+        failure.write_text(json.dumps(sanitize(result, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return result
+
+
+def write_isolation_proof(
+    project_root: Path, workspace: Path, bindings: dict[str, str], *, image: str,
+    docker_prefix: list[str], runner=subprocess.run, path_converter=str, run_id: str = "isolation-proof",
+    image_identity: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    identity = image_identity or {"image_id": "unavailable", "repo_digests": [image]}
+    result = run_isolation_diagnostic(project_root, workspace, image=image, image_identity=identity, docker_prefix=docker_prefix, runner=runner, path_converter=path_converter, run_id=run_id)
+    if result["status"] != "passed":
+        names = ", ".join(result["failed_probes"]) or "container_exit"
+        raise EvalError(f"iteration2 isolation proof failed probes: {names}", category="infra_failed")
+    return _write_gate(project_root, "isolation-proof.json", {
+        "schema_version": "1.0", "status": "passed", **bindings,
+        "run_id": run_id, "image": result["image"], "runtime": result["runtime"],
+        "matrix": result["matrix"], "mounts": result["mounts"], "mount_count": result["mount_count"],
+        "forbidden_mounts": result["forbidden_mounts"], "protected_paths": result["protected_paths"],
+        "cleanup": result["cleanup"], "residual_containers": result["residual_containers"],
+    })
+
+
+def verify_runtime_provider(identity: dict[str, Any], *, actual_model: str | None = None) -> None:
+    base_url_env = identity.get("base_url_env")
+    api_key_env = identity.get("api_key_env")
+    if not isinstance(base_url_env, str) or not isinstance(api_key_env, str):
+        raise EvalError("provider environment bindings are invalid", category="invalid")
+    base_url = os.environ.get(base_url_env)
+    if not base_url or not os.environ.get(api_key_env):
+        raise EvalError("provider credentials are unavailable", category="infra_failed")
+    if _sha256_bytes(base_url.encode("utf-8")) != identity.get("endpoint_sha256"):
+        raise EvalError("provider endpoint fingerprint changed", category="infra_failed")
+    if actual_model is not None and actual_model != identity.get("actual_model"):
+        raise EvalError("actual model does not match frozen provider identity", category="infra_failed")
+
+
+def load_formal_results(project_root: Path, artifact_root: Path, plan: list[dict[str, Any]], manifest_path: Path) -> list[dict[str, Any]]:
+    from .evidence import select_current_runs
+
+    try:
+        experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
+        index = json.loads((project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+        leaves = {entry["run_id"]: entry for entry in select_current_runs([entry for entry in index["runs"] if "run_type" in entry])}
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise EvalError("formal experiment or audit index is invalid", category="invalid") from exc
+    tracked = experiment.get("cell_runs", {})
+    if set(tracked) != {cell["case_id"] for cell in plan}:
+        raise EvalError("formal experiment manifest does not match frozen plan", category="invalid")
+    rows = []
+    for planned in plan:
+        entry = tracked.get(planned["case_id"], {})
+        run_id = entry.get("run_id")
+        if entry.get("state") != "complete" or not isinstance(run_id, str):
+            raise EvalError("formal experiment contains incomplete cell", category="invalid")
+        leaf = leaves.get(run_id)
+        if not leaf or leaf.get("run_type") != "formal_cell":
+            raise EvalError("formal cell is not an active audit leaf", category="invalid")
+        result = verify_cell_evidence(artifact_root / run_id, expected_run_id=run_id)
+        for field in ("case_id", "instance_id", "variant"):
+            if result.get(field) != planned.get(field):
+                raise EvalError(f"formal raw {field} disagrees with frozen plan", category="invalid")
+        rows.append(result)
+    return rows
+
+
+def load_provider_identity(project_root: Path, summary_path: str, *, expected_endpoint_sha256: str | None = None) -> dict[str, Any]:
+    path = project_root / summary_path
+    try:
+        summary = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalError("provider capability evidence is unavailable", category="invalid") from exc
+    required = {
+        "status": "passed", "provider": "local_reverse_proxy", "protocol": "anthropic_messages",
+        "configured_model": "gpt-5.6-sol", "actual_model": "gpt-5.6-sol",
+        "temperature": "unsupported", "seed": "unsupported",
+    }
+    if any(summary.get(key) != value for key, value in required.items()) or summary.get("native_tool_calling") not in {"passed", "verified"}:
+        raise EvalError("provider capability evidence does not match the live baseline", category="invalid")
+    endpoint_sha = summary.get("endpoint_fingerprint_sha256")
+    if not isinstance(endpoint_sha, str) or len(endpoint_sha) != 64:
+        raise EvalError("provider endpoint fingerprint is invalid", category="invalid")
+    if expected_endpoint_sha256 is not None and endpoint_sha != expected_endpoint_sha256:
+        raise EvalError("provider endpoint fingerprint changed", category="infra_failed")
+    environment = summary.get("environment_variables", [])
+    if environment != ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"]:
+        raise EvalError("provider environment variable names changed", category="invalid")
+    return {
+        "provider": summary["provider"], "protocol": summary["protocol"],
+        "configured_model": summary["configured_model"], "actual_model": summary["actual_model"],
+        "endpoint_sha256": endpoint_sha, "base_url_env": environment[0], "api_key_env": environment[1],
+        "context_window_tokens": summary.get("context_window_tokens", {}).get("value"),
+        "max_output_tokens": summary.get("max_output_tokens", 4096),
+        "temperature": summary["temperature"], "seed": summary["seed"],
+        "capability_evidence": summary_path,
+    }
+
+
 def freeze_baseline(
     project_root: Path, name: str, config: dict[str, Any], records: list[dict[str, Any]], *,
     development: dict[str, Any] | None, image_identities: dict[str, Any],
-    authorized: bool, git_commit: str,
+    authorized: bool, git_commit: str, artifact_root: Path | None = None,
 ) -> Path:
     if not authorized:
         raise EvalError("freeze requires explicit user authorization", category="invalid")
@@ -246,10 +503,22 @@ def freeze_baseline(
         raise EvalError("development cell identities do not match the fixed matrix", category="invalid")
     if development["source_run_ids"] != [cell.get("run_id") for cell in cells]:
         raise EvalError("development cell run IDs do not match source_run_ids", category="invalid")
+    raw_root = artifact_root or project_root / "artifacts/runs/iteration2"
+    verified_cells = verify_development_evidence(project_root, raw_root, cells)
+    if verified_cells != cells:
+        raise EvalError("development record does not exactly match verified raw cell evidence", category="invalid")
+    receipt_bindings = {
+        "behavior_tree_sha256": development.get("code_hash"),
+        "config_hash": development.get("config_hash"),
+        "system_prompt_hash": development.get("system_prompt_hash"),
+        "protocol_prompt_hash": development.get("protocol_prompt_hash"),
+        "tool_schema_hash": development.get("tool_schema_hash"),
+    }
     for label, field in (("test receipt", "test_receipt"), ("isolation proof", "isolation_proof")):
         receipt = development.get(field)
-        if not isinstance(receipt, dict) or receipt.get("status") != "passed" or not isinstance(receipt.get("checksum"), str) or len(receipt["checksum"]) != 64:
+        if not isinstance(receipt, dict):
             raise EvalError(f"valid {label} is required", category="invalid")
+        verify_gate_receipt(project_root, receipt, receipt_bindings, label=label)
     frozen_config_hash = config_hash(config)
     if development.get("config_hash") != frozen_config_hash:
         raise EvalError("development config hash does not match live configuration", category="invalid")
@@ -292,6 +561,12 @@ def freeze_baseline(
     for field, digest in current_bindings.items():
         if development.get(field) != digest:
             raise EvalError(f"development {field} does not match current behavior", category="invalid")
+    provider_identity = development.get("provider_identity")
+    if not isinstance(provider_identity, dict) or provider_identity.get("actual_model") != "gpt-5.6-sol":
+        raise EvalError("development provider identity is incomplete", category="invalid")
+    verify_runtime_provider(provider_identity)
+    if any(cell.get("actual_model") != provider_identity["actual_model"] for cell in cells):
+        raise EvalError("development cell actual model mismatch", category="invalid")
     baseline_root = project_root / "configs/frozen" / name
     baseline_root.mkdir(parents=True, exist_ok=False)
     test_records = [record for record in records if record.get("split") == "test"]
@@ -320,6 +595,7 @@ def freeze_baseline(
         "provider_hard_context_limit": "unavailable",
         "config_sha256": frozen_config_hash,
         "config": public_config, "development": development,
+        "provider_identity": provider_identity,
         "image_identities": image_identities,
         "authorization": {
             "kind": "conditional_pre_authorization",
@@ -516,7 +792,7 @@ def _initialize_exported_repository(path: Path) -> None:
 def run_agent_cell(
     settings, case: dict[str, Any], source_row: dict[str, Any], config, *,
     image_identity: dict[str, Any], run_type: str, supersedes: list[str] | None = None,
-    resume_run_id: str | None = None, on_started=None,
+    resume_run_id: str | None = None, on_started=None, provider_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one Agent in a fresh task export, then evaluate its patch separately."""
     from reqagent.cli import _execute, _resume_execute
@@ -527,6 +803,8 @@ def run_agent_cell(
     from .replay import replay_case
 
     prefix = settings.docker_prefix(sys.platform)
+    if provider_identity is not None:
+        verify_runtime_provider(provider_identity)
     image = next((digest for digest in image_identity.get("repo_digests", []) if "@sha256:" in digest), None)
     if not image:
         raise EvalError("frozen task image has no RepoDigest", category="invalid")
@@ -584,6 +862,9 @@ def run_agent_cell(
         status = evaluation["status"]
         if status in {"infra_failed", "invalid"}:
             status = "eval_infra_failed"
+        actual_model = extract_actual_model(store.path / "events.jsonl")
+        if provider_identity is not None:
+            verify_runtime_provider(provider_identity, actual_model=actual_model)
         cell = {
             "run_id": store.run_id, "case_id": case["case_id"], "instance_id": case["instance_id"],
             "variant": case["prompt_variant"], "ambiguity_type": case["ambiguity_type"],
@@ -592,7 +873,7 @@ def run_agent_cell(
             "wall_time_seconds": time.monotonic() - started,
             "patch": {"files": result.patch.files, "additions": result.patch.additions, "deletions": result.patch.deletions, "bytes": result.patch.bytes},
             "agent_tests": (result.submitted or {}).get("tests", []), "image": identity,
-            "actual_model": extract_actual_model(store.path / "events.jsonl"),
+            "actual_model": actual_model,
             "evaluation": evaluation,
         }
         (store.path / "cell-result.json").write_text(json.dumps(cell, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -615,27 +896,44 @@ def load_public_records(project_root: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def run_development(settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *, resume: bool) -> dict[str, Any]:
+def run_development(
+    settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *,
+    resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any], provider_identity: dict[str, Any],
+) -> dict[str, Any]:
     if not __import__("re").fullmatch(r"v\d{3}", version):
         raise EvalError("development version must match vNNN", category="invalid")
     records = load_public_records(settings.project_root)
     root = settings.artifact_root / "runs/iteration2/dev" / version
-    root.mkdir(parents=True, exist_ok=True)
-    plan_path = root / "plan.json"
     cells = development_cells(records)
-    identities = [{"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells]
-    if plan_path.exists():
-        if json.loads(plan_path.read_text(encoding="utf-8")) != identities:
-            raise EvalError("development resume plan mismatch", category="invalid")
-    else:
-        plan_path.write_text(json.dumps(identities, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    bindings = {
+        "behavior_tree_sha256": behavior_tree_hash(settings.project_root),
+        "config_hash": config.canonical_hash(),
+        "system_prompt_hash": sha256_file(settings.project_root / "prompts/baseline/system.txt"),
+        "protocol_prompt_hash": sha256_file(settings.project_root / "prompts/baseline/protocol.txt"),
+        "tool_schema_hash": _sha256_bytes(current_tool_schema_bytes(settings.project_root, config.raw)),
+    }
+    verify_gate_receipt(settings.project_root, test_receipt, bindings, label="test receipt")
+    verify_gate_receipt(settings.project_root, isolation_proof, bindings, label="isolation proof")
+    manifest_path = ensure_experiment_manifest(root, {
+        "schema_version": "1.0", "version": version, "cells": 6,
+        "plan": [{"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells],
+        **bindings,
+    })
     results = []
+    raw_root = settings.artifact_root / "runs/iteration2"
     for cell in cells:
         result_path = root / "cells" / cell["case_id"] / "cell-result.json"
         prior = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else None
+        experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
+        tracked = experiment.get("cell_runs", {}).get(cell["case_id"])
+        resume_run_id = None
+        if tracked and tracked.get("state") == "pending":
+            if prior is not None or not resume:
+                raise EvalError("pending development cell requires explicit --resume", category="invalid")
+            resume_run_id = tracked.get("run_id")
         if prior is not None and classify_cell_for_resume(prior) == "complete":
-            verify_cell_evidence(settings.artifact_root / "runs/iteration2" / prior["run_id"], expected_run_id=prior["run_id"])
-        action = cell_resume_action(prior, resume=resume)
+            verify_cell_evidence(raw_root / prior["run_id"], expected_run_id=prior["run_id"])
+        action = "resume_pending" if resume_run_id else cell_resume_action(prior, resume=resume)
         if action == "reuse":
             results.append(prior)
             continue
@@ -643,21 +941,32 @@ def run_development(settings, version: str, config, source_rows: dict[str, dict[
             raise EvalError("development infrastructure failure invalidates the complete vNNN matrix", category="invalid")
         result = run_agent_cell(
             settings, cell, source_rows[cell["instance_id"]], config,
-            image_identity=image_identities[cell["instance_id"]], run_type="dev_cell",
+            image_identity=image_identities[cell["instance_id"]], run_type="dev_cell", resume_run_id=resume_run_id,
+            on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
+            provider_identity=provider_identity,
         )
+        if result.get("actual_model") != provider_identity.get("actual_model"):
+            raise EvalError("development actual model does not match provider identity", category="invalid")
+        checksum = sha256_file(raw_root / result["run_id"] / "cell-result.json")
+        result = {**result, "checksum": checksum}
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps(sanitize(result, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        record_experiment_cell(root, cell["case_id"], result["run_id"], "complete")
         results.append(result)
+    results = verify_development_evidence(settings.project_root, raw_root, results)
     record = {
         "version": version, "parent": None, "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "code_commit": _git(settings.project_root, "rev-parse", "HEAD"), "config_hash": config.canonical_hash(),
+        "code_commit": _git(settings.project_root, "rev-parse", "HEAD"), "code_hash": bindings["behavior_tree_sha256"],
+        "config_hash": bindings["config_hash"], "system_prompt_hash": bindings["system_prompt_hash"],
+        "protocol_prompt_hash": bindings["protocol_prompt_hash"], "tool_schema_hash": bindings["tool_schema_hash"],
+        "test_receipt": test_receipt, "isolation_proof": isolation_proof, "provider_identity": provider_identity,
         "source_run_ids": [row["run_id"] for row in results], "observed_issue": "",
         "hypothesis": "Initial frozen development matrix", "exact_change": "Initial candidate",
         "expected_effect": "Establish benchmark baseline", "rollback_risk": "none",
         "validation_plan": "Complete all six full/fuzzy cells",
         "before": {"resolved": None, "stop_reasons": {}, "median_steps": None, "total_tokens": None, "wall_time_seconds": None},
-        "after": {"resolved": sum(row["status"] == "resolved" for row in results), "stop_reasons": {}, "median_steps": None, "total_tokens": sum(sum(row["usage"].values()) for row in results), "wall_time_seconds": sum(row["wall_time_seconds"] for row in results)},
-        "decision": "accepted", "rationale": "All six cells produced Agent/evaluator records.", "successor": None,
+        "after": {"resolved": sum(row["status"] == "resolved" for row in results), "stop_reasons": {}, "median_steps": None, "total_tokens": sum(sum(row.get("usage", {}).values()) for row in results), "wall_time_seconds": sum(row.get("wall_time_seconds", 0) for row in results)},
+        "decision": "accepted", "rationale": "All six cells produced verified Agent/evaluator records.", "successor": None,
         "cells": results,
     }
     destination = settings.project_root / "audit/iteration2/development" / f"{version}.json"
@@ -716,6 +1025,7 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
             image_identity=frozen["baseline"]["image_identities"][cell["instance_id"]],
             run_type="formal_cell", supersedes=supersedes, resume_run_id=resume_run_id,
             on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
+            provider_identity=frozen["baseline"]["provider_identity"],
         )
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps(sanitize(result, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -757,12 +1067,32 @@ def summarize_formal_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
         paired[key] += 1
     e1_count = sum(row["status"] == "resolved" for row in e1)
     e2_count = sum(row["status"] == "resolved" for row in e2)
+    def counts(field: str, default: str) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for row in rows:
+            value = str(row.get(field, default))
+            result[value] = result.get(value, 0) + 1
+        return result
+    usage_keys = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    usage = {key: sum(int(row.get("usage", {}).get(key, 0)) for row in rows) for key in usage_keys}
+    patch = {key: sum(int(row.get("patch", {}).get(key, 0)) for row in rows) for key in ("files", "additions", "deletions", "bytes")}
+    superseded = sum(len(row.get("supersedes", [])) for row in rows)
     return {
         "E1_resolved": {"count": e1_count, "total": len(e1)},
         "E2_resolved": {"count": e2_count, "total": len(e2)},
         "absolute_drop": e1_count - e2_count,
         "categories": categories,
         "paired_outcomes": paired,
+        "classifications": counts("classification", "unavailable"),
+        "stop_reasons": counts("stop_reason", "unavailable"),
+        "usage": usage,
+        "totals": {
+            "steps": sum(int(row.get("steps", 0)) for row in rows),
+            "tool_calls": sum(int(row.get("tool_calls", 0)) for row in rows),
+            "wall_time_seconds": sum(float(row.get("wall_time_seconds", 0)) for row in rows),
+        },
+        "patch": patch,
+        "infrastructure": {"superseded_runs": superseded, "infra_failures": sum(row.get("status") == "eval_infra_failed" for row in rows)},
         "cells": rows,
-        "cost": "unavailable",
+        "cost": {"status": "unavailable", "reason": "Provider cost data is unavailable."},
     }
