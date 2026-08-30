@@ -87,6 +87,18 @@
         "20260830T022444165110Z_integration_c688d576c5"
       ],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260830T052406159565Z_integration_d8c9214946",
+      "config_hash": "d8c9214946",
+      "raw_path": "artifacts/runs/iteration2/20260830T052406159565Z_integration_d8c9214946",
+      "run_id": "20260830T052406159565Z_integration_d8c9214946",
+      "run_type": "integration",
+      "status": "passed",
+      "supersedes": [
+        "20260830T044536612742Z_integration_a7f4bbb88e"
+      ],
+      "validity": "active"
     }
   ],
   "schema_version": 1,

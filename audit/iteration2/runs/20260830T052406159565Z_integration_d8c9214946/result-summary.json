@@ -1,0 +1,10 @@
+{
+  "classification": "canonical_non_api_agent_evaluator_integration",
+  "duration": null,
+  "exit_code": null,
+  "failed": 0,
+  "passed": 0,
+  "reason": "Official harness applied a synthetic prediction patch, executed tests, returned unresolved, and cleaned resources.",
+  "skipped": 0,
+  "status": "passed"
+}
