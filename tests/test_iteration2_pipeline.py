@@ -13,6 +13,7 @@ from evalsys.errors import EvalError
 from evalsys.config import Settings
 from evalsys.evidence import EvidenceRecorder, sanitize, select_current_runs, verify_active_audit_runs, verify_audit_index_metadata
 from evalsys.harness import HarnessInvocation, build_harness_command
+from evalsys.harness_environment import verify_harness_environment, verify_harness_environment_receipt
 from evalsys.verdict import decide_verdict
 from evalsys.replay import classify_agent_harness_failure
 from evalsys.iteration2 import (
@@ -440,6 +441,84 @@ def test_invalid_limits_distinguish_consecutive_from_total(tmp_path: Path):
     assert checkpoint["payload"]["consecutive_invalid_outputs"] == 1
 
 
+def _harness_runner(overrides: dict[str, subprocess.CompletedProcess] | None = None):
+    overrides = overrides or {}
+    def run(argv, **kwargs):
+        key = " ".join(str(item) for item in argv)
+        for marker, result in overrides.items():
+            if marker in key:
+                return result
+        if "status --porcelain" in key:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if "rev-parse HEAD" in key:
+            return subprocess.CompletedProcess(argv, 0, "7a21e05772954cc81471ae19d56f436cecf43c54\n", "")
+        if "show HEAD:uv.lock" in key:
+            return subprocess.CompletedProcess(argv, 0, "canonical-lock", "")
+        if "-c" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"python":"3.11.16","versions":{"docker":"7.2.0","swebench":"5.0.2","datasets":"5.0.1","GitPython":"3.1.59","tqdm":"4.70.0","unidiff":"1.0.0","rich":"15.0.0","requests":"2.34.2"},"imports":True,"docker_ping":True,"sys_executable":"/cache/swe-bench/.venv/bin/python","sys_prefix":"/cache/swe-bench/.venv","site_packages":["/cache/swe-bench/.venv/lib/python3.11/site-packages"],"no_site":0,"distribution":"Ubuntu","environment":{"PYTHONPATH":"unset","PYTHONHOME":"unset","VIRTUAL_ENV":"unset","WSLENV":"unset"}}), "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    return run
+
+
+def test_harness_environment_gate_accepts_canonical_and_writes_receipt(tmp_path: Path, monkeypatch):
+    checkout = tmp_path / "cache/swe-bench"; checkout.mkdir(parents=True)
+    (checkout / "uv.lock").write_text("canonical-lock", encoding="utf-8")
+    python = checkout / ".venv/bin/python"; python.parent.mkdir(parents=True); python.write_text("", encoding="utf-8")
+    expected = __import__("hashlib").sha256(b"canonical-lock").hexdigest()
+    monkeypatch.setattr("evalsys.harness_environment.CANONICAL_LOCK_SHA256", expected)
+    receipt = verify_harness_environment(tmp_path, checkout, str(python), expected_head="7a21e05772954cc81471ae19d56f436cecf43c54", expected_lock_sha256=expected, runner=_harness_runner())
+    assert receipt["status"] == "passed" and receipt["versions"]["docker"] == "7.2.0"
+    reference = receipt["reference"]
+    assert verify_harness_environment_receipt(tmp_path, reference)["status"] == "passed"
+    (tmp_path / reference["path"]).write_text("{}", encoding="utf-8")
+    with pytest.raises(EvalError, match="receipt SHA-256"):
+        verify_harness_environment_receipt(tmp_path, reference)
+
+
+@pytest.mark.parametrize("marker,message", [
+    ("status --porcelain", "dirty"),
+    ("show HEAD:uv.lock", "lock"),
+    ("runtime-preflight", "imports"),
+])
+def test_harness_environment_gate_rejects_invalid_state(tmp_path: Path, marker: str, message: str):
+    checkout = tmp_path / "cache/swe-bench"; checkout.mkdir(parents=True)
+    (checkout / "uv.lock").write_text("canonical-lock", encoding="utf-8")
+    python = checkout / ".venv/bin/python"; python.parent.mkdir(parents=True); python.write_text("", encoding="utf-8")
+    expected = __import__("hashlib").sha256(b"canonical-lock").hexdigest()
+    if marker == "status --porcelain":
+        result = subprocess.CompletedProcess([], 0, " M file\n", "")
+    elif marker == "show HEAD:uv.lock":
+        result = subprocess.CompletedProcess([], 0, "different-lock", "")
+    else:
+        result = subprocess.CompletedProcess([], 1, "", "missing docker")
+    with pytest.raises(EvalError, match=message):
+        verify_harness_environment(tmp_path, checkout, str(python), expected_head="7a21e05772954cc81471ae19d56f436cecf43c54", expected_lock_sha256=expected, runner=_harness_runner({marker: result}))
+
+
+def test_harness_environment_uses_explicit_wsl_checkout_path(tmp_path: Path, monkeypatch):
+    checkout = tmp_path / "cache/swe-bench"; checkout.mkdir(parents=True)
+    (checkout / "uv.lock").write_text("canonical-lock", encoding="utf-8")
+    expected = __import__("hashlib").sha256(b"canonical-lock").hexdigest()
+    monkeypatch.setattr("evalsys.harness_environment.CANONICAL_LOCK_SHA256", expected)
+    calls = []
+    base = _harness_runner()
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return base(argv, **kwargs)
+    receipt = verify_harness_environment(tmp_path, checkout, "/mnt/d/cache/swe-bench/.venv/bin/python", expected_head="7a21e05772954cc81471ae19d56f436cecf43c54", expected_lock_sha256=expected, runner=runner, command_prefix=["wsl.exe", "--"], execution_checkout="/mnt/d/cache/swe-bench")
+    assert receipt["interpreter"] == ".venv/bin/python"
+    assert any("/mnt/d/cache/swe-bench" in call for argv in calls for call in argv)
+    assert all(str(checkout) not in call for argv in calls for call in argv)
+
+
+def test_harness_environment_rejects_interpreter_outside_checkout(tmp_path: Path):
+    checkout = tmp_path / "cache/swe-bench"; checkout.mkdir(parents=True)
+    (checkout / "uv.lock").write_text("canonical-lock", encoding="utf-8")
+    expected = __import__("hashlib").sha256(b"canonical-lock").hexdigest()
+    with pytest.raises(EvalError, match="interpreter"):
+        verify_harness_environment(tmp_path, checkout, "/other/python", expected_head="7a21e05772954cc81471ae19d56f436cecf43c54", expected_lock_sha256=expected, runner=_harness_runner())
+
+
 def test_git_gate_rejects_dirty_unpushed_and_hash_mismatch(tmp_path: Path):
     repo = tmp_path / "gate"
     remote = tmp_path / "remote.git"
@@ -483,6 +562,7 @@ def _valid_development_record(config: dict | None = None) -> dict:
         "test_receipt": {"path": "audit/iteration2/test-receipt.json", "sha256": "2" * 64},
         "isolation_proof": {"path": "audit/iteration2/isolation-proof.json", "sha256": "3" * 64},
         "provider_identity": {"actual_model": "gpt-5.6-sol"},
+        "harness_environment": {"path": "audit/iteration2/harness-environment-receipt.json", "sha256": "4" * 64},
     }
 
 
@@ -728,6 +808,9 @@ def test_run_development_output_freezes_without_manual_fields(tmp_path: Path, mo
     bindings["tool_schema_hash"] = __import__("hashlib").sha256(b"schema\n").hexdigest()
     test_ref = _write_gate_file(project, "test-receipt.json", bindings)
     isolation_ref = _write_gate_file(project, "isolation-proof.json", bindings)
+    harness_path = project / "audit/iteration2/harness-environment-receipt.json"
+    harness_path.write_text(json.dumps({"status": "passed", "canonical_lock_sha256": "66ada0bfcc5177def68d5307e0c6fdaf5b91b5659258faa1fb2cc4862809d39e"}), encoding="utf-8")
+    harness_ref = {"path": harness_path.relative_to(project).as_posix(), "sha256": __import__("hashlib").sha256(harness_path.read_bytes()).hexdigest()}
     endpoint = "https://placeholder.invalid/proxy"
     monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint)
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder-token")
@@ -743,7 +826,7 @@ def test_run_development_output_freezes_without_manual_fields(tmp_path: Path, mo
         return cell
     monkeypatch.setattr("evalsys.iteration2.run_agent_cell", fake_cell)
     monkeypatch.setattr("evalsys.iteration2._git", lambda root, *args: "f" * 40)
-    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider)
+    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref)
     assert all(len(cell["checksum"]) == 64 for cell in development["cells"])
     assert development["system_prompt_hash"] == bindings["system_prompt_hash"]
     frozen = freeze_baseline(project, "baseline-v1", config.raw, _records(), development=development, image_identities=_valid_images(), authorized=True, git_commit="f" * 40, artifact_root=project / "artifacts/runs/iteration2")
@@ -758,6 +841,7 @@ def test_freeze_requires_authorization_development_and_image_identities(tmp_path
     monkeypatch.setattr("evalsys.iteration2.verify_development_evidence", lambda root, artifacts, cells: cells)
     monkeypatch.setattr("evalsys.iteration2.verify_gate_receipt", lambda root, reference, bindings, label: {"status": "passed"})
     monkeypatch.setattr("evalsys.iteration2.verify_runtime_provider", lambda identity, actual_model=None: None)
+    monkeypatch.setattr("evalsys.harness_environment.verify_harness_environment_receipt", lambda root, reference: {"status": "passed"})
     records = [record for record in _records() if record["split"] == "test"]
     config = json.loads((ROOT / "configs/agent/live-local-proxy.json").read_text(encoding="utf-8"))
     config["budgets"].pop("max_invalid_outputs", None)
@@ -788,6 +872,7 @@ def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch
     monkeypatch.setattr("evalsys.iteration2.verify_development_evidence", lambda root, artifacts, cells: cells)
     monkeypatch.setattr("evalsys.iteration2.verify_gate_receipt", lambda root, reference, bindings, label: {"status": "passed"})
     monkeypatch.setattr("evalsys.iteration2.verify_runtime_provider", lambda identity, actual_model=None: None)
+    monkeypatch.setattr("evalsys.harness_environment.verify_harness_environment_receipt", lambda root, reference: {"status": "passed"})
     (tmp_path / "prompts/baseline").mkdir(parents=True)
     (tmp_path / "prompts/baseline/system.txt").write_text("system\n", encoding="utf-8")
     (tmp_path / "prompts/baseline/protocol.txt").write_text("protocol\n", encoding="utf-8")

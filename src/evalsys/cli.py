@@ -126,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "machine_json": str(paths.machine_json), "markdown": str(paths.markdown)}
         elif args.command in {"agent-run", "run-dev", "freeze-baseline", "run-formal"}:
             from reqagent.config import AgentConfig
+            from .harness_environment import verify_settings_harness_environment
             from .agent_runner import preflight_agent_config
             from .baseline import require_frozen_baseline
             from .iteration2 import (
@@ -137,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise EvalError(f"{args.command} requires --confirm", category="invalid")
             if args.command in {"agent-run", "run-dev", "freeze-baseline"}:
                 config = preflight_agent_config(args.config, confirmed=True)
+            harness_environment = verify_settings_harness_environment(settings)
             prepared = load_prepared(settings)
             source_rows = {
                 instance_id: {**row, "harness_revision": prepared.lock_heads["harness"]}
@@ -171,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
                     test_receipt=gate_reference("test-receipt.json"),
                     isolation_proof=gate_reference("isolation-proof.json"),
                     provider_identity=provider_identity,
+                    harness_environment=harness_environment["reference"],
                 )}
             elif args.command == "freeze-baseline":
                 commit = verify_git_gate(settings.project_root)
@@ -187,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 baseline_root = require_frozen_baseline(settings.project_root, args.name)
                 frozen = verify_frozen_baseline(baseline_root)
+                if frozen["baseline"].get("harness_environment") != harness_environment.get("reference"):
+                    raise EvalError("current harness environment differs from frozen receipt", category="infra_failed")
                 verify_git_gate(settings.project_root)
                 frozen_config = AgentConfig(frozen["baseline"]["config"], baseline_root / "baseline.json")
                 frozen_config.validate(live=True)

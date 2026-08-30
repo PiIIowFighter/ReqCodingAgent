@@ -564,6 +564,11 @@ def freeze_baseline(
     provider_identity = development.get("provider_identity")
     if not isinstance(provider_identity, dict) or provider_identity.get("actual_model") != "gpt-5.6-sol":
         raise EvalError("development provider identity is incomplete", category="invalid")
+    harness_environment = development.get("harness_environment")
+    if not isinstance(harness_environment, dict):
+        raise EvalError("development harness environment receipt is missing", category="invalid")
+    from .harness_environment import verify_harness_environment_receipt
+    verify_harness_environment_receipt(project_root, harness_environment)
     verify_runtime_provider(provider_identity)
     if any(cell.get("actual_model") != provider_identity["actual_model"] for cell in cells):
         raise EvalError("development cell actual model mismatch", category="invalid")
@@ -596,6 +601,7 @@ def freeze_baseline(
         "config_sha256": frozen_config_hash,
         "config": public_config, "development": development,
         "provider_identity": provider_identity,
+        "harness_environment": harness_environment,
         "image_identities": image_identities,
         "authorization": {
             "kind": "conditional_pre_authorization",
@@ -899,6 +905,7 @@ def load_public_records(project_root: Path) -> list[dict[str, Any]]:
 def run_development(
     settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *,
     resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any], provider_identity: dict[str, Any],
+    harness_environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not __import__("re").fullmatch(r"v\d{3}", version):
         raise EvalError("development version must match vNNN", category="invalid")
@@ -914,6 +921,9 @@ def run_development(
     }
     verify_gate_receipt(settings.project_root, test_receipt, bindings, label="test receipt")
     verify_gate_receipt(settings.project_root, isolation_proof, bindings, label="isolation proof")
+    if harness_environment is not None:
+        from .harness_environment import verify_harness_environment_receipt
+        verify_harness_environment_receipt(settings.project_root, harness_environment)
     manifest_path = ensure_experiment_manifest(root, {
         "schema_version": "1.0", "version": version, "cells": 6,
         "plan": [{"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells],
@@ -960,6 +970,7 @@ def run_development(
         "config_hash": bindings["config_hash"], "system_prompt_hash": bindings["system_prompt_hash"],
         "protocol_prompt_hash": bindings["protocol_prompt_hash"], "tool_schema_hash": bindings["tool_schema_hash"],
         "test_receipt": test_receipt, "isolation_proof": isolation_proof, "provider_identity": provider_identity,
+        "harness_environment": harness_environment,
         "source_run_ids": [row["run_id"] for row in results], "observed_issue": "",
         "hypothesis": "Initial frozen development matrix", "exact_change": "Initial candidate",
         "expected_effect": "Establish benchmark baseline", "rollback_risk": "none",
