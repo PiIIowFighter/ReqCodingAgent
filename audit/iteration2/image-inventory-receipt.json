@@ -1,0 +1,17 @@
+{
+  "builds": 0,
+  "docker_data_location": "D drive external Docker Desktop data directory",
+  "existing_images": 4,
+  "historical_blocker": "audit/iteration2/night-run-blocker.json",
+  "instances": 15,
+  "inventory_path": "audit/iteration2/image-inventory.json",
+  "minimum_free_space_gib": 40,
+  "observed_free_space_gib": 121.33,
+  "prune_reset_delete": false,
+  "pull_mode": "serial",
+  "pulled_images": 11,
+  "recorded_at": "2026-08-30T05:54:47.866392Z",
+  "resolution": "Docker Desktop data moved to the D drive and all fixed task images are available by RepoDigest.",
+  "schema_version": "1.0",
+  "status": "passed"
+}

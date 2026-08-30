@@ -2,6 +2,7 @@
   "astropy__astropy-14995": {
     "available": true,
     "image_id": "sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+    "pinned": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
     "repo_digests": [
       "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874"
     ],
@@ -10,6 +11,7 @@
   "django__django-10914": {
     "available": true,
     "image_id": "sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+    "pinned": "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
     "repo_digests": [
       "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9"
     ],
@@ -18,6 +20,7 @@
   "django__django-11133": {
     "available": true,
     "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+    "pinned": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
     "repo_digests": [
       "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
     ],
@@ -26,75 +29,109 @@
   "django__django-13933": {
     "available": true,
     "image_id": "sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+    "pinned": "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
     "repo_digests": [
       "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc"
     ],
     "requested": "swebench/sweb.eval.x86_64.django_1776_django-13933:latest"
   },
   "matplotlib__matplotlib-23476": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+    "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249"
+    ],
     "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476:latest"
   },
   "matplotlib__matplotlib-25311": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+    "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142"
+    ],
     "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311:latest"
   },
   "matplotlib__matplotlib-25332": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+    "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3"
+    ],
     "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332:latest"
   },
   "psf__requests-2317": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+    "pinned": "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178"
+    ],
     "requested": "swebench/sweb.eval.x86_64.psf_1776_requests-2317:latest"
   },
   "pydata__xarray-4094": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+    "pinned": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c"
+    ],
     "requested": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094:latest"
   },
   "pytest-dev__pytest-7432": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+    "pinned": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07"
+    ],
     "requested": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432:latest"
   },
   "scikit-learn__scikit-learn-13439": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+    "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775"
+    ],
     "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439:latest"
   },
   "scikit-learn__scikit-learn-13779": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+    "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618"
+    ],
     "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779:latest"
   },
   "scikit-learn__scikit-learn-14983": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+    "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836"
+    ],
     "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983:latest"
   },
   "sphinx-doc__sphinx-8595": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+    "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628"
+    ],
     "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595:latest"
   },
   "sphinx-doc__sphinx-8721": {
-    "available": false,
-    "image_id": null,
-    "repo_digests": [],
+    "available": true,
+    "image_id": "sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+    "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+    "repo_digests": [
+      "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5"
+    ],
     "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721:latest"
   }
 }
