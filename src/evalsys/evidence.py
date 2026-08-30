@@ -376,23 +376,31 @@ class EvidenceRecorder:
 
     def invalidate_runs(self, run_ids: list[str], *, reason: str) -> None:
         index_path = self.audit_root / "index.json"
-        index = json.loads(index_path.read_bytes().decode("utf-8"))
-        found = set()
-        for entry in index["runs"]:
-            if entry["run_id"] in run_ids:
-                entry["validity"] = "invalid"
-                entry["invalid_reason"] = reason
-                found.add(entry["run_id"])
-        missing = set(run_ids) - found
-        if missing:
-            raise KeyError(f"Unknown run ids: {sorted(missing)}")
-        _atomic_json(index_path, index)
+        try:
+            with file_lock(self.audit_root / ".index.lock", timeout_s=1.0):
+                index = json.loads(index_path.read_bytes().decode("utf-8"))
+                found = set()
+                for entry in index["runs"]:
+                    if entry["run_id"] in run_ids:
+                        entry["validity"] = "invalid"
+                        entry["invalid_reason"] = reason
+                        found.add(entry["run_id"])
+                missing = set(run_ids) - found
+                if missing:
+                    raise KeyError(f"Unknown run ids: {sorted(missing)}")
+                _atomic_json(index_path, index)
+        except TimeoutError as exc:
+            raise RuntimeError("audit index is locked") from exc
 
     def _append_index(self, run: EvidenceRun, status: str) -> None:
         index_path = self.audit_root / "index.json"
-        index = json.loads(index_path.read_bytes().decode("utf-8")) if index_path.exists() else {"schema_version": "1.0", "iteration": self.iteration, "runs": []}
-        index["validity_semantics"] = "active means evidence checksums are valid; current results are active leaves of the supersedes graph"
-        if any(entry["run_id"] == run.run_id for entry in index["runs"]):
-            raise RuntimeError(f"Run already indexed: {run.run_id}")
-        index["runs"].append({"run_id": run.run_id, "run_type": run.run_type, "status": status, "config_hash": run.config_hash, "raw_path": run.raw_dir.relative_to(self.project_root).as_posix(), "audit_path": run.audit_dir.relative_to(self.project_root).as_posix(), "validity": "active", "supersedes": run.supersedes})
-        _atomic_json(index_path, index)
+        try:
+            with file_lock(self.audit_root / ".index.lock", timeout_s=1.0):
+                index = json.loads(index_path.read_bytes().decode("utf-8")) if index_path.exists() else {"schema_version": "1.0", "iteration": self.iteration, "runs": []}
+                index["validity_semantics"] = "active means evidence checksums are valid; current results are active leaves of the supersedes graph"
+                if any(entry["run_id"] == run.run_id for entry in index["runs"]):
+                    raise RuntimeError(f"Run already indexed: {run.run_id}")
+                index["runs"].append({"run_id": run.run_id, "run_type": run.run_type, "status": status, "config_hash": run.config_hash, "raw_path": run.raw_dir.relative_to(self.project_root).as_posix(), "audit_path": run.audit_dir.relative_to(self.project_root).as_posix(), "validity": "active", "supersedes": run.supersedes})
+                _atomic_json(index_path, index)
+        except TimeoutError as exc:
+            raise RuntimeError("audit index is locked") from exc

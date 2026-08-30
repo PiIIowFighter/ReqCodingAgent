@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from .agent_runner import AgentRunRequest
 from .baseline import FORMAL_INSTANCES, FORMAL_SEED, build_formal_plan, verify_formal_plan
 from .errors import EvalError
 from .evidence import sanitize
-from .persistence import atomic_json
+from .persistence import atomic_json, file_lock
 from .recovery import sha256_file
 
 
@@ -31,6 +32,60 @@ _DEV_CASES = {
     "scikit-learn__scikit-learn-14983": "D-S1",
     "matplotlib__matplotlib-25332": "D-R1",
 }
+
+
+class WaveExecutionError(RuntimeError):
+    def __init__(self, errors: list[BaseException], results: list[dict[str, Any]]):
+        super().__init__(str(errors[0]))
+        self.errors = errors
+        self.results = results
+
+
+def deterministic_waves(plan: list[dict[str, Any]], *, parallel_cells: int) -> list[list[dict[str, Any]]]:
+    if parallel_cells not in {1, 2}:
+        raise EvalError("parallel_cells must be 1 or 2", category="invalid")
+    pairs: list[list[dict[str, Any]]] = []
+    positions: dict[str, int] = {}
+    for cell in plan:
+        instance_id = cell.get("instance_id")
+        if not isinstance(instance_id, str):
+            raise EvalError("plan contains invalid instance identity", category="invalid")
+        position = positions.get(instance_id)
+        if position is None:
+            positions[instance_id] = len(pairs)
+            pairs.append([])
+            position = len(pairs) - 1
+        pairs[position].append(cell)
+    if any(len(pair) != 2 for pair in pairs):
+        raise EvalError("wave scheduling requires complete pairs", category="invalid")
+    waves = []
+    for offset in range(0, len(pairs), parallel_cells):
+        group = pairs[offset:offset + parallel_cells]
+        for cell_index in range(2):
+            waves.append([pair[cell_index] for pair in group])
+    return waves
+
+
+def run_bounded_wave(cells: list[dict[str, Any]], worker, *, parallel_cells: int) -> list[dict[str, Any]]:
+    if parallel_cells not in {1, 2} or len(cells) > parallel_cells:
+        raise EvalError("wave exceeds bounded parallelism", category="invalid")
+    if len({cell.get("instance_id") for cell in cells}) != len(cells):
+        raise EvalError("a wave cannot contain two cells from the same pair", category="invalid")
+    if len(cells) == 1:
+        return [worker(cells[0])]
+    results = []
+    errors: list[BaseException] = []
+    with ThreadPoolExecutor(max_workers=parallel_cells, thread_name_prefix="evalsys-cell") as executor:
+        futures = {executor.submit(worker, cell): cell for cell in cells}
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except BaseException as exc:
+                errors.append(exc)
+    ordered = sorted(results, key=lambda row: row["sequence"])
+    if errors:
+        raise WaveExecutionError(errors, ordered)
+    return ordered
 
 
 def development_cells(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -573,6 +628,17 @@ def freeze_baseline(
     for field, digest in current_bindings.items():
         if development.get(field) != digest:
             raise EvalError(f"development {field} does not match current behavior", category="invalid")
+    scheduler = {
+        "scheduler": development.get("scheduler"),
+        "parallel_cells": development.get("parallel_cells"),
+        "pair_order_source": development.get("pair_order_source"),
+        "result_order": development.get("result_order"),
+    }
+    if scheduler != {
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+    }:
+        raise EvalError("development scheduler identity is invalid", category="invalid")
     provider_identity = development.get("provider_identity")
     if not isinstance(provider_identity, dict) or provider_identity.get("actual_model") != "gpt-5.6-sol":
         raise EvalError("development provider identity is incomplete", category="invalid")
@@ -615,6 +681,7 @@ def freeze_baseline(
         "provider_identity": provider_identity,
         "harness_environment": harness_environment,
         "image_identities": image_identities,
+        **scheduler,
         "authorization": {
             "kind": "conditional_pre_authorization",
             "statement": "User authorized automatic continuation only after every freeze gate passes; user did not manually inspect this generated hash.",
@@ -655,6 +722,15 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
         plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvalError("invalid frozen baseline JSON", category="invalid") from exc
+    scheduler = {
+        "scheduler": baseline.get("scheduler"), "parallel_cells": baseline.get("parallel_cells"),
+        "pair_order_source": baseline.get("pair_order_source"), "result_order": baseline.get("result_order"),
+    }
+    if scheduler != {
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+    }:
+        raise EvalError("frozen baseline scheduler identity is invalid", category="invalid")
     bindings = {
         "plan_sha256": "plan.json",
         "system_prompt_sha256": "system.txt",
@@ -782,18 +858,19 @@ def record_experiment_cell(root: Path, case_id: str, run_id: str, state: str) ->
         raise EvalError("invalid experiment cell state", category="invalid")
     path = root / "experiment-manifest.json"
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise EvalError("formal experiment manifest is invalid", category="invalid") from exc
-    runs = manifest.setdefault("cell_runs", {})
-    existing = runs.get(case_id)
-    if existing and existing.get("run_id") != run_id and existing.get("state") != "eval_infra_failed":
-        raise EvalError("experiment cell run_id cannot be overwritten", category="invalid")
-    entry = {"run_id": run_id, "state": state}
-    if existing and existing.get("run_id") != run_id:
-        entry["supersedes"] = [existing["run_id"]]
-    runs[case_id] = entry
-    atomic_json(path, manifest)
+        with file_lock(root / ".manifest.lock", timeout_s=1.0):
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            runs = manifest.setdefault("cell_runs", {})
+            existing = runs.get(case_id)
+            if existing and existing.get("run_id") != run_id and existing.get("state") != "eval_infra_failed":
+                raise EvalError("experiment cell run_id cannot be overwritten", category="invalid")
+            entry = {"run_id": run_id, "state": state}
+            if existing and existing.get("run_id") != run_id:
+                entry["supersedes"] = [existing["run_id"]]
+            runs[case_id] = entry
+            atomic_json(path, manifest)
+    except (OSError, json.JSONDecodeError, TimeoutError) as exc:
+        raise EvalError("formal experiment manifest is invalid or locked", category="invalid") from exc
 
 
 def verify_cell_evidence(raw_dir: Path, *, expected_run_id: str) -> dict[str, Any]:
@@ -1010,14 +1087,17 @@ def run_development(
     settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *,
     resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any], provider_identity: dict[str, Any],
     harness_environment: dict[str, str] | None = None, max_new_cells: int | None = None,
+    parallel_cells: int = 1,
 ) -> dict[str, Any]:
     if not __import__("re").fullmatch(r"v\d{3}", version):
         raise EvalError("development version must match vNNN", category="invalid")
     if max_new_cells is not None and (isinstance(max_new_cells, bool) or max_new_cells <= 0):
         raise EvalError("--max-new-cells must be a positive integer", category="invalid")
+    if parallel_cells not in {1, 2}:
+        raise EvalError("--parallel-cells must be 1 or 2", category="invalid")
     records = load_public_records(settings.project_root)
     root = settings.artifact_root / "runs/iteration2/dev" / version
-    cells = development_cells(records)
+    cells = [{**cell, "sequence": position} for position, cell in enumerate(development_cells(records), 1)]
     bindings = {
         "behavior_tree_sha256": behavior_tree_hash(settings.project_root),
         "config_hash": config.canonical_hash(),
@@ -1030,61 +1110,88 @@ def run_development(
     if harness_environment is not None:
         from .harness_environment import verify_harness_environment_receipt
         verify_harness_environment_receipt(settings.project_root, harness_environment)
+    scheduler = {
+        "scheduler": "deterministic_wave_v1", "parallel_cells": parallel_cells,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+    }
     manifest_path = ensure_experiment_manifest(root, {
         "schema_version": "1.0", "version": version, "cells": 6,
-        "plan": [{"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells],
-        **bindings,
+        "plan": [{"sequence": cell["sequence"], "case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells],
+        **bindings, **scheduler,
     })
-    results = []
-    new_cells = 0
     raw_root = settings.artifact_root / "runs/iteration2"
+    results_by_case: dict[str, dict[str, Any]] = {}
+    experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tracked_runs = experiment.get("cell_runs", {})
     for cell in cells:
         result_path = root / "cells" / cell["case_id"] / "cell-result.json"
         prior = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else None
-        experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
-        tracked = experiment.get("cell_runs", {}).get(cell["case_id"])
-        resume_run_id = None
-        if tracked and tracked.get("state") == "pending":
-            if prior is not None or not resume:
+        tracked = tracked_runs.get(cell["case_id"])
+        if tracked and tracked.get("state") == "pending" and prior is None:
+            if not resume:
                 raise EvalError("pending development cell requires explicit --resume", category="invalid")
-            resume_run_id = tracked.get("run_id")
-            if not isinstance(resume_run_id, str):
+            run_id = tracked.get("run_id")
+            if not isinstance(run_id, str):
                 raise EvalError("pending development cell has invalid run_id", category="invalid")
-            raw_dir = raw_root / resume_run_id
+            raw_dir = raw_root / run_id
             if (raw_dir / "COMPLETE").is_file():
-                prior = reconcile_completed_cell(
-                    root, result_path, raw_dir, case_id=cell["case_id"],
-                    expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]},
-                )
-                resume_run_id = None
-        if prior is not None and classify_cell_for_resume(prior) == "complete":
+                prior = reconcile_completed_cell(root, result_path, raw_dir, case_id=cell["case_id"], expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]})
+        if prior is not None:
+            if cell_resume_action(prior, resume=resume) == "retry_infra":
+                raise EvalError("development infrastructure failure invalidates the complete vNNN matrix", category="invalid")
             verify_cell_evidence(raw_root / prior["run_id"], expected_run_id=prior["run_id"])
-        action = "resume_pending" if resume_run_id else cell_resume_action(prior, resume=resume)
-        if action == "reuse":
-            results.append(prior)
-            continue
-        if action == "retry_infra":
-            raise EvalError("development infrastructure failure invalidates the complete vNNN matrix", category="invalid")
-        if max_new_cells is not None and new_cells >= max_new_cells:
-            return {
-                "status": "paused", "version": version, "completed": len(results), "total": len(cells),
-                "new_cells": new_cells, "resume_command": f"evalsys run-dev --version {version} --config {config.source} --resume --confirm",
-                "cells": results,
-            }
-        result = run_agent_cell(
-            settings, cell, source_rows[cell["instance_id"]], config,
-            image_identity=image_identities[cell["instance_id"]], run_type="dev_cell", resume_run_id=resume_run_id,
-            on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
-            provider_identity=provider_identity,
-        )
-        if result.get("actual_model") != provider_identity.get("actual_model"):
-            raise EvalError("development actual model does not match provider identity", category="invalid")
-        checksum = sha256_file(raw_root / result["run_id"] / "cell-result.json")
-        result = {**result, "checksum": checksum}
-        atomic_json(result_path, sanitize(result, project_root=settings.project_root))
-        record_experiment_cell(root, cell["case_id"], result["run_id"], "complete")
-        results.append(result)
-        new_cells += 1
+            results_by_case[cell["case_id"]] = prior
+
+    remaining_budget = max_new_cells
+    new_cells = 0
+    waves = deterministic_waves(cells, parallel_cells=parallel_cells)
+    for wave_index in range(0, len(waves), 2):
+        pair_waves = waves[wave_index:wave_index + 2]
+        pair_new = sum(cell["case_id"] not in results_by_case for wave in pair_waves for cell in wave)
+        if pair_new and remaining_budget is not None and pair_new > remaining_budget:
+            break
+        for wave in pair_waves:
+            eligible = [cell for cell in wave if cell["case_id"] not in results_by_case]
+            if not eligible:
+                continue
+            def worker(cell):
+                tracked = json.loads(manifest_path.read_text(encoding="utf-8")).get("cell_runs", {}).get(cell["case_id"])
+                resume_run_id = tracked.get("run_id") if tracked and tracked.get("state") == "pending" else None
+                result = run_agent_cell(
+                    settings, cell, source_rows[cell["instance_id"]], config,
+                    image_identity=image_identities[cell["instance_id"]], run_type="dev_cell", resume_run_id=resume_run_id,
+                    on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
+                    provider_identity=provider_identity,
+                )
+                if result.get("actual_model") != provider_identity.get("actual_model"):
+                    raise EvalError("development actual model does not match provider identity", category="invalid")
+                checksum = sha256_file(raw_root / result["run_id"] / "cell-result.json")
+                return {**result, "checksum": checksum, "sequence": cell["sequence"]}
+            wave_error = None
+            try:
+                wave_results = run_bounded_wave(eligible, worker, parallel_cells=parallel_cells)
+            except WaveExecutionError as exc:
+                wave_results = exc.results
+                wave_error = exc
+            for result in wave_results:
+                case_id = result["case_id"]
+                atomic_json(root / "cells" / case_id / "cell-result.json", sanitize(result, project_root=settings.project_root))
+                state = "eval_infra_failed" if result["status"] == "eval_infra_failed" else "complete"
+                record_experiment_cell(root, case_id, result["run_id"], state)
+                results_by_case[case_id] = result
+                new_cells += 1
+                if remaining_budget is not None:
+                    remaining_budget -= 1
+            if wave_error is not None:
+                raise wave_error
+    results = [results_by_case[cell["case_id"]] for cell in cells if cell["case_id"] in results_by_case]
+    if len(results) < len(cells):
+        return {
+            "status": "paused", "version": version, "completed": len(results), "total": len(cells),
+            "new_cells": new_cells, "requested_max_new_cells": max_new_cells, "actual_new_cells": new_cells,
+            "resume_command": f"evalsys run-dev --version {version} --config {config.source} --parallel-cells {parallel_cells} --resume --confirm",
+            "cells": results, **scheduler,
+        }
     results = verify_development_evidence(settings.project_root, raw_root, results)
     record = {
         "version": version, "parent": None, "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -1092,7 +1199,7 @@ def run_development(
         "config_hash": bindings["config_hash"], "system_prompt_hash": bindings["system_prompt_hash"],
         "protocol_prompt_hash": bindings["protocol_prompt_hash"], "tool_schema_hash": bindings["tool_schema_hash"],
         "test_receipt": test_receipt, "isolation_proof": isolation_proof, "provider_identity": provider_identity,
-        "harness_environment": harness_environment,
+        "harness_environment": harness_environment, **scheduler,
         "source_run_ids": [row["run_id"] for row in results], "observed_issue": "",
         "hypothesis": "Initial frozen development matrix", "exact_change": "Initial candidate",
         "expected_effect": "Establish benchmark baseline", "rollback_risk": "none",
@@ -1125,65 +1232,104 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
     verify_formal_plan(frozen["plan"], [record for record in records if record["split"] == "test"])
     by_case = {record["case_id"]: record for record in records}
     root = settings.artifact_root / "runs/iteration2/formal" / baseline_name
+    scheduler = {
+        "scheduler": frozen["baseline"]["scheduler"], "parallel_cells": frozen["baseline"]["parallel_cells"],
+        "pair_order_source": frozen["baseline"]["pair_order_source"], "result_order": frozen["baseline"]["result_order"],
+    }
     manifest_path = ensure_experiment_manifest(root, {
         "schema_version": "1.0", "baseline": baseline_name,
         "plan_sha256": frozen["baseline"]["plan_sha256"], "cells": 24,
         "plan": [
-            {"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["variant"]}
+            {"sequence": cell["sequence"], "case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["variant"]}
             for cell in frozen["plan"]
         ],
         "agent_code_commit": frozen["baseline"]["agent_code_commit"],
-        "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"],
+        "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"], **scheduler,
     })
-    results = []
-    new_cells = 0
+    raw_root = settings.artifact_root / "runs/iteration2"
+    results_by_case: dict[str, dict[str, Any]] = {}
+    experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tracked_runs = experiment.get("cell_runs", {})
     for planned in frozen["plan"]:
         cell = by_case[planned["case_id"]]
         result_path = root / "cells" / f"{planned['sequence']:02d}-{cell['case_id']}" / "cell-result.json"
         prior = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else None
-        experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
-        tracked = experiment.get("cell_runs", {}).get(cell["case_id"])
-        resume_run_id = None
-        if tracked and tracked.get("state") == "pending":
-            if prior is not None or not resume:
-                raise EvalError("pending formal cell requires explicit --resume and no completed result", category="invalid")
-            resume_run_id = tracked.get("run_id")
-            if not isinstance(resume_run_id, str):
-                raise EvalError("pending formal cell has invalid run_id", category="invalid")
-            raw_dir = settings.artifact_root / "runs/iteration2" / resume_run_id
-            if (raw_dir / "COMPLETE").is_file():
-                prior = reconcile_completed_cell(
-                    root, result_path, raw_dir, case_id=cell["case_id"],
-                    expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]},
-                )
-                resume_run_id = None
-        elif tracked and tracked.get("state") == "complete" and prior is None:
+        tracked = tracked_runs.get(cell["case_id"])
+        if tracked and tracked.get("state") == "complete" and prior is None:
             raise EvalError("formal experiment manifest references missing completed evidence", category="invalid")
-        if prior is not None and classify_cell_for_resume(prior) == "complete":
-            verify_cell_evidence(settings.artifact_root / "runs/iteration2" / prior["run_id"], expected_run_id=prior["run_id"])
-        action = "resume_pending" if resume_run_id else cell_resume_action(prior, resume=resume)
-        if action == "reuse":
-            results.append(prior)
-            continue
-        if max_new_cells is not None and new_cells >= max_new_cells:
-            return {
-                "status": "paused", "baseline": baseline_name, "completed": len(results),
-                "total": len(frozen["plan"]), "new_cells": new_cells,
-                "resume_command": f"evalsys run-formal --name {baseline_name} --resume --confirm",
-            }
-        supersedes = [prior["run_id"]] if action == "retry_infra" else []
-        result = run_agent_cell(
-            settings, cell, source_rows[cell["instance_id"]], config,
-            image_identity=frozen["baseline"]["image_identities"][cell["instance_id"]],
-            run_type="formal_cell", supersedes=supersedes, resume_run_id=resume_run_id,
-            on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
-            provider_identity=frozen["baseline"]["provider_identity"],
-        )
-        atomic_json(result_path, sanitize(result, project_root=settings.project_root))
-        state = "eval_infra_failed" if result["status"] == "eval_infra_failed" else "complete"
-        record_experiment_cell(root, cell["case_id"], result["run_id"], state)
-        results.append(result)
-        new_cells += 1
+        if tracked and tracked.get("state") == "pending" and prior is None:
+            if not resume:
+                raise EvalError("pending formal cell requires explicit --resume", category="invalid")
+            run_id = tracked.get("run_id")
+            if not isinstance(run_id, str):
+                raise EvalError("pending formal cell has invalid run_id", category="invalid")
+            raw_dir = raw_root / run_id
+            if (raw_dir / "COMPLETE").is_file():
+                prior = reconcile_completed_cell(root, result_path, raw_dir, case_id=cell["case_id"], expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]})
+        if prior is not None:
+            disposition = classify_cell_for_resume(prior)
+            if disposition == "invalid_evidence":
+                raise EvalError("formal cell evidence is invalid", category="invalid")
+            if disposition == "complete":
+                if not resume:
+                    raise EvalError("completed cells may only be reused with explicit --resume", category="invalid")
+                verify_cell_evidence(raw_root / prior["run_id"], expected_run_id=prior["run_id"])
+                results_by_case[cell["case_id"]] = prior
+
+    remaining_budget = max_new_cells
+    new_cells = 0
+    waves = deterministic_waves(frozen["plan"], parallel_cells=2)
+    for wave_index in range(0, len(waves), 2):
+        pair_waves = waves[wave_index:wave_index + 2]
+        pair_new = sum(planned["case_id"] not in results_by_case for wave in pair_waves for planned in wave)
+        if pair_new and remaining_budget is not None and pair_new > remaining_budget:
+            break
+        for wave in pair_waves:
+            eligible = [planned for planned in wave if planned["case_id"] not in results_by_case]
+            if not eligible:
+                continue
+            def worker(planned):
+                cell = by_case[planned["case_id"]]
+                tracked = json.loads(manifest_path.read_text(encoding="utf-8")).get("cell_runs", {}).get(cell["case_id"])
+                resume_run_id = tracked.get("run_id") if tracked and tracked.get("state") == "pending" else None
+                prior_path = root / "cells" / f"{planned['sequence']:02d}-{cell['case_id']}" / "cell-result.json"
+                prior = json.loads(prior_path.read_text(encoding="utf-8")) if prior_path.is_file() else None
+                supersedes = [prior["run_id"]] if prior and classify_cell_for_resume(prior) == "retryable_infra" else []
+                result = run_agent_cell(
+                    settings, cell, source_rows[cell["instance_id"]], config,
+                    image_identity=frozen["baseline"]["image_identities"][cell["instance_id"]],
+                    run_type="formal_cell", supersedes=supersedes, resume_run_id=resume_run_id,
+                    on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
+                    provider_identity=frozen["baseline"]["provider_identity"],
+                )
+                return {**result, "sequence": planned["sequence"]}
+            wave_error = None
+            try:
+                wave_results = run_bounded_wave(eligible, worker, parallel_cells=2)
+            except WaveExecutionError as exc:
+                wave_results = exc.results
+                wave_error = exc
+            for result in wave_results:
+                planned = next(item for item in frozen["plan"] if item["case_id"] == result["case_id"])
+                result_path = root / "cells" / f"{planned['sequence']:02d}-{result['case_id']}" / "cell-result.json"
+                atomic_json(result_path, sanitize(result, project_root=settings.project_root))
+                state = "eval_infra_failed" if result["status"] == "eval_infra_failed" else "complete"
+                record_experiment_cell(root, result["case_id"], result["run_id"], state)
+                if state == "complete":
+                    results_by_case[result["case_id"]] = result
+                new_cells += 1
+                if remaining_budget is not None:
+                    remaining_budget -= 1
+            if wave_error is not None:
+                raise wave_error
+    results = [results_by_case[cell["case_id"]] for cell in frozen["plan"] if cell["case_id"] in results_by_case]
+    if len(results) < len(frozen["plan"]):
+        return {
+            "status": "paused", "baseline": baseline_name, "completed": len(results),
+            "total": len(frozen["plan"]), "new_cells": new_cells,
+            "requested_max_new_cells": max_new_cells, "actual_new_cells": new_cells,
+            "resume_command": f"evalsys run-formal --name {baseline_name} --resume --confirm", **scheduler,
+        }
     summary = summarize_formal_results(results)
     atomic_json(root / "report.json", sanitize(summary, project_root=settings.project_root))
     return summary

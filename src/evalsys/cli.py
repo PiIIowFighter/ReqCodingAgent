@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_dev.add_argument("--confirm", action="store_true")
     run_dev.add_argument("--resume", action="store_true")
     run_dev.add_argument("--max-new-cells", type=int)
+    run_dev.add_argument("--parallel-cells", type=int, choices=(1, 2), default=1)
     freeze = sub.add_parser("freeze-baseline", help="freeze an accepted development baseline")
     freeze.add_argument("--name", required=True)
     freeze.add_argument("--dev-version", required=True)
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
                     isolation_proof=gate_reference("isolation-proof.json"),
                     provider_identity=provider_identity,
                     harness_environment=harness_environment["reference"],
-                    max_new_cells=args.max_new_cells,
+                    max_new_cells=args.max_new_cells, parallel_cells=args.parallel_cells,
                 )
                 report = {"status": development.get("status", "passed"), "development": development}
             elif args.command == "freeze-baseline":

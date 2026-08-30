@@ -43,6 +43,9 @@ from evalsys.iteration2 import (
     verify_runtime_provider,
     load_formal_results,
     run_isolation_diagnostic,
+    deterministic_waves,
+    run_bounded_wave,
+    WaveExecutionError,
     write_isolation_proof,
     write_test_receipt,
     run_development,
@@ -99,8 +102,8 @@ def test_iteration2_cli_has_required_protected_arguments():
     assert report.name == "baseline-v1"
     status = parser.parse_args(["experiment-status", "--kind", "dev", "--name", "v002"])
     assert status.kind == "dev" and status.name == "v002"
-    limited = parser.parse_args(["run-dev", "--version", "v002", "--config", "agent.json", "--max-new-cells", "2", "--confirm"])
-    assert limited.max_new_cells == 2
+    limited = parser.parse_args(["run-dev", "--version", "v003", "--config", "agent.json", "--parallel-cells", "2", "--max-new-cells", "4", "--confirm"])
+    assert limited.max_new_cells == 4 and limited.parallel_cells == 2
 
 
 def test_cli_paused_status_returns_zero():
@@ -141,6 +144,55 @@ def test_formal_plan_is_deterministic_paired_and_balanced():
         assert {pair[0]["variant"], pair[1]["variant"]} == {"full", "fuzzy"}
     assert sum(first[index]["variant"] == "full" for index in range(0, 24, 2)) == 6
     verify_formal_plan(first, test_records, seed=FORMAL_SEED)
+
+
+def test_deterministic_waves_keep_pair_order_and_bound_parallelism():
+    plan = [
+        {"sequence": 1, "instance_id": "a", "case_id": "a-full", "variant": "full"},
+        {"sequence": 2, "instance_id": "a", "case_id": "a-fuzzy", "variant": "fuzzy"},
+        {"sequence": 3, "instance_id": "b", "case_id": "b-fuzzy", "variant": "fuzzy"},
+        {"sequence": 4, "instance_id": "b", "case_id": "b-full", "variant": "full"},
+        {"sequence": 5, "instance_id": "c", "case_id": "c-full", "variant": "full"},
+        {"sequence": 6, "instance_id": "c", "case_id": "c-fuzzy", "variant": "fuzzy"},
+    ]
+    waves = deterministic_waves(plan, parallel_cells=2)
+    assert [[cell["case_id"] for cell in wave] for wave in waves] == [
+        ["a-full", "b-fuzzy"], ["a-fuzzy", "b-full"], ["c-full"], ["c-fuzzy"],
+    ]
+    assert all(len(wave) <= 2 and len({cell["instance_id"] for cell in wave}) == len(wave) for wave in waves)
+
+
+def test_bounded_wave_runs_two_different_pairs_concurrently_and_sorts_results():
+    import threading, time
+    active = maximum = 0
+    lock = threading.Lock()
+    cells = [{"sequence": 2, "instance_id": "b"}, {"sequence": 1, "instance_id": "a"}]
+    def worker(cell):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return {**cell, "status": "unresolved"}
+    results = run_bounded_wave(cells, worker, parallel_cells=2)
+    assert maximum == 2
+    assert [row["sequence"] for row in results] == [1, 2]
+
+
+def test_bounded_wave_waits_for_other_worker_and_preserves_result_on_failure():
+    cells = [{"sequence": 1, "instance_id": "a"}, {"sequence": 2, "instance_id": "b"}]
+    completed = []
+    def worker(cell):
+        if cell["instance_id"] == "a":
+            raise RuntimeError("worker failed")
+        completed.append(cell["instance_id"])
+        return {**cell, "status": "unresolved"}
+    with pytest.raises(WaveExecutionError) as caught:
+        run_bounded_wave(cells, worker, parallel_cells=2)
+    assert completed == ["b"]
+    assert [row["instance_id"] for row in caught.value.results] == ["b"]
 
 
 def test_formal_plan_rejects_identity_or_order_tampering():
@@ -327,6 +379,38 @@ def test_experiment_status_reports_counts_current_run_and_resume_command(tmp_pat
     assert status["current"] == {"case_id": "D-2", "run_id": "run-pending", "state": "pending"}
     assert status["can_resume"] is True
     assert status["resume_command"] == "evalsys run-dev --version v002 --config CONFIG --resume --confirm"
+
+
+def test_concurrent_manifest_updates_keep_both_cells(tmp_path: Path):
+    import threading
+    root = tmp_path / "formal"
+    ensure_experiment_manifest(root, {"baseline": "baseline-v1", "cells": 2})
+    barrier = threading.Barrier(2)
+    def update(case_id):
+        barrier.wait()
+        record_experiment_cell(root, case_id, f"run-{case_id}", "complete")
+    threads = [threading.Thread(target=update, args=(case_id,)) for case_id in ("a", "b")]
+    for thread in threads: thread.start()
+    for thread in threads: thread.join()
+    manifest = json.loads((root / "experiment-manifest.json").read_text(encoding="utf-8"))
+    assert set(manifest["cell_runs"]) == {"a", "b"}
+
+
+def test_concurrent_audit_index_updates_keep_both_runs(tmp_path: Path):
+    import threading
+    project = tmp_path / "project"
+    project.mkdir()
+    recorder = EvidenceRecorder(project, iteration=2)
+    runs = [recorder.start("formal_cell", {"cell": name}, ["formal"]) for name in ("a", "b")]
+    barrier = threading.Barrier(2)
+    def finish(run):
+        barrier.wait()
+        run.finish({"status": "unresolved", "classification": "tests_failed"})
+    threads = [threading.Thread(target=finish, args=(run,)) for run in runs]
+    for thread in threads: thread.start()
+    for thread in threads: thread.join()
+    index = json.loads((project / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+    assert {entry["run_id"] for entry in index["runs"]} == {run.run_id for run in runs}
 
 
 def test_experiment_manifest_tracks_pending_and_completed_run_ids(tmp_path: Path):
@@ -645,6 +729,8 @@ def _valid_development_record(config: dict | None = None) -> dict:
         "isolation_proof": {"path": "audit/iteration2/isolation-proof.json", "sha256": "3" * 64},
         "provider_identity": {"actual_model": "gpt-5.6-sol"},
         "harness_environment": {"path": "audit/iteration2/harness-environment-receipt.json", "sha256": "4" * 64},
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
     }
 
 
@@ -907,21 +993,32 @@ def test_run_development_output_freezes_without_manual_fields(tmp_path: Path, mo
     provider = {"actual_model": "gpt-5.6-sol", "endpoint_sha256": __import__("hashlib").sha256(endpoint.encode()).hexdigest(), "base_url_env": "ANTHROPIC_BASE_URL", "api_key_env": "ANTHROPIC_AUTH_TOKEN"}
     recorder = EvidenceRecorder(project, iteration=2, raw_root=project / "artifacts/runs/iteration2")
     counter = iter(range(6))
+    active = maximum = 0
+    active_lock = __import__("threading").Lock()
     def fake_cell(settings, case, source_row, config, **kwargs):
+        nonlocal active, maximum
         position = next(counter)
+        with active_lock:
+            active += 1
+            maximum = max(maximum, active)
+        __import__("time").sleep(0.03)
         run = recorder.start("dev_cell", {"cell": case["case_id"]}, ["fake-cell"])
         cell = {"run_id": run.run_id, "case_id": case["case_id"], "instance_id": case["instance_id"], "variant": case["prompt_variant"], "status": "unresolved", "evaluator_recorded": True, "actual_model": "gpt-5.6-sol", "usage": {}, "steps": 1, "tool_calls": 1, "wall_time_seconds": 1, "patch": {"files": 0, "additions": 0, "deletions": 0, "bytes": 0}, "stop_reason": "submitted"}
         (run.raw_dir / "cell-result.json").write_text(json.dumps(cell, sort_keys=True), encoding="utf-8")
         run.finish({"status": "unresolved", "classification": "tests_failed"})
+        with active_lock:
+            active -= 1
         return cell
     monkeypatch.setattr("evalsys.iteration2.run_agent_cell", fake_cell)
     monkeypatch.setattr("evalsys.iteration2._git", lambda root, *args: "f" * 40)
-    first = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
-    assert first["status"] == "paused" and first["completed"] == 2 and first["new_cells"] == 2
-    second = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
-    assert second["status"] == "paused" and second["completed"] == 4 and second["new_cells"] == 2
-    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
+    first = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=4, parallel_cells=2)
+    assert first["status"] == "paused" and first["completed"] == 4 and first["new_cells"] == 4
+    assert maximum == 2
+    first_cases = [cell["case_id"] for cell in first["cells"]]
+    assert first_cases == ["D-O1-full", "D-O1-fuzzy", "D-S1-full", "D-S1-fuzzy"]
+    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2, parallel_cells=2)
     assert all(len(cell["checksum"]) == 64 for cell in development["cells"])
+    assert development["scheduler"] == "deterministic_wave_v1" and development["parallel_cells"] == 2
     assert development["system_prompt_hash"] == bindings["system_prompt_hash"]
     frozen = freeze_baseline(project, "baseline-v1", config.raw, _records(), development=development, image_identities=_valid_images(), authorized=True, git_commit="f" * 40, artifact_root=project / "artifacts/runs/iteration2")
     assert (frozen / "baseline.json").is_file()
@@ -990,6 +1087,10 @@ def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch
     root = freeze_baseline(tmp_path, "baseline-v1", config, [record for record in _records() if record["split"] == "test"], development=development, image_identities=images, authorized=True, git_commit="a" * 40)
     manifest = json.loads((root / "baseline.json").read_text(encoding="utf-8"))
     assert manifest["provider_hard_context_limit"] == "unavailable"
+    assert manifest["scheduler"] == "deterministic_wave_v1"
+    assert manifest["parallel_cells"] == 2
+    assert manifest["pair_order_source"] == "frozen_plan"
+    assert manifest["result_order"] == "frozen_plan_sequence"
     assert manifest["authorization"]["kind"] == "conditional_pre_authorization"
     assert {"system.txt", "protocol.txt", "tool-schemas.json"}.issubset(path.name for path in root.iterdir())
     verify_frozen_baseline(root)
@@ -998,7 +1099,7 @@ def test_freeze_writes_prompt_schema_and_lock_hashes(tmp_path: Path, monkeypatch
 def test_verify_frozen_baseline_requires_all_snapshots_and_detects_hash_mismatch(tmp_path: Path):
     root = tmp_path / "baseline"
     root.mkdir()
-    files = {"baseline.json": "{}\n", "plan.json": "[]\n"}
+    files = {"baseline.json": json.dumps({"scheduler": "deterministic_wave_v1", "parallel_cells": 2, "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence"}) + "\n", "plan.json": "[]\n"}
     for name, content in files.items():
         (root / name).write_text(content, encoding="utf-8")
     hashes = {name: __import__("hashlib").sha256((root / name).read_bytes()).hexdigest() for name in files}
@@ -1012,6 +1113,19 @@ def test_verify_frozen_baseline_requires_all_snapshots_and_detects_hash_mismatch
     verify_frozen_baseline(root)
     (root / "plan.json").write_text("[1]\n", encoding="utf-8")
     with pytest.raises(EvalError, match="checksum"):
+        verify_frozen_baseline(root)
+
+
+def test_frozen_baseline_rejects_scheduler_drift(tmp_path: Path):
+    root = tmp_path / "baseline"
+    root.mkdir()
+    baseline = {"scheduler": "other", "parallel_cells": 2, "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence"}
+    contents = {"baseline.json": json.dumps(baseline) + "\n", "plan.json": "[]\n", "system.txt": "s\n", "protocol.txt": "p\n", "tool-schemas.json": "[]\n"}
+    for name, content in contents.items():
+        (root / name).write_text(content, encoding="utf-8")
+    hashes = {name: __import__("hashlib").sha256((root / name).read_bytes()).hexdigest() for name in contents}
+    (root / "checksums.sha256").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
+    with pytest.raises(EvalError, match="scheduler"):
         verify_frozen_baseline(root)
 
 
@@ -1035,7 +1149,7 @@ def test_behavior_tree_hash_changes_for_behavior_source(tmp_path: Path):
 def test_frozen_image_identity_drift_is_rejected(tmp_path: Path):
     root = tmp_path / "baseline"
     root.mkdir()
-    baseline = {"image_identities": {"case": {"image_id": "sha256:" + "a" * 64, "repo_digests": ["repo@sha256:" + "b" * 64]}}}
+    baseline = {"image_identities": {"case": {"image_id": "sha256:" + "a" * 64, "repo_digests": ["repo@sha256:" + "b" * 64]}}, "scheduler": "deterministic_wave_v1", "parallel_cells": 2, "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence"}
     for name, content in {"baseline.json": json.dumps(baseline), "plan.json": "[]", "system.txt": "s", "protocol.txt": "p", "tool-schemas.json": "[]"}.items():
         (root / name).write_text(content + "\n", encoding="utf-8")
     hashes = {path.name: __import__("hashlib").sha256(path.read_bytes()).hexdigest() for path in root.iterdir()}
@@ -1074,6 +1188,8 @@ def test_current_behavior_manifest_prompt_and_lock_drift_are_rejected(tmp_path: 
         "tool_schema_sha256": __import__("hashlib").sha256(tool_schema).hexdigest(),
         "config": config,
         "config_sha256": __import__("hashlib").sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
     }
     contents = {"baseline.json": (json.dumps(manifest) + "\n").encode(), "plan.json": b"[]\n", "system.txt": system.read_bytes(), "protocol.txt": protocol.read_bytes(), "tool-schemas.json": tool_schema}
     for name, content in contents.items():
