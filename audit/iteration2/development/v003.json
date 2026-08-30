@@ -1187,12 +1187,12 @@
   "expected_effect": "Establish benchmark baseline",
   "harness_environment": {
     "path": "audit/iteration2/harness-environment-receipt.json",
-    "sha256": "eecb43eaac415de227de1345ea97654316e516b8f569b064d026b37cd846566f"
+    "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
   },
   "hypothesis": "Initial frozen development matrix",
   "isolation_proof": {
     "path": "audit/iteration2/isolation-proof.json",
-    "sha256": "1a17e6d274c9954b0088ad88a950c49d5be4915a50a5cab1bd23285bdca284b2"
+    "sha256": "f8d8d4812023ff679166c52b2921e6eb05b30301a3e811f1599a721616985de9"
   },
   "observed_issue": "",
   "pair_order_source": "frozen_plan",
@@ -1229,7 +1229,7 @@
   "system_prompt_hash": "059db471dca6e20946bd0ee9748b964db3812153892e182f8f1ba0d04bf1aac4",
   "test_receipt": {
     "path": "audit/iteration2/test-receipt.json",
-    "sha256": "5b6cf39a663025fa7b8e2b50d97a80db10667dcefcc5e455cfe560973b2d7232"
+    "sha256": "48cdc3ea60a715763a0fd2c6cd8858f290ed53ed09f2a77b4b3c5c1a0421ff06"
   },
   "tool_schema_hash": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc",
   "validation_plan": "Complete all six full/fuzzy cells",
