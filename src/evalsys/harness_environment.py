@@ -92,7 +92,7 @@ def verify_harness_environment(
     }
     destination = project_root / "audit/iteration2/harness-environment-receipt.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(sanitize(receipt, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    destination.write_text(json.dumps(sanitize(receipt, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     receipt["reference"] = {"path": destination.relative_to(project_root).as_posix(), "sha256": sha256_file(destination)}
     return receipt
 

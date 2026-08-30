@@ -635,6 +635,9 @@ def test_harness_environment_gate_accepts_canonical_and_writes_receipt(tmp_path:
     receipt = verify_harness_environment(tmp_path, checkout, str(python), expected_head="7a21e05772954cc81471ae19d56f436cecf43c54", expected_lock_sha256=expected, runner=_harness_runner())
     assert receipt["status"] == "passed" and receipt["versions"]["docker"] == "7.2.0"
     reference = receipt["reference"]
+    receipt_bytes = (tmp_path / reference["path"]).read_bytes()
+    assert b"\r\n" not in receipt_bytes and receipt_bytes.endswith(b"\n") and not receipt_bytes.endswith(b"\n\n")
+    assert reference["sha256"] == __import__("hashlib").sha256(receipt_bytes).hexdigest()
     assert verify_harness_environment_receipt(tmp_path, reference)["status"] == "passed"
     (tmp_path / reference["path"]).write_text("{}", encoding="utf-8")
     with pytest.raises(EvalError, match="receipt SHA-256"):
@@ -798,6 +801,9 @@ def test_test_receipt_writes_fixed_sanitized_binding(tmp_path: Path):
     bindings = {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "system_prompt_hash": "c" * 64, "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64}
     reference = write_test_receipt(project, bindings, command="pytest -q", exit_code=0, counts={"passed": 270, "skipped": 5, "deselected": 1})
     assert reference["path"] == "audit/iteration2/test-receipt.json"
+    receipt_bytes = (project / reference["path"]).read_bytes()
+    assert b"\r\n" not in receipt_bytes and receipt_bytes.endswith(b"\n") and not receipt_bytes.endswith(b"\n\n")
+    assert reference["sha256"] == __import__("hashlib").sha256(receipt_bytes).hexdigest()
     payload = verify_gate_receipt(project, reference, bindings, label="test receipt")
     assert payload["counts"] == {"passed": 270, "skipped": 5, "deselected": 1}
 

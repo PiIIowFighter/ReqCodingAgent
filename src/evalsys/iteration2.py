@@ -337,7 +337,7 @@ def _write_gate(project_root: Path, name: str, payload: dict[str, Any]) -> dict[
     path = project_root / "audit/iteration2" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     sanitized = sanitize(payload, project_root=project_root)
-    path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return {"path": path.relative_to(project_root).as_posix(), "sha256": sha256_file(path)}
 
 
