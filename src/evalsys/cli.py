@@ -69,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_dev.add_argument("--config", type=Path, required=True)
     run_dev.add_argument("--confirm", action="store_true")
     run_dev.add_argument("--resume", action="store_true")
+    run_dev.add_argument("--max-new-cells", type=int)
     freeze = sub.add_parser("freeze-baseline", help="freeze an accepted development baseline")
     freeze.add_argument("--name", required=True)
     freeze.add_argument("--dev-version", required=True)
@@ -78,7 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
     formal.add_argument("--name", required=True)
     formal.add_argument("--confirm", action="store_true")
     formal.add_argument("--resume", action="store_true")
+    formal.add_argument("--max-new-cells", type=int)
+    status = sub.add_parser("experiment-status", help="show resumable development or formal progress")
+    status.add_argument("--kind", choices=("dev", "formal"), required=True)
+    status.add_argument("--name", required=True)
     return parser
+
+
+def exit_code_for_status(status: str) -> int:
+    return 0 if status in {"passed", "paused"} else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,8 +116,8 @@ def main(argv: list[str] | None = None) -> int:
                 rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], formal_root / "experiment-manifest.json")
                 report = summarize_formal_results(rows)
                 destination = settings.project_root / "audit/iteration2/reports" / f"{args.name}.json"
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                from .persistence import atomic_json
+                atomic_json(destination, report)
                 report = {"status": "passed", "report": str(destination), **report}
             else:
                 prepared = load_prepared(settings)
@@ -124,6 +133,13 @@ def main(argv: list[str] | None = None) -> int:
                 validation_receipt=validation_receipt,
             )
             report = {"status": json.loads(paths.machine_json.read_text(encoding="utf-8"))["status"], "machine_json": str(paths.machine_json), "markdown": str(paths.markdown)}
+        elif args.command == "experiment-status":
+            from .iteration2 import experiment_status
+            if args.kind == "dev":
+                root = settings.artifact_root / "runs/iteration2/dev" / args.name
+            else:
+                root = settings.artifact_root / "runs/iteration2/formal" / args.name
+            report = {"status": "passed", "experiment": experiment_status(root, kind=args.kind, name=args.name)}
         elif args.command in {"agent-run", "run-dev", "freeze-baseline", "run-formal"}:
             from reqagent.config import AgentConfig
             from .harness_environment import verify_settings_harness_environment
@@ -168,13 +184,15 @@ def main(argv: list[str] | None = None) -> int:
                     if not path.is_file():
                         raise EvalError(f"iteration2 gate evidence is missing: {name}", category="invalid")
                     return {"path": path.relative_to(settings.project_root).as_posix(), "sha256": sha256_file(path)}
-                report = {"status": "passed", "development": run_development(
+                development = run_development(
                     settings, args.version, config, source_rows, inventory, resume=args.resume,
                     test_receipt=gate_reference("test-receipt.json"),
                     isolation_proof=gate_reference("isolation-proof.json"),
                     provider_identity=provider_identity,
                     harness_environment=harness_environment["reference"],
-                )}
+                    max_new_cells=args.max_new_cells,
+                )
+                report = {"status": development.get("status", "passed"), "development": development}
             elif args.command == "freeze-baseline":
                 commit = verify_git_gate(settings.project_root)
                 development_path = settings.project_root / "audit/iteration2/development" / f"{args.dev_version}.json"
@@ -195,7 +213,11 @@ def main(argv: list[str] | None = None) -> int:
                 verify_git_gate(settings.project_root)
                 frozen_config = AgentConfig(frozen["baseline"]["config"], baseline_root / "baseline.json")
                 frozen_config.validate(live=True)
-                report = {"status": "passed", **run_formal_plan(settings, args.name, frozen_config, source_rows, resume=args.resume)}
+                formal_result = run_formal_plan(
+                    settings, args.name, frozen_config, source_rows,
+                    resume=args.resume, max_new_cells=args.max_new_cells,
+                )
+                report = {"status": formal_result.get("status", "passed"), **formal_result}
         elif args.command == "validate-all":
             if args.resume and not args.run_id:
                 raise EvalError("--run-id is required with --resume for validate-all")
@@ -260,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         status = report.get("status", "passed")
         print(json.dumps({"status": status, "command": args.command, **report}, ensure_ascii=True, sort_keys=True))
-        return 0 if status == "passed" else 1
+        return exit_code_for_status(status)
     except (EvalError, ValueError) as exc:
         category = exc.category if isinstance(exc, EvalError) else "invalid"
         print(f"ERROR [{category}]: {exc}", file=sys.stderr)

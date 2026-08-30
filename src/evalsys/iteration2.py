@@ -16,6 +16,7 @@ from .agent_runner import AgentRunRequest
 from .baseline import FORMAL_INSTANCES, FORMAL_SEED, build_formal_plan, verify_formal_plan
 from .errors import EvalError
 from .evidence import sanitize
+from .persistence import atomic_json
 from .recovery import sha256_file
 
 
@@ -218,6 +219,18 @@ def _tool_schemas(project_root: Path, config: dict[str, Any]) -> list[dict[str, 
 
 def current_tool_schema_bytes(project_root: Path, config: dict[str, Any]) -> bytes:
     return (json.dumps(_tool_schemas(project_root, config), ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def verify_development_record_cells(public_cells: list[dict[str, Any]], raw_cells: list[dict[str, Any]]) -> None:
+    identity_fields = (
+        "run_id", "case_id", "instance_id", "variant", "status",
+        "evaluator_recorded", "actual_model", "checksum",
+    )
+    if len(public_cells) != len(raw_cells):
+        raise EvalError("development record cell count mismatch", category="invalid")
+    for public, raw in zip(public_cells, raw_cells, strict=True):
+        if any(public.get(field) != raw.get(field) for field in identity_fields):
+            raise EvalError("development record cell identity mismatch", category="invalid")
 
 
 def verify_development_evidence(project_root: Path, artifact_root: Path, cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -505,8 +518,7 @@ def freeze_baseline(
         raise EvalError("development cell run IDs do not match source_run_ids", category="invalid")
     raw_root = artifact_root or project_root / "artifacts/runs/iteration2"
     verified_cells = verify_development_evidence(project_root, raw_root, cells)
-    if verified_cells != cells:
-        raise EvalError("development record does not exactly match verified raw cell evidence", category="invalid")
+    verify_development_record_cells(cells, verified_cells)
     receipt_bindings = {
         "behavior_tree_sha256": development.get("code_hash"),
         "config_hash": development.get("config_hash"),
@@ -727,8 +739,42 @@ def ensure_experiment_manifest(root: Path, manifest: dict[str, Any]) -> Path:
             raise EvalError("formal experiment manifest mismatch", category="invalid")
     else:
         manifest = {**manifest, "cell_runs": manifest.get("cell_runs", {})}
-        path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_json(path, manifest)
     return path
+
+
+def experiment_status(root: Path, *, kind: str, name: str) -> dict[str, Any]:
+    path = root / "experiment-manifest.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalError("experiment manifest is invalid", category="invalid") from exc
+    plan = manifest.get("plan", [])
+    case_ids = [cell.get("case_id") for cell in plan]
+    if not case_ids and isinstance(manifest.get("cell_runs"), dict):
+        case_ids = list(manifest["cell_runs"])
+    tracked = manifest.get("cell_runs", {})
+    states = [tracked.get(case_id, {}).get("state", "not_started") for case_id in case_ids]
+    if any(state not in {"not_started", "pending", "complete", "eval_infra_failed"} for state in states):
+        raise EvalError("experiment manifest contains an invalid cell state", category="invalid")
+    counts = {
+        "completed": states.count("complete"),
+        "pending": states.count("pending") + states.count("eval_infra_failed"),
+        "not_started": states.count("not_started"),
+    }
+    current = None
+    for case_id in case_ids:
+        entry = tracked.get(case_id)
+        if entry and entry.get("state") != "complete":
+            current = {"case_id": case_id, "run_id": entry.get("run_id"), "state": entry.get("state")}
+            break
+    can_resume = bool(tracked) and counts["completed"] < len(case_ids)
+    target = f"--version {name} --config CONFIG" if kind == "dev" else f"--name {name}"
+    return {
+        "kind": kind, "name": name, "identity": {key: value for key, value in manifest.items() if key != "cell_runs"},
+        "counts": counts, "current": current, "can_resume": can_resume,
+        "resume_command": f"evalsys run-{'dev' if kind == 'dev' else 'formal'} {target} --resume --confirm" if can_resume else None,
+    }
 
 
 def record_experiment_cell(root: Path, case_id: str, run_id: str, state: str) -> None:
@@ -747,7 +793,7 @@ def record_experiment_cell(root: Path, case_id: str, run_id: str, state: str) ->
     if existing and existing.get("run_id") != run_id:
         entry["supersedes"] = [existing["run_id"]]
     runs[case_id] = entry
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_json(path, manifest)
 
 
 def verify_cell_evidence(raw_dir: Path, *, expected_run_id: str) -> dict[str, Any]:
@@ -771,6 +817,60 @@ def verify_cell_evidence(raw_dir: Path, *, expected_run_id: str) -> dict[str, An
     if result.get("run_id") != expected_run_id:
         raise EvalError("cell evidence run_id mismatch", category="invalid")
     return result
+
+
+def reconcile_completed_cell(
+    root: Path, destination: Path, raw_dir: Path, *, case_id: str, expected: dict[str, str],
+) -> dict[str, Any]:
+    result = verify_cell_evidence(raw_dir, expected_run_id=raw_dir.name)
+    result = {**result, "checksum": sha256_file(raw_dir / "cell-result.json")}
+    for field, value in expected.items():
+        if result.get(field) != value:
+            raise EvalError(f"completed cell {field} identity mismatch", category="invalid")
+    if result.get("evaluator_recorded") is not True or classify_cell_for_resume(result) != "complete":
+        raise EvalError("completed cell evidence has an invalid outcome", category="invalid")
+    atomic_json(destination, result)
+    record_experiment_cell(root, case_id, result["run_id"], "complete")
+    return result
+
+
+def select_evaluation_attempt(path: Path) -> tuple[Path, bool]:
+    if not path.exists():
+        return path, False
+    if (path / "COMPLETE.json").is_file():
+        return path, True
+    sequence = 1
+    while True:
+        candidate = path.parent / f"evaluation-attempt-{sequence:02d}"
+        if not candidate.exists():
+            return candidate, False
+        sequence += 1
+
+
+def load_completed_agent_result(run_path: Path, *, expected_run_id: str):
+    from reqagent.loop import AgentResult
+    from reqagent.patching import PatchResult
+
+    if not (run_path / "AGENT_COMPLETE").is_file():
+        raise EvalError("Agent completion marker is missing", category="invalid")
+    try:
+        value = json.loads((run_path / "agent-result.json").read_text(encoding="utf-8"))
+        patch_text = (run_path / "agent.patch").read_text(encoding="utf-8")
+        patch = value["patch"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise EvalError("completed Agent evidence is invalid", category="invalid") from exc
+    if value.get("run_id") != expected_run_id:
+        raise EvalError("completed Agent run identity mismatch", category="invalid")
+    if _sha256_bytes(patch_text.encode("utf-8")) != patch.get("sha256"):
+        raise EvalError("completed Agent patch checksum mismatch", category="invalid")
+    patch_result = PatchResult(
+        patch_text, patch["sha256"], int(patch["files"]), int(patch["additions"]),
+        int(patch["deletions"]), int(patch["bytes"]),
+    )
+    return AgentResult(
+        expected_run_id, value["stop_reason"], value.get("submitted"), dict(value.get("usage", {})),
+        int(value["steps"]), int(value["tool_calls"]), patch_result, tuple(value.get("warnings", [])),
+    )
 
 
 def extract_actual_model(events_path: Path) -> str:
@@ -835,7 +935,9 @@ def run_agent_cell(
     started = time.monotonic()
     completed = False
     try:
-        if resume_run_id:
+        if resume_run_id and (store.path / "AGENT_COMPLETE").is_file():
+            result = load_completed_agent_result(store.path, expected_run_id=store.run_id)
+        elif resume_run_id:
             result = _resume_execute(effective, store, finalize=False)
         else:
             converter = None
@@ -860,10 +962,12 @@ def run_agent_cell(
         if not isinstance(harness_revision, str) or len(harness_revision) != 40:
             raise EvalError("source row is missing the frozen harness revision", category="invalid")
         source_row["docker_image"] = image
+        evaluation_path, evaluation_resume = select_evaluation_attempt(store.path / "evaluation")
         evaluation = replay_case(
             settings, case, source_row, "agent", run_id=store.run_id,
-            timeout_s=effective.budgets["wall_clock_seconds"], workers=1, resume=False,
-            patch_path=store.path / "agent.patch", unit_root=store.path / "evaluation",
+            timeout_s=effective.budgets["wall_clock_seconds"], workers=1,
+            resume=evaluation_resume,
+            patch_path=store.path / "agent.patch", unit_root=evaluation_path,
         ) if result.patch.bytes else {"status": "agent_no_patch", "classification": "agent_no_patch", "tests_executed": False}
         status = evaluation["status"]
         if status in {"infra_failed", "invalid"}:
@@ -882,7 +986,7 @@ def run_agent_cell(
             "actual_model": actual_model,
             "evaluation": evaluation,
         }
-        (store.path / "cell-result.json").write_text(json.dumps(cell, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_json(store.path / "cell-result.json", cell)
         evidence.finish({"status": status, "classification": evaluation["classification"]})
         completed = True
         return cell
@@ -905,10 +1009,12 @@ def load_public_records(project_root: Path) -> list[dict[str, Any]]:
 def run_development(
     settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *,
     resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any], provider_identity: dict[str, Any],
-    harness_environment: dict[str, str] | None = None,
+    harness_environment: dict[str, str] | None = None, max_new_cells: int | None = None,
 ) -> dict[str, Any]:
     if not __import__("re").fullmatch(r"v\d{3}", version):
         raise EvalError("development version must match vNNN", category="invalid")
+    if max_new_cells is not None and (isinstance(max_new_cells, bool) or max_new_cells <= 0):
+        raise EvalError("--max-new-cells must be a positive integer", category="invalid")
     records = load_public_records(settings.project_root)
     root = settings.artifact_root / "runs/iteration2/dev" / version
     cells = development_cells(records)
@@ -930,6 +1036,7 @@ def run_development(
         **bindings,
     })
     results = []
+    new_cells = 0
     raw_root = settings.artifact_root / "runs/iteration2"
     for cell in cells:
         result_path = root / "cells" / cell["case_id"] / "cell-result.json"
@@ -941,6 +1048,15 @@ def run_development(
             if prior is not None or not resume:
                 raise EvalError("pending development cell requires explicit --resume", category="invalid")
             resume_run_id = tracked.get("run_id")
+            if not isinstance(resume_run_id, str):
+                raise EvalError("pending development cell has invalid run_id", category="invalid")
+            raw_dir = raw_root / resume_run_id
+            if (raw_dir / "COMPLETE").is_file():
+                prior = reconcile_completed_cell(
+                    root, result_path, raw_dir, case_id=cell["case_id"],
+                    expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]},
+                )
+                resume_run_id = None
         if prior is not None and classify_cell_for_resume(prior) == "complete":
             verify_cell_evidence(raw_root / prior["run_id"], expected_run_id=prior["run_id"])
         action = "resume_pending" if resume_run_id else cell_resume_action(prior, resume=resume)
@@ -949,6 +1065,12 @@ def run_development(
             continue
         if action == "retry_infra":
             raise EvalError("development infrastructure failure invalidates the complete vNNN matrix", category="invalid")
+        if max_new_cells is not None and new_cells >= max_new_cells:
+            return {
+                "status": "paused", "version": version, "completed": len(results), "total": len(cells),
+                "new_cells": new_cells, "resume_command": f"evalsys run-dev --version {version} --config {config.source} --resume --confirm",
+                "cells": results,
+            }
         result = run_agent_cell(
             settings, cell, source_rows[cell["instance_id"]], config,
             image_identity=image_identities[cell["instance_id"]], run_type="dev_cell", resume_run_id=resume_run_id,
@@ -959,10 +1081,10 @@ def run_development(
             raise EvalError("development actual model does not match provider identity", category="invalid")
         checksum = sha256_file(raw_root / result["run_id"] / "cell-result.json")
         result = {**result, "checksum": checksum}
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(json.dumps(sanitize(result, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_json(result_path, sanitize(result, project_root=settings.project_root))
         record_experiment_cell(root, cell["case_id"], result["run_id"], "complete")
         results.append(result)
+        new_cells += 1
     results = verify_development_evidence(settings.project_root, raw_root, results)
     record = {
         "version": version, "parent": None, "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -981,12 +1103,13 @@ def run_development(
         "cells": results,
     }
     destination = settings.project_root / "audit/iteration2/development" / f"{version}.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(sanitize(record, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_json(destination, sanitize(record, project_root=settings.project_root))
     return record
 
 
-def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str, dict[str, Any]], *, resume: bool) -> dict[str, Any]:
+def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str, dict[str, Any]], *, resume: bool, max_new_cells: int | None = None) -> dict[str, Any]:
+    if max_new_cells is not None and (isinstance(max_new_cells, bool) or max_new_cells <= 0):
+        raise EvalError("--max-new-cells must be a positive integer", category="invalid")
     prefix = settings.docker_prefix(sys.platform)
     baseline_root = settings.project_root / "configs/frozen" / baseline_name
     initial = verify_frozen_baseline(baseline_root)
@@ -1005,10 +1128,15 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
     manifest_path = ensure_experiment_manifest(root, {
         "schema_version": "1.0", "baseline": baseline_name,
         "plan_sha256": frozen["baseline"]["plan_sha256"], "cells": 24,
+        "plan": [
+            {"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["variant"]}
+            for cell in frozen["plan"]
+        ],
         "agent_code_commit": frozen["baseline"]["agent_code_commit"],
         "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"],
     })
     results = []
+    new_cells = 0
     for planned in frozen["plan"]:
         cell = by_case[planned["case_id"]]
         result_path = root / "cells" / f"{planned['sequence']:02d}-{cell['case_id']}" / "cell-result.json"
@@ -1022,6 +1150,13 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
             resume_run_id = tracked.get("run_id")
             if not isinstance(resume_run_id, str):
                 raise EvalError("pending formal cell has invalid run_id", category="invalid")
+            raw_dir = settings.artifact_root / "runs/iteration2" / resume_run_id
+            if (raw_dir / "COMPLETE").is_file():
+                prior = reconcile_completed_cell(
+                    root, result_path, raw_dir, case_id=cell["case_id"],
+                    expected={"case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]},
+                )
+                resume_run_id = None
         elif tracked and tracked.get("state") == "complete" and prior is None:
             raise EvalError("formal experiment manifest references missing completed evidence", category="invalid")
         if prior is not None and classify_cell_for_resume(prior) == "complete":
@@ -1030,6 +1165,12 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
         if action == "reuse":
             results.append(prior)
             continue
+        if max_new_cells is not None and new_cells >= max_new_cells:
+            return {
+                "status": "paused", "baseline": baseline_name, "completed": len(results),
+                "total": len(frozen["plan"]), "new_cells": new_cells,
+                "resume_command": f"evalsys run-formal --name {baseline_name} --resume --confirm",
+            }
         supersedes = [prior["run_id"]] if action == "retry_infra" else []
         result = run_agent_cell(
             settings, cell, source_rows[cell["instance_id"]], config,
@@ -1038,13 +1179,13 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
             on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
             provider_identity=frozen["baseline"]["provider_identity"],
         )
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(json.dumps(sanitize(result, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_json(result_path, sanitize(result, project_root=settings.project_root))
         state = "eval_infra_failed" if result["status"] == "eval_infra_failed" else "complete"
         record_experiment_cell(root, cell["case_id"], result["run_id"], state)
         results.append(result)
+        new_cells += 1
     summary = summarize_formal_results(results)
-    (root / "report.json").write_text(json.dumps(sanitize(summary, project_root=settings.project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_json(root / "report.json", sanitize(summary, project_root=settings.project_root))
     return summary
 
 

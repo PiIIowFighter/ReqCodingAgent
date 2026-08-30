@@ -8,7 +8,7 @@ import pytest
 
 from evalsys.agent_runner import AgentRunRequest
 from evalsys.baseline import FORMAL_SEED, build_formal_plan, verify_formal_plan
-from evalsys.cli import build_parser
+from evalsys.cli import build_parser, exit_code_for_status
 from evalsys.errors import EvalError
 from evalsys.config import Settings
 from evalsys.evidence import EvidenceRecorder, sanitize, select_current_runs, verify_active_audit_runs, verify_audit_index_metadata
@@ -25,8 +25,10 @@ from evalsys.iteration2 import (
     classify_cell_for_resume,
     freeze_baseline,
     ensure_experiment_manifest,
+    experiment_status,
     extract_actual_model,
     record_experiment_cell,
+    reconcile_completed_cell,
     start_infra_retry,
     verify_cell_evidence,
     official_image_name,
@@ -36,6 +38,8 @@ from evalsys.iteration2 import (
     behavior_tree_hash,
     current_tool_schema_bytes,
     load_provider_identity,
+    load_completed_agent_result,
+    select_evaluation_attempt,
     verify_runtime_provider,
     load_formal_results,
     run_isolation_diagnostic,
@@ -43,6 +47,7 @@ from evalsys.iteration2 import (
     write_test_receipt,
     run_development,
     verify_development_evidence,
+    verify_development_record_cells,
     verify_gate_receipt,
     verify_git_gate,
     verify_frozen_baseline,
@@ -92,6 +97,16 @@ def test_iteration2_cli_has_required_protected_arguments():
     assert formal.resume and not hasattr(formal, "config") and not hasattr(formal, "variant")
     report = parser.parse_args(["report", "--name", "baseline-v1"])
     assert report.name == "baseline-v1"
+    status = parser.parse_args(["experiment-status", "--kind", "dev", "--name", "v002"])
+    assert status.kind == "dev" and status.name == "v002"
+    limited = parser.parse_args(["run-dev", "--version", "v002", "--config", "agent.json", "--max-new-cells", "2", "--confirm"])
+    assert limited.max_new_cells == 2
+
+
+def test_cli_paused_status_returns_zero():
+    assert exit_code_for_status("paused") == 0
+    assert exit_code_for_status("passed") == 0
+    assert exit_code_for_status("failed") == 1
 
 
 def test_formal_plan_uses_canonical_spec_order_before_shuffle():
@@ -295,6 +310,25 @@ def test_experiment_manifest_is_stable_and_rejects_drift(tmp_path: Path):
         ensure_experiment_manifest(root, {**manifest, "cells": 23})
 
 
+def test_experiment_status_reports_counts_current_run_and_resume_command(tmp_path: Path):
+    root = tmp_path / "dev/v002"
+    ensure_experiment_manifest(root, {
+        "schema_version": "1.0", "version": "v002", "cells": 3,
+        "plan": [
+            {"case_id": "D-1", "instance_id": "one", "variant": "full"},
+            {"case_id": "D-2", "instance_id": "one", "variant": "fuzzy"},
+            {"case_id": "D-3", "instance_id": "two", "variant": "full"},
+        ],
+    })
+    record_experiment_cell(root, "D-1", "run-complete", "complete")
+    record_experiment_cell(root, "D-2", "run-pending", "pending")
+    status = experiment_status(root, kind="dev", name="v002")
+    assert status["counts"] == {"completed": 1, "pending": 1, "not_started": 1}
+    assert status["current"] == {"case_id": "D-2", "run_id": "run-pending", "state": "pending"}
+    assert status["can_resume"] is True
+    assert status["resume_command"] == "evalsys run-dev --version v002 --config CONFIG --resume --confirm"
+
+
 def test_experiment_manifest_tracks_pending_and_completed_run_ids(tmp_path: Path):
     root = tmp_path / "formal"
     ensure_experiment_manifest(root, {"baseline": "baseline-v1", "cells": 24})
@@ -320,6 +354,54 @@ def test_completed_cell_evidence_requires_complete_and_cell_checksum(tmp_path: P
     (raw / "COMPLETE").unlink()
     with pytest.raises(EvalError, match="COMPLETE"):
         verify_cell_evidence(raw, expected_run_id="run-1")
+
+
+def test_raw_complete_reconciliation_copies_result_and_repairs_manifest(tmp_path: Path):
+    project = tmp_path / "project"
+    root = project / "artifacts/runs/iteration2/dev/v002"
+    raw = project / "artifacts/runs/iteration2/run-1"
+    raw.mkdir(parents=True)
+    ensure_experiment_manifest(root, {
+        "schema_version": "1.0", "version": "v002", "cells": 1,
+        "plan": [{"case_id": "D-1", "instance_id": "one", "variant": "full"}],
+    })
+    record_experiment_cell(root, "D-1", "run-1", "pending")
+    cell = {"run_id": "run-1", "case_id": "D-1", "instance_id": "one", "variant": "full", "status": "unresolved", "evaluator_recorded": True}
+    (raw / "cell-result.json").write_text(json.dumps(cell), encoding="utf-8")
+    digest = __import__("hashlib").sha256((raw / "cell-result.json").read_bytes()).hexdigest()
+    (raw / "checksums.sha256").write_text(f"{digest}  cell-result.json\n", encoding="utf-8")
+    (raw / "COMPLETE").write_text("complete\n", encoding="utf-8")
+    destination = root / "cells/D-1/cell-result.json"
+    result = reconcile_completed_cell(root, destination, raw, case_id="D-1", expected={"case_id": "D-1", "instance_id": "one", "variant": "full"})
+    assert result["run_id"] == "run-1" and destination.is_file()
+    manifest = json.loads((root / "experiment-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["cell_runs"]["D-1"] == {"run_id": "run-1", "state": "complete"}
+
+
+def test_evaluator_reuses_complete_attempt_or_allocates_new_attempt(tmp_path: Path):
+    evaluation = tmp_path / "evaluation"
+    assert select_evaluation_attempt(evaluation) == (evaluation, False)
+    evaluation.mkdir()
+    (evaluation / "input-fingerprint.json").write_text("{}", encoding="utf-8")
+    attempt, resume = select_evaluation_attempt(evaluation)
+    assert attempt.parent == tmp_path and attempt.name.startswith("evaluation-attempt-") and resume is False
+    (evaluation / "COMPLETE.json").write_text("{}", encoding="utf-8")
+    assert select_evaluation_attempt(evaluation) == (evaluation, True)
+
+
+def test_completed_agent_result_reuses_existing_patch_without_model_call(tmp_path: Path):
+    run = tmp_path / "run"
+    run.mkdir()
+    patch = "diff --git a/x b/x\n"
+    (run / "agent.patch").write_text(patch, encoding="utf-8")
+    result = {"run_id": "run-1", "stop_reason": "submitted", "submitted": {"tests": []}, "usage": {}, "steps": 2, "tool_calls": 3, "patch": {"sha256": __import__("hashlib").sha256(patch.encode()).hexdigest(), "files": 1, "additions": 1, "deletions": 0, "bytes": len(patch)}, "warnings": []}
+    (run / "agent-result.json").write_text(json.dumps(result), encoding="utf-8")
+    (run / "AGENT_COMPLETE").write_text("complete\n", encoding="utf-8")
+    loaded = load_completed_agent_result(run, expected_run_id="run-1")
+    assert loaded.run_id == "run-1" and loaded.patch.text == patch
+    (run / "agent.patch").write_text("tampered", encoding="utf-8")
+    with pytest.raises(EvalError, match="patch checksum"):
+        load_completed_agent_result(run, expected_run_id="run-1")
 
 
 def test_pending_evidence_reopens_same_run_without_overwrite(tmp_path: Path):
@@ -606,6 +688,14 @@ def test_development_evidence_revalidates_raw_checksum_and_active_leaf(tmp_path:
         verify_development_evidence(project, raw_root, cells)
 
 
+def test_development_record_comparison_accepts_sanitized_usage_but_rejects_identity_drift():
+    raw = {"run_id": "run-1", "case_id": "D-O1-full", "instance_id": "django__django-11133", "variant": "full", "status": "resolved", "evaluator_recorded": True, "actual_model": "gpt-5.6-sol", "checksum": "a" * 64, "usage": {"input_tokens": 10}}
+    public = {**raw, "usage": {"input_tokens": "[REDACTED]"}}
+    verify_development_record_cells([public], [raw])
+    with pytest.raises(EvalError, match="identity"):
+        verify_development_record_cells([{**public, "status": "unresolved"}], [raw])
+
+
 def test_gate_receipt_reloads_path_hash_status_and_bindings(tmp_path: Path):
     project = tmp_path / "project"
     bindings = {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "system_prompt_hash": "c" * 64, "protocol_prompt_hash": "d" * 64, "tool_schema_hash": "e" * 64}
@@ -826,7 +916,11 @@ def test_run_development_output_freezes_without_manual_fields(tmp_path: Path, mo
         return cell
     monkeypatch.setattr("evalsys.iteration2.run_agent_cell", fake_cell)
     monkeypatch.setattr("evalsys.iteration2._git", lambda root, *args: "f" * 40)
-    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref)
+    first = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=False, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
+    assert first["status"] == "paused" and first["completed"] == 2 and first["new_cells"] == 2
+    second = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
+    assert second["status"] == "paused" and second["completed"] == 4 and second["new_cells"] == 2
+    development = run_development(settings, "v001", config, {row["instance_id"]: {} for row in _records()}, _valid_images(), resume=True, test_receipt=test_ref, isolation_proof=isolation_ref, provider_identity=provider, harness_environment=harness_ref, max_new_cells=2)
     assert all(len(cell["checksum"]) == 64 for cell in development["cells"])
     assert development["system_prompt_hash"] == bindings["system_prompt_hash"]
     frozen = freeze_baseline(project, "baseline-v1", config.raw, _records(), development=development, image_identities=_valid_images(), authorized=True, git_commit="f" * 40, artifact_root=project / "artifacts/runs/iteration2")
