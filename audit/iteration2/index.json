@@ -323,6 +323,46 @@
       "status": "resolved",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260830T133249101682Z_formal_cell_b61be1c828",
+      "config_hash": "b61be1c828",
+      "raw_path": "artifacts/runs/iteration2/20260830T133249101682Z_formal_cell_b61be1c828",
+      "run_id": "20260830T133249101682Z_formal_cell_b61be1c828",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260830T133249033135Z_formal_cell_6e7ff7fed0",
+      "config_hash": "6e7ff7fed0",
+      "raw_path": "artifacts/runs/iteration2/20260830T133249033135Z_formal_cell_6e7ff7fed0",
+      "run_id": "20260830T133249033135Z_formal_cell_6e7ff7fed0",
+      "run_type": "formal_cell",
+      "status": "eval_infra_failed",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260830T133903491498Z_formal_cell_0231bd33fe",
+      "config_hash": "0231bd33fe",
+      "raw_path": "artifacts/runs/iteration2/20260830T133903491498Z_formal_cell_0231bd33fe",
+      "run_id": "20260830T133903491498Z_formal_cell_0231bd33fe",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration2/runs/20260830T133903519832Z_formal_cell_a84d51e0fd",
+      "config_hash": "a84d51e0fd",
+      "raw_path": "artifacts/runs/iteration2/20260830T133903519832Z_formal_cell_a84d51e0fd",
+      "run_id": "20260830T133903519832Z_formal_cell_a84d51e0fd",
+      "run_type": "formal_cell",
+      "status": "unresolved",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": 1,
