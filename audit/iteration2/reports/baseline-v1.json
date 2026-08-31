@@ -5319,7 +5319,9 @@
     }
   ],
   "classifications": {
-    "unavailable": 24
+    "resolved": 17,
+    "tests_failed": 5,
+    "tests_unresolved": 2
   },
   "cost": {
     "reason": "Provider cost data is unavailable.",
@@ -5328,8 +5330,25 @@
   "experimental_outcomes_provenance": "All experimental outcomes were produced by the frozen behavior tree; the current code is used only as the report generator.",
   "frozen_behavior_tree_sha256": "3301adf0a28777efa2fbf6d9c66cd14c0fdd615326094c37bfefca7fbdde149f",
   "infrastructure": {
+    "active_runs": 24,
+    "formal_attempts": 27,
     "infra_failures": 0,
-    "superseded_runs": 0
+    "superseded_infra_attempts": 3,
+    "superseded_runs": 3,
+    "supersession_edges": [
+      {
+        "run_id": "20260830T143444266978Z_formal_cell_6e7ff7fed0",
+        "supersedes": "20260830T133249033135Z_formal_cell_6e7ff7fed0"
+      },
+      {
+        "run_id": "20260830T151247394298Z_formal_cell_aeaadce07d",
+        "supersedes": "20260830T145955790179Z_formal_cell_aeaadce07d"
+      },
+      {
+        "run_id": "20260830T175535922285Z_formal_cell_8cf1a62dea",
+        "supersedes": "20260830T160957037236Z_formal_cell_8cf1a62dea"
+      }
+    ]
   },
   "paired_outcomes": {
     "both": 8,
@@ -5346,8 +5365,8 @@
   "report_hotfix_commit": "e1e8d9a8440d724029f409159f949a8f2457be22",
   "report_hotfix_reason": "Full-prompt cells use ambiguity_type=null; the report category is normalized to the string 'full'.",
   "report_only_hotfix": true,
-  "reporter_behavior_tree_sha256": "eb8365d687314bd7f2a8e307f9d8504cdb4593eb457085973bec1c63d6219aa0",
-  "reporter_commit": "03fb2b6ccbac307c45c085458f05da1f23d0df31",
+  "reporter_behavior_tree_sha256": "35c77ac7a1647f12759cf9d5dd6c2e66e3cea25c60c77b56785362f7464b3fde",
+  "reporter_commit": "09c373e0b13520856da7b116251906372eff1736",
   "stop_reasons": {
     "step_budget": 2,
     "submitted": 20,
