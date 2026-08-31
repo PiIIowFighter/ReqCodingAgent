@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import signal
@@ -22,6 +23,7 @@ class CommandExecution:
     stderr: str
     timed_out: bool
     elapsed_seconds: float
+    bootstrap: dict[str, Any] | None = None
 
 
 class CommandExecutor(Protocol):
@@ -140,6 +142,29 @@ class ContainerCommandExecutor:
         container_name = f"reqagent-{self.run_id}"
         mount_root = self.path_converter(workspace.root)
         git_mount = self.path_converter(workspace.root / ".git")
+        bootstrap_script = r'''set +u
+identity="system"
+interpreter="$(command -v python || command -v python3 || true)"
+fallback=true
+for candidate in /opt/miniconda3/envs/testbed/bin/python /opt/conda/envs/testbed/bin/python /opt/miniconda3/bin/python; do
+    if [ -x "$candidate" ]; then
+        interpreter="$candidate"
+        case "$candidate" in
+            */envs/testbed/bin/python) identity="conda:testbed"; fallback=false ;;
+            *) identity="conda:base" ;;
+        esac
+        break
+    fi
+done
+if [ "$identity" = "conda:testbed" ]; then
+    if [ -f /opt/miniconda3/bin/activate ]; then . /opt/miniconda3/bin/activate testbed >/dev/null 2>&1 || true; fi
+    if [ -f /opt/conda/bin/activate ]; then . /opt/conda/bin/activate testbed >/dev/null 2>&1 || true; fi
+fi
+pytest_available=false
+if [ -n "$interpreter" ] && "$interpreter" -c 'import pytest' >/dev/null 2>&1; then pytest_available=true; fi
+printf '__REQAGENT_BOOTSTRAP__={"identity":"%s","interpreter":"%s","pytest_available":%s,"fallback":%s}\n' "$identity" "$interpreter" "$pytest_available" "$fallback"
+if [ -n "$interpreter" ]; then export PATH="$(dirname "$interpreter"):$PATH"; fi
+exec bash -lc "$REQAGENT_COMMAND"'''
         argv = [
             *self.command_prefix, "run", "--pull", "never", "--rm", "--name", container_name,
             "--network", "none", "--cap-drop", "ALL",
@@ -149,7 +174,8 @@ class ContainerCommandExecutor:
             "--mount", f"type=bind,src={git_mount},dst=/workspace/.git,readonly",
             "--workdir", "/workspace" if relative_cwd == "." else f"/workspace/{relative_cwd}",
             "--env", "HOME=/tmp", "--env", "PYTHONDONTWRITEBYTECODE=1",
-            self.image, "bash", "-lc", command,
+            "--env", f"REQAGENT_COMMAND={command}",
+            self.image, "bash", "-lc", bootstrap_script,
         ]
         started = time.monotonic()
         try:
@@ -158,7 +184,15 @@ class ContainerCommandExecutor:
                 errors="replace", check=False, timeout=timeout,
             )
             stdout, stderr = completed.stdout, completed.stderr
-            execution = CommandExecution(completed.returncode, stdout, stderr, False, time.monotonic() - started)
+            bootstrap = None
+            lines = stdout.splitlines(keepends=True)
+            if lines and lines[0].startswith("__REQAGENT_BOOTSTRAP__="):
+                try:
+                    bootstrap = json.loads(lines[0].split("=", 1)[1])
+                    stdout = "".join(lines[1:])
+                except json.JSONDecodeError:
+                    bootstrap = {"identity": "invalid", "interpreter": "", "pytest_available": False, "fallback": True}
+            execution = CommandExecution(completed.returncode, stdout, stderr, False, time.monotonic() - started, bootstrap)
         except subprocess.TimeoutExpired as exc:
             self.runner(
                 [*self.command_prefix, "rm", "-f", container_name],
@@ -247,5 +281,5 @@ def run_command(
         {"command": args["command"], "exit_code": execution.exit_code, "stdout": stdout, "stderr": stderr, "timed_out": execution.timed_out},
         {"kind": "timeout" if execution.timed_out else "nonzero_exit", "message": "command timed out" if execution.timed_out else f"command exited {execution.exit_code}"} if failed else None,
         out_cut or err_cut,
-        {"elapsed_seconds": round(execution.elapsed_seconds, 3), "stdout_artifact": stdout_path.name, "stderr_artifact": stderr_path.name},
+        {"elapsed_seconds": round(execution.elapsed_seconds, 3), "stdout_artifact": stdout_path.name, "stderr_artifact": stderr_path.name, "bootstrap": execution.bootstrap},
     )
