@@ -6,7 +6,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from reqagent.requirements import ONTOLOGY, ONTOLOGY_VERSION, SKILL_CATALOG
+from reqagent.adaptive import adaptive_policy_snapshot
+from reqagent.requirements import ONTOLOGY, ONTOLOGY_VERSION
 
 from .baseline import FORMAL_SEED, build_formal_plan
 from .errors import EvalError
@@ -14,7 +15,7 @@ from .recovery import sha256_file
 
 
 ITERATION = 3
-DEVELOPMENT_CASE_ID = "D-S1-fuzzy"
+DEVELOPMENT_CASE_ID = "D-O1-fuzzy"
 _EVALUATOR_LOCK = threading.Lock()
 
 
@@ -82,7 +83,6 @@ def development_smoke_cell(records: list[dict[str, Any]]) -> dict[str, Any]:
         if row.get("case_id") == DEVELOPMENT_CASE_ID
         and row.get("split") == "dev"
         and row.get("prompt_variant") == "fuzzy"
-        and row.get("ambiguity_type") == "specificity_reduction"
     ]
     if len(matches) != 1:
         raise EvalError("iteration3 development smoke cell identity is invalid", category="invalid")
@@ -185,7 +185,7 @@ def _canonical_hash(value: Any) -> str:
 def requirement_snapshot_payloads() -> dict[str, Any]:
     return {
         "requirement-ontology.json": {"version": ONTOLOGY_VERSION, "ontology": ONTOLOGY},
-        "skill-catalog.json": SKILL_CATALOG,
+        "skill-catalog.json": adaptive_policy_snapshot(),
         "reflection-gate.json": {
             "required": ["goal", "target_component", "expected_behavior_or_acceptance_criteria"],
             "assumption_provenance": True,

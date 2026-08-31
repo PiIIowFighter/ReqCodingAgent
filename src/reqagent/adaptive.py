@@ -15,14 +15,30 @@ ROUTER_VERSION = "adaptive-evidence-router-v1"
 class RouteDecision:
     mode: str
     reasons: tuple[str, ...]
+    selected_skills: tuple[str, ...] = ()
     version: str = ROUTER_VERSION
+
+
+def _selected_skills(reasons: tuple[str, ...]) -> tuple[str, ...]:
+    selected = []
+    if "unresolved_reference" in reasons:
+        selected.append("reference_resolution")
+    if any(reason in reasons for reason in ("weak_language", "abstract_behavior")):
+        selected.append("specificity_expansion")
+    if any(reason in reasons for reason in ("goal", "target", "observable_behavior", "validation")):
+        selected.append("omission_recovery")
+    return tuple(dict.fromkeys(selected))[:2]
+
+
+def _decision(mode: str, reasons: tuple[str, ...]) -> RouteDecision:
+    return RouteDecision(mode, reasons, _selected_skills(reasons) if mode == "refine" else ())
 
 
 def route_task(task: str) -> RouteDecision:
     try:
         text = task.strip()
         if not text:
-            return RouteDecision("fast", ("router_fail_open_empty_task",))
+            return _decision("fast", ("router_fail_open_empty_task",))
         lower = text.lower()
         words = text.split()
         weak_language = bool(re.search(r"\b(related|relevant)\b|correctly|improve|better support|handle.*properly", lower))
@@ -39,13 +55,13 @@ def route_task(task: str) -> RouteDecision:
         detailed = len(words) >= 60 and target and observable and contrast
         missing = tuple(name for name, present in (("goal", goal), ("target", target), ("observable_behavior", observable), ("validation", validation)) if not present)
         if detailed and not abstract_request:
-            return RouteDecision("fast", ("detailed_behavior_contract",))
+            return _decision("fast", ("detailed_behavior_contract",))
         if weak_language or abstract_request or unresolved_reference or len(missing) >= 2:
             reasons = (("weak_language",) if weak_language else ()) + (("abstract_behavior",) if abstract_request else ()) + (("unresolved_reference",) if unresolved_reference else ()) + missing
-            return RouteDecision("refine", reasons)
-        return RouteDecision("fast", ("task_is_actionable",))
+            return _decision("refine", reasons)
+        return _decision("fast", ("task_is_actionable",))
     except Exception:
-        return RouteDecision("fast", ("router_fail_open",))
+        return _decision("fast", ("router_fail_open",))
 
 
 _SKILL_POLICIES = {
@@ -71,6 +87,20 @@ def evidence_policy(skill_id: str) -> dict[str, Any]:
     if skill_id not in _SKILL_POLICIES:
         raise ValueError("unknown adaptive skill")
     return _SKILL_POLICIES[skill_id]
+
+
+def adaptive_policy_snapshot() -> dict[str, Any]:
+    return {
+        "router_version": ROUTER_VERSION,
+        "selection_order": ["reference_resolution", "specificity_expansion", "omission_recovery"],
+        "selection_rules": {
+            "unresolved_reference": "reference_resolution",
+            "weak_or_abstract_behavior": "specificity_expansion",
+            "missing_requirement_dimension": "omission_recovery",
+        },
+        "max_selected_skills": 2,
+        "policies": _SKILL_POLICIES,
+    }
 
 
 def rank_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -140,10 +170,27 @@ class AdaptiveRefinementState:
         "router": 0, "refinement": 0, "main": 0, "reflection": 0,
     })
     patch_seen: bool = False
+    fallback_reason: str = ""
 
     def __post_init__(self) -> None:
         self.route = route_task(self.task)
         self.phase = "coding" if self.route.mode == "fast" else "refining"
+
+    def refinement_instruction(self) -> str:
+        policies = []
+        for skill_id in self.route.selected_skills:
+            policy = evidence_policy(skill_id)
+            policies.append(
+                f"{skill_id}: evidence_order={','.join(policy['evidence_order'])}; "
+                f"required_outputs={','.join(policy['required_outputs'])}"
+            )
+        return "Adaptive refinement phase. Selected policies: " + " | ".join(policies) + ". Compare at most three interpretations, use only evidence IDs from repository tools, then record a compact RequirementBrief."
+
+    def fail_open_refinement(self, reason: str) -> str:
+        self.phase = "coding"
+        self.schema_removed = True
+        self.fallback_reason = reason[:500]
+        return "Refinement failed open. Continue with the original task and the six baseline tools."
 
     def add_evidence(self, tool: str, data: dict[str, Any]) -> str:
         evidence_id = f"E{len(self.evidence) + 1:03d}"
@@ -178,7 +225,7 @@ class AdaptiveRefinementState:
     def brief_message(self) -> str:
         if self.brief is None:
             return ""
-        return "RequirementBrief (evidence-backed working hypothesis; original task has priority): " + json.dumps(self.brief, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return "Refinement is complete. RequirementBrief (evidence-backed, revisable working hypothesis; original task has priority). Continue with the baseline coding loop: " + json.dumps(self.brief, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def observe_tool(self, name: str, ok: bool, error: dict[str, Any] | None, diff_changed: bool) -> None:
         if name == "apply_patch" and ok and diff_changed:
@@ -248,13 +295,20 @@ class AdaptiveRefinementState:
             "contradiction_reason": self.contradiction_reason, "schema_removed": self.schema_removed,
             "usage_by_phase": self.usage_by_phase, "steps_by_phase": self.steps_by_phase,
             "tools_by_phase": self.tools_by_phase, "patch_seen": self.patch_seen,
+            "fallback_reason": self.fallback_reason,
         }
 
     def restore(self, value: dict[str, Any]) -> None:
-        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen"}
+        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen", "fallback_reason"}
         if set(value) != required or value.get("version") != ROUTER_VERSION or value.get("task") != self.task:
             raise ValueError("resume refused: adaptive refinement identity changed")
-        route = RouteDecision(**value["route"])
+        raw_route = value["route"]
+        route = RouteDecision(
+            mode=raw_route["mode"],
+            reasons=tuple(raw_route["reasons"]),
+            selected_skills=tuple(raw_route.get("selected_skills", ())),
+            version=raw_route.get("version", ROUTER_VERSION),
+        )
         if route != route_task(self.task) or value["phase"] not in {"refining", "coding", "reflection", "accepted"}:
             raise ValueError("resume refused: invalid adaptive phase or route")
         if value["schema_removed"] and value["phase"] == "refining":
@@ -274,6 +328,7 @@ class AdaptiveRefinementState:
         self.steps_by_phase = dict(value["steps_by_phase"])
         self.tools_by_phase = dict(value["tools_by_phase"])
         self.patch_seen = value["patch_seen"] is True
+        self.fallback_reason = value["fallback_reason"]
 
     def trace(self) -> dict[str, Any]:
         aggregate_usage: dict[str, int] = {}
@@ -286,6 +341,7 @@ class AdaptiveRefinementState:
             "schema_removed": self.schema_removed, "reflection": self.reflection,
             "revision_count": self.revision_count, "reflection_count": self.reflection_count,
             "requires_reflection": self.requires_reflection, "contradiction_reason": self.contradiction_reason,
+            "fallback_reason": self.fallback_reason, "selected_skills": list(self.route.selected_skills),
             "usage_by_phase": self.usage_by_phase, "usage": aggregate_usage,
             "steps_by_phase": self.steps_by_phase, "tools_by_phase": self.tools_by_phase,
         }

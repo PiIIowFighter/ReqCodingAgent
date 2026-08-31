@@ -159,7 +159,7 @@ class AgentLoop:
         atomic_json(self.run_store.path / "workspace-before.json", {"base_commit": self.workspace.base_commit, "diff_sha256": hashlib.sha256(b"").hexdigest()})
         adaptive = getattr(self.registry, "adaptive", None)
         if adaptive is not None and adaptive.route.mode == "refine" and not any(message.text.startswith("Adaptive refinement phase:") for message in self.context.messages):
-            self.context.add(ModelMessage("system", "Adaptive refinement phase: use repository reads/searches according to the routed skill policies, compare at most three interpretations, then record a compact evidence-backed RequirementBrief. The original task remains authoritative."))
+            self.context.add(ModelMessage("system", adaptive.refinement_instruction()))
 
     def run(self) -> AgentResult:
         self._write_static_evidence()
@@ -179,8 +179,8 @@ class AgentLoop:
                             if phase == "reflection":
                                 adaptive.fail_open_reflection("reflection step budget exhausted")
                             else:
-                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_step_budget",))
-                                adaptive.phase = "coding"
+                                message = adaptive.fail_open_refinement("step budget exhausted")
+                                self.context.add(ModelMessage("system", message))
                             continue
                         stop_reason = "step_budget"
                         break
@@ -198,8 +198,8 @@ class AgentLoop:
                             if phase == "reflection":
                                 adaptive.fail_open_reflection(f"model failure: {type(exc).__name__}")
                             else:
-                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_model_error",))
-                                adaptive.phase = "coding"
+                                message = adaptive.fail_open_refinement(f"model failure: {type(exc).__name__}")
+                                self.context.add(ModelMessage("system", message))
                             self.warnings.append(f"{phase} failed open: {type(exc).__name__}")
                             continue
                         raise
@@ -245,8 +245,8 @@ class AgentLoop:
                             if pending_phase == "reflection":
                                 adaptive.fail_open_reflection("reflection tool budget exhausted")
                             else:
-                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_tool_budget",))
-                                adaptive.phase = "coding"
+                                message = adaptive.fail_open_refinement("tool budget exhausted")
+                                self.context.add(ModelMessage("system", message))
                             self.pending_tool_calls = ()
                             self.next_tool_index = 0
                             self.next_state = "call_model"
