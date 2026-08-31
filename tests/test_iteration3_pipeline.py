@@ -107,7 +107,7 @@ def test_targeted_receipt_records_profile_and_iteration3_path(tmp_path: Path):
         exit_code=0,
         counts={"passed": 5, "skipped": 1},
     )
-    assert reference["path"] == "audit/iteration3/test-receipt.json"
+    assert reference["path"] == "audit/iteration3/adaptive-test-receipt.json"
     payload = json.loads((tmp_path / reference["path"]).read_text(encoding="utf-8"))
     assert payload["profile"] == "iteration3_targeted" and payload["status"] == "passed"
 

@@ -264,10 +264,12 @@ def main(argv: list[str] | None = None) -> int:
                     scope = "single_cell_smoke"
                     if args.parallel_cells != 1:
                         raise EvalError("iteration3 development uses exactly one Agent worker", category="invalid")
+                test_receipt_name = "adaptive-test-receipt.json" if iteration == 3 else "test-receipt.json"
+                isolation_proof_name = "adaptive-isolation-proof.json" if iteration == 3 else "isolation-proof.json"
                 development = run_development(
                     settings, args.version, config, source_rows, inventory, resume=args.resume,
-                    test_receipt=gate_reference("test-receipt.json"),
-                    isolation_proof=None if iteration == 3 else gate_reference("isolation-proof.json"),
+                    test_receipt=gate_reference(test_receipt_name),
+                    isolation_proof=gate_reference(isolation_proof_name),
                     provider_identity=provider_identity,
                     harness_environment=harness_environment["reference"],
                     max_new_cells=args.max_new_cells, parallel_cells=args.parallel_cells,

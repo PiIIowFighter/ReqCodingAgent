@@ -18,6 +18,13 @@ DEVELOPMENT_CASE_ID = "D-S1-fuzzy"
 _EVALUATOR_LOCK = threading.Lock()
 
 
+def revised_gate_paths(project_root: Path) -> dict[str, Path]:
+    return {
+        "test_receipt": project_root / "audit/iteration3/adaptive-test-receipt.json",
+        "isolation_proof": project_root / "audit/iteration3/adaptive-isolation-proof.json",
+    }
+
+
 def run_serialized_evaluator(lock_root: Path, operation: Callable[[], Any]) -> Any:
     from .persistence import file_lock
 
@@ -266,7 +273,7 @@ def write_test_receipt(
     from .evidence import sanitize
 
     status = "passed" if exit_code == 0 and counts.get("passed", 0) > 0 else "failed"
-    path = project_root / "audit/iteration3/test-receipt.json"
+    path = revised_gate_paths(project_root)["test_receipt"]
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "1.0",

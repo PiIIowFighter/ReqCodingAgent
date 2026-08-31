@@ -333,8 +333,8 @@ def verify_gate_receipt(project_root: Path, reference: dict[str, Any], bindings:
     return payload
 
 
-def _write_gate(project_root: Path, name: str, payload: dict[str, Any]) -> dict[str, str]:
-    path = project_root / "audit/iteration2" / name
+def _write_gate(project_root: Path, name: str, payload: dict[str, Any], *, iteration: int = 2) -> dict[str, str]:
+    path = project_root / f"audit/iteration{iteration}" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     sanitized = sanitize(payload, project_root=project_root)
     path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
@@ -406,6 +406,7 @@ PY'''
 def run_isolation_diagnostic(
     project_root: Path, workspace: Path, *, image: str, image_identity: dict[str, Any],
     docker_prefix: list[str], runner=subprocess.run, path_converter=str, run_id: str,
+    iteration: int = 2,
 ) -> dict[str, Any]:
     if "@sha256:" not in image:
         raise EvalError("isolation diagnostic requires a pinned RepoDigest", category="invalid")
@@ -441,11 +442,11 @@ def run_isolation_diagnostic(
         "cleanup": {"expected": "passed", "actual": "passed" if actual.get("cleanup") else "failed"},
         "residual_containers": residual_containers,
     }
-    raw = project_root / "artifacts/runs/iteration2" / run_id
+    raw = project_root / f"artifacts/runs/iteration{iteration}" / run_id
     raw.mkdir(parents=True, exist_ok=False)
     (raw / "diagnostic.json").write_text(json.dumps(sanitize(result, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if status != "passed":
-        failure = project_root / "audit/iteration2/isolation-failures" / f"{run_id}.json"
+        failure = project_root / f"audit/iteration{iteration}/isolation-failures" / f"{run_id}.json"
         failure.parent.mkdir(parents=True, exist_ok=True)
         failure.write_text(json.dumps(sanitize(result, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result
@@ -454,20 +455,21 @@ def run_isolation_diagnostic(
 def write_isolation_proof(
     project_root: Path, workspace: Path, bindings: dict[str, str], *, image: str,
     docker_prefix: list[str], runner=subprocess.run, path_converter=str, run_id: str = "isolation-proof",
-    image_identity: dict[str, Any] | None = None,
+    image_identity: dict[str, Any] | None = None, iteration: int = 2,
+    receipt_name: str = "isolation-proof.json",
 ) -> dict[str, str]:
     identity = image_identity or {"image_id": "unavailable", "repo_digests": [image]}
-    result = run_isolation_diagnostic(project_root, workspace, image=image, image_identity=identity, docker_prefix=docker_prefix, runner=runner, path_converter=path_converter, run_id=run_id)
+    result = run_isolation_diagnostic(project_root, workspace, image=image, image_identity=identity, docker_prefix=docker_prefix, runner=runner, path_converter=path_converter, run_id=run_id, iteration=iteration)
     if result["status"] != "passed":
         names = ", ".join(result["failed_probes"]) or "container_exit"
         raise EvalError(f"iteration2 isolation proof failed probes: {names}", category="infra_failed")
-    return _write_gate(project_root, "isolation-proof.json", {
+    return _write_gate(project_root, receipt_name, {
         "schema_version": "1.0", "status": "passed", **bindings,
         "run_id": run_id, "image": result["image"], "runtime": result["runtime"],
         "matrix": result["matrix"], "mounts": result["mounts"], "mount_count": result["mount_count"],
         "forbidden_mounts": result["forbidden_mounts"], "protected_paths": result["protected_paths"],
         "cleanup": result["cleanup"], "residual_containers": result["residual_containers"],
-    })
+    }, iteration=iteration)
 
 
 def verify_runtime_provider(identity: dict[str, Any], *, actual_model: str | None = None) -> None:

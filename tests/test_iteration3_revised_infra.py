@@ -4,7 +4,14 @@ import threading
 import time
 from pathlib import Path
 
-from evalsys.iteration3 import baseline_run_closure, run_serialized_evaluator
+from evalsys.iteration3 import baseline_run_closure, revised_gate_paths, run_serialized_evaluator
+
+
+def test_revised_gate_paths_do_not_overwrite_baseline_v2_receipts(tmp_path: Path):
+    paths = revised_gate_paths(tmp_path)
+    assert paths["test_receipt"] == tmp_path / "audit/iteration3/adaptive-test-receipt.json"
+    assert paths["isolation_proof"] == tmp_path / "audit/iteration3/adaptive-isolation-proof.json"
+    assert all(path.name not in {"test-receipt.json", "isolation-proof.json"} for path in paths.values())
 
 
 def test_agent_workers_overlap_while_evaluator_is_serial_and_releases_after_error(tmp_path: Path):
