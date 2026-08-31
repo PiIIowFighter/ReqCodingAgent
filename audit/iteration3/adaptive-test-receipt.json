@@ -1,10 +1,10 @@
 {
-  "behavior_tree_sha256": "12968fdc5001002c66077491118e633fe29063005639dc5e36a7b077f727fc06",
+  "behavior_tree_sha256": "080d2181c8a0cf9b8a7c00b4f87c9ec91ba04b2c6dc82efa64dbaa4308082f56",
   "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_protocol_handoff.py tests/test_reqagent_adaptive_controller.py::test_fast_path_first_request_matches_frozen_baseline_v1_golden tests/test_reqagent_adaptive_controller.py::test_checkpoint_restores_approved_schema_and_phase_usage tests/test_reqagent_adaptive_controller.py::test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears tests/test_reqagent_refinement.py tests/test_reqagent_recovery_handoff.py -q",
   "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
   "counts": {
     "deselected": 0,
-    "passed": 21,
+    "passed": 22,
     "skipped": 0
   },
   "exit_code": 0,

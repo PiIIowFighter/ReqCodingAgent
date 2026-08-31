@@ -1,5 +1,5 @@
 {
-  "behavior_tree_sha256": "12968fdc5001002c66077491118e633fe29063005639dc5e36a7b077f727fc06",
+  "behavior_tree_sha256": "080d2181c8a0cf9b8a7c00b4f87c9ec91ba04b2c6dc82efa64dbaa4308082f56",
   "cleanup": {
     "actual": "passed",
     "expected": "passed"
