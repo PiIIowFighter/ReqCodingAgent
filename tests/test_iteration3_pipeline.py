@@ -14,6 +14,7 @@ from evalsys.iteration3 import (
     iteration_roots,
     requirement_snapshot_payloads,
     single_cell_waves,
+    summarize_audited_iteration3_results,
     summarize_comparison,
     write_test_receipt,
 )
@@ -109,6 +110,46 @@ def test_targeted_receipt_records_profile_and_iteration3_path(tmp_path: Path):
     assert reference["path"] == "audit/iteration3/test-receipt.json"
     payload = json.loads((tmp_path / reference["path"]).read_text(encoding="utf-8"))
     assert payload["profile"] == "iteration3_targeted" and payload["status"] == "passed"
+
+
+def test_audited_iteration3_report_relables_categories_and_records_infra_history():
+    categories = ["omission"] * 4 + ["referential_ambiguity"] * 4 + ["specificity_reduction"] * 4
+    rows = []
+    audit_runs = []
+    for index, category in enumerate(categories):
+        for variant in ("full", "fuzzy"):
+            run_id = f"run-{index}-{variant}"
+            rows.append({
+                "run_id": run_id, "instance_id": f"case-{index}", "variant": variant,
+                "ambiguity_type": None if variant == "full" else category,
+                "status": "resolved", "evaluator_recorded": True, "steps": 1,
+                "tool_calls": 2, "usage": {"input_tokens": 3, "output_tokens": 1},
+                "wall_time_seconds": 4, "patch": {"files": 1, "additions": 1, "deletions": 0, "bytes": 10},
+                "stop_reason": "submitted", "evaluation": {"classification": "resolved"},
+            })
+            supersedes = [f"infra-{index}"] if variant == "full" and index < 5 else []
+            audit_runs.append({"run_id": run_id, "run_type": "formal_cell", "status": "resolved", "validity": "active", "supersedes": supersedes})
+    audit_runs.extend(
+        {"run_id": f"infra-{index}", "run_type": "formal_cell", "status": "eval_infra_failed", "validity": "active", "supersedes": []}
+        for index in range(5)
+    )
+    baseline = {"name": "baseline-v2", "behavior_tree_sha256": "a" * 64, "config_sha256": "b" * 64, "plan_sha256": "c" * 64, "provider_identity": {"actual_model": "gpt-5.6-sol"}}
+    manifest = {"baseline": "baseline-v2", "behavior_tree_sha256": "a" * 64, "plan_sha256": "c" * 64, "cell_runs": {row["run_id"]: {"run_id": row["run_id"], "state": "complete"} for row in rows}}
+    identities = {row["run_id"]: {"behavior_tree_sha256": "a" * 64, "config_hash": "b" * 64, "baseline": "baseline-v2", "plan_sha256": "c" * 64, "actual_model": "gpt-5.6-sol"} for row in rows}
+    report = summarize_audited_iteration3_results(
+        rows, baseline=baseline, manifest=manifest, cell_identities=identities,
+        audit_runs=audit_runs, reporter_behavior_tree_sha256="d" * 64,
+        reporter_commit="e" * 40, confirmed=True,
+    )
+    assert report["categories"]["full"]["E3"] == {"count": 12, "total": 12}
+    assert report["categories"]["specificity_reduction"]["E4"] == {"count": 4, "total": 4}
+    assert report["infrastructure"]["formal_attempts"] == 29
+    assert report["infrastructure"]["active_runs"] == 24
+    assert report["infrastructure"]["superseded_infra_attempts"] == 5
+    assert report["frozen_behavior_tree_sha256"] == "a" * 64
+    assert report["reporter_behavior_tree_sha256"] == "d" * 64
+    assert report["reporter_commit"] == "e" * 40
+    assert report["report_only_hotfix"] is True
 
 
 def test_comparison_reports_transitions_categories_and_full_regression():

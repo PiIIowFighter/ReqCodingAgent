@@ -125,27 +125,38 @@ def main(argv: list[str] | None = None) -> int:
                 iteration = args.iteration
                 baseline_root = settings.project_root / "configs/frozen" / args.name
                 formal_root = settings.artifact_root / f"runs/iteration{iteration}/formal" / args.name
-                if iteration == 3 and args.allow_report_only_hotfix:
-                    raise EvalError("iteration3 has no authorized report-only hotfix", category="invalid")
                 if args.allow_report_only_hotfix:
                     if not args.confirm:
                         raise EvalError("report-only hotfix requires --confirm", category="invalid")
                     from .evidence import verify_active_audit_runs, verify_audit_index_metadata
                     reporter_commit = verify_git_gate(settings.project_root)
                     frozen = verify_frozen_baseline(baseline_root)
-                    verify_formal_plan(frozen["plan"], [record for record in load_public_records(settings.project_root) if record["split"] == "test"])
+                    records = [record for record in load_public_records(settings.project_root) if record["split"] == "test"]
+                    if iteration == 3:
+                        from .iteration3 import summarize_audited_iteration3_results, verify_iteration3_plan
+                        verify_iteration3_plan(frozen["plan"], records)
+                    else:
+                        verify_formal_plan(frozen["plan"], records)
                     manifest_path = formal_root / "experiment-manifest.json"
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], manifest_path)
-                    if any(verify_active_audit_runs(settings.project_root, iteration=2).values()) or verify_audit_index_metadata(settings.project_root, iteration=2):
+                    raw_root = settings.artifact_root / f"runs/iteration{iteration}"
+                    rows = load_formal_results(settings.project_root, raw_root, frozen["plan"], manifest_path, iteration=iteration)
+                    if any(verify_active_audit_runs(settings.project_root, iteration=iteration).values()) or verify_audit_index_metadata(settings.project_root, iteration=iteration):
                         raise EvalError("report-only hotfix requires valid audit evidence", category="invalid")
-                    identities = audited_formal_cell_identities(settings.project_root, settings.artifact_root / "runs/iteration2", rows, frozen["baseline"], manifest)
-                    audit_index = json.loads((settings.project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
-                    report = summarize_audited_formal_results(
-                        rows, baseline=frozen["baseline"], manifest=manifest, cell_identities=identities,
-                        reporter_behavior_tree_sha256=behavior_tree_hash(settings.project_root), reporter_commit=reporter_commit,
-                        allow_report_only_hotfix=True, confirmed=True, audit_runs=audit_index["runs"],
-                    )
+                    identities = audited_formal_cell_identities(settings.project_root, raw_root, rows, frozen["baseline"], manifest)
+                    audit_index = json.loads((settings.project_root / f"audit/iteration{iteration}/index.json").read_text(encoding="utf-8"))
+                    if iteration == 3:
+                        report = summarize_audited_iteration3_results(
+                            rows, baseline=frozen["baseline"], manifest=manifest, cell_identities=identities,
+                            reporter_behavior_tree_sha256=behavior_tree_hash(settings.project_root), reporter_commit=reporter_commit,
+                            confirmed=True, audit_runs=audit_index["runs"],
+                        )
+                    else:
+                        report = summarize_audited_formal_results(
+                            rows, baseline=frozen["baseline"], manifest=manifest, cell_identities=identities,
+                            reporter_behavior_tree_sha256=behavior_tree_hash(settings.project_root), reporter_commit=reporter_commit,
+                            allow_report_only_hotfix=True, confirmed=True, audit_runs=audit_index["runs"],
+                        )
                 else:
                     frozen = verify_frozen_baseline(baseline_root, project_root=settings.project_root)
                     rows = load_formal_results(

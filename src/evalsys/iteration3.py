@@ -59,12 +59,74 @@ def summarize_iteration3_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
     from .iteration2 import summarize_formal_results
 
     legacy = summarize_formal_results(rows)
+    categories = {
+        category: {
+            "E3": values["E1"],
+            "E4": values["E2"],
+        }
+        for category, values in legacy["categories"].items()
+    }
     return {
-        **{key: value for key, value in legacy.items() if key not in {"E1_resolved", "E2_resolved", "absolute_drop"}},
+        **{key: value for key, value in legacy.items() if key not in {"E1_resolved", "E2_resolved", "absolute_drop", "categories"}},
         "E3_resolved": legacy["E1_resolved"],
         "E4_resolved": legacy["E2_resolved"],
         "absolute_drop": legacy["absolute_drop"],
+        "categories": categories,
         "experiment_labels": {"full": "E3", "fuzzy": "E4"},
+    }
+
+
+def summarize_audited_iteration3_results(
+    rows: list[dict[str, Any]], *, baseline: dict[str, Any], manifest: dict[str, Any],
+    cell_identities: dict[str, dict[str, Any]], audit_runs: list[dict[str, Any]],
+    reporter_behavior_tree_sha256: str, reporter_commit: str, confirmed: bool,
+) -> dict[str, Any]:
+    from .evidence import select_current_runs
+
+    if not confirmed:
+        raise EvalError("iteration3 report-only hotfix requires explicit confirmation", category="invalid")
+    tracked = manifest.get("cell_runs", {})
+    if len(tracked) != 24 or any(entry.get("state") != "complete" for entry in tracked.values()):
+        raise EvalError("iteration3 report-only hotfix requires 24 complete cells", category="invalid")
+    if manifest.get("baseline") != baseline.get("name") or manifest.get("plan_sha256") != baseline.get("plan_sha256") or manifest.get("behavior_tree_sha256") != baseline.get("behavior_tree_sha256"):
+        raise EvalError("iteration3 formal manifest differs from frozen baseline", category="invalid")
+    expected = {
+        "behavior_tree_sha256": baseline.get("behavior_tree_sha256"),
+        "config_hash": baseline.get("config_sha256"),
+        "baseline": baseline.get("name"),
+        "plan_sha256": baseline.get("plan_sha256"),
+        "actual_model": baseline.get("provider_identity", {}).get("actual_model"),
+    }
+    if set(cell_identities) != {row.get("run_id") for row in rows} or any(identity != expected for identity in cell_identities.values()):
+        raise EvalError("iteration3 active cell identity differs from frozen baseline", category="invalid")
+    formal_runs = [run for run in audit_runs if run.get("run_type") == "formal_cell"]
+    active = select_current_runs(formal_runs)
+    if {run["run_id"] for run in active} != {row["run_id"] for row in rows}:
+        raise EvalError("iteration3 audit leaves differ from report cells", category="invalid")
+    edges = [
+        {"run_id": run["run_id"], "supersedes": prior}
+        for run in formal_runs for prior in run.get("supersedes", [])
+    ]
+    by_id = {run["run_id"]: run for run in formal_runs}
+    if any(edge["supersedes"] not in by_id for edge in edges):
+        raise EvalError("iteration3 supersession history is incomplete", category="invalid")
+    report = summarize_iteration3_results(rows)
+    report["infrastructure"] = {
+        "infra_failures": sum(row.get("status") == "eval_infra_failed" for row in rows),
+        "formal_attempts": len(formal_runs),
+        "active_runs": len(active),
+        "superseded_runs": len({edge["supersedes"] for edge in edges}),
+        "superseded_infra_attempts": sum(by_id[edge["supersedes"]].get("status") == "eval_infra_failed" for edge in edges),
+        "supersession_edges": edges,
+    }
+    return {
+        **report,
+        "frozen_behavior_tree_sha256": baseline["behavior_tree_sha256"],
+        "reporter_behavior_tree_sha256": reporter_behavior_tree_sha256,
+        "reporter_commit": reporter_commit,
+        "report_only_hotfix": True,
+        "report_hotfix_reason": "Iteration3 labels and superseded infrastructure history are normalized from frozen raw evidence.",
+        "experimental_outcomes_provenance": "All outcomes were produced by baseline-v2; reporter code only aggregates immutable evidence.",
     }
 
 
