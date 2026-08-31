@@ -1285,20 +1285,14 @@ def test_execute_cleans_normal_temporary_clone(tmp_path: Path):
     subprocess.run(["git", "-C", str(repo), "add", "x"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True)
     raw = json.loads((ROOT / "configs/agent/offline-scripted.json").read_text(encoding="utf-8"))
-    slots = {name: {"value": "", "status": "unresolved", "evidence": [], "confidence": 0.0} for name in SLOT_NAMES}
-    evidence = [{"kind": "user_task", "reference": "task", "detail": "Explicit task statement"}]
-    for name, value in {"goal": "Complete the task", "expected_behavior": "The task is complete", "target_component": "x", "acceptance_criteria": "The task is complete"}.items():
-        slots[name] = {"value": value, "status": "explicit", "evidence": evidence, "confidence": 1.0}
-    baseline = {"ambiguity_types": [], "selected_skills": [], "slots": slots, "assumptions": [], "original_summary": "task", "refined_summary": "Complete the explicit task in x"}
     raw["script"] = [
-        {"text": "", "tool_calls": [{"call_id": "baseline", "name": "record_requirement_baseline", "arguments": baseline}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "one"},
-        {"text": "", "tool_calls": [{"call_id": "submit", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "two"},
+        {"text": "", "tool_calls": [{"call_id": "submit", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "one"},
     ]
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(raw), encoding="utf-8")
     config = AgentConfig.load(config_path)
     store = RunStore.create(tmp_path / "runs")
-    result = _execute(repo, "task", config, store)
+    result = _execute(repo, "In x, preserve the existing content exactly and verify the file remains unchanged with a focused check.", config, store)
     manifest = json.loads((store.path / "run-manifest.json").read_text(encoding="utf-8"))
     assert result.stop_reason == "submitted"
     assert not Path(manifest["workspace"]).exists()
