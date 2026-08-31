@@ -16,12 +16,44 @@ from reqagent.config import AgentConfig
 from reqagent.context import ContextLedger
 from reqagent.loop import AgentInterrupted, AgentLoop
 from reqagent.model import ModelMessage, ModelRequest, ModelResponse, NormalizedToolCall, ScriptedModel
+from reqagent.requirements import RequirementRefinementState, SLOT_NAMES
 from reqagent.tools import build_registry
 from reqagent.trace import RunStore
 from reqagent.workspace import GitWorkspace
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def refinement_checkpoint() -> dict:
+    return RequirementRefinementState("task").to_checkpoint()
+
+
+def approved_refinement_checkpoint() -> dict:
+    state = RequirementRefinementState("task")
+    passed, errors = state.record(explicit_baseline())
+    assert passed and not errors
+    state.context_injected = True
+    return state.to_checkpoint()
+
+
+def explicit_baseline() -> dict:
+    slots = {
+        name: {"value": "", "status": "unresolved", "evidence": [], "confidence": 0.0}
+        for name in SLOT_NAMES
+    }
+    evidence = [{"kind": "user_task", "reference": "task", "detail": "Explicit task statement"}]
+    for name, value in {
+        "goal": "Inspect the repository and finish the task",
+        "expected_behavior": "Complete the requested repository task",
+        "target_component": "hello.py",
+        "acceptance_criteria": "The requested task is completed",
+    }.items():
+        slots[name] = {"value": value, "status": "explicit", "evidence": evidence, "confidence": 1.0}
+    return {
+        "ambiguity_types": [], "selected_skills": [], "slots": slots, "assumptions": [],
+        "original_summary": "task", "refined_summary": "Complete the explicit task in hello.py",
+    }
 
 
 def test_context_compaction_preserves_system_task_and_recent_rounds():
@@ -55,7 +87,7 @@ def test_cli_resume_continues_incomplete_run_and_rejects_changed_workspace(tmp_p
     subprocess.run(["git", "-C", str(source), "commit", "-qm", "initial"], check=True)
     config = json.loads((ROOT / "configs/agent/offline-scripted.json").read_text(encoding="utf-8"))
     config["script"] = [
-        {"text": "", "tool_calls": [{"call_id": "1", "name": "read_file", "arguments": {"path": "hello.py"}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "1"},
+        {"text": "", "tool_calls": [{"call_id": "1", "name": "record_requirement_baseline", "arguments": explicit_baseline()}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "1"},
         {"text": "", "tool_calls": [{"call_id": "2", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "2"},
     ]
     config_path = tmp_path / "config.json"
@@ -71,10 +103,12 @@ def test_cli_resume_continues_incomplete_run_and_rejects_changed_workspace(tmp_p
     manifest = {"run_id": store.run_id, "source": str(source), "workspace": str(workspace.root), "task": "task", "base_commit": workspace.base_commit, "config_path": str(config_path)}
     (store.path / "run-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     loaded = AgentConfig.load(config_path)
-    registry = build_registry(workspace, loaded.raw, artifact_dir=store.path / "commands")
+    registry = build_registry(workspace, loaded.raw, artifact_dir=store.path / "commands", requirement_refinement=True, task="task")
     from reqagent.cli import _resume_identity
     registry.adapter_identity = model.identity
-    payload = {**_resume_identity(store, loaded, workspace, "task", registry), "next_state": "call_model", "steps": 1, "tool_calls": 0, "invalid_outputs": 0, "usage": {}, "messages": [message.to_dict() for message in ledger.messages], "context_window": 10000, "context_summary": ledger.summary.to_dict(), "adapter_position": 1, "budgets": loaded.budgets, "elapsed_seconds": 1.0, "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "tool_history": [], "pending_tool_calls": [], "next_tool_index": 0}
+    ledger.add(ModelMessage("tool", tool_results=({"call_id": "1", "ok": True},)))
+    ledger.add(ModelMessage("system", "RequirementBaseline: " + json.dumps(explicit_baseline(), sort_keys=True)))
+    payload = {**_resume_identity(store, loaded, workspace, "task", registry), "next_state": "call_model", "steps": 1, "tool_calls": 1, "invalid_outputs": 0, "usage": {}, "messages": [message.to_dict() for message in ledger.messages], "context_window": 10000, "context_summary": ledger.summary.to_dict(), "adapter_position": 1, "budgets": loaded.budgets, "elapsed_seconds": 1.0, "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "tool_history": [], "pending_tool_calls": [], "next_tool_index": 0, "requirement_refinement": approved_refinement_checkpoint()}
     CheckpointStore(store.path).save(1, payload)
     command = [sys.executable, "-m", "reqagent.cli", "resume", "--run-id", store.run_id, "--artifact-root", str(artifact_root), "--config", str(config_path)]
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
@@ -85,7 +119,7 @@ def test_cli_resume_continues_incomplete_run_and_rejects_changed_workspace(tmp_p
     refusal = RunStore.create(artifact_root)
     manifest["run_id"] = refusal.run_id
     (refusal.path / "run-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    refusal_registry = build_registry(workspace, loaded.raw, artifact_dir=refusal.path / "commands")
+    refusal_registry = build_registry(workspace, loaded.raw, artifact_dir=refusal.path / "commands", requirement_refinement=True, task="task")
     refusal_payload = {**payload, **_resume_identity(refusal, loaded, workspace, "task", refusal_registry)}
     CheckpointStore(refusal.path).save(1, refusal_payload)
     (workspace.root / "hello.py").write_text("changed\n", encoding="utf-8")
@@ -105,7 +139,7 @@ def test_resume_validation_rejects_identity_changes_looser_budget_and_state():
         "steps": 1, "tool_calls": 2, "invalid_outputs": 0, "usage": {"input_tokens": 4},
         "adapter_position": 2, "repeat_fingerprint": "repeat", "repeat_count": 1,
         "warnings": ["warn"], "messages": [], "context_summary": {}, "tool_history": [],
-        "pending_tool_calls": [], "next_tool_index": 0, "adapter_identity_hash": "adapter",
+        "pending_tool_calls": [], "next_tool_index": 0, "adapter_identity_hash": "adapter", "requirement_refinement": refinement_checkpoint(),
     }
     expected = {key: payload[key] for key in (
         "run_id", "source", "base_commit", "code_hash", "config_hash", "system_prompt_hash",
@@ -250,7 +284,7 @@ def test_resume_validation_rejects_pending_index_and_content_mismatch():
         "invalid_outputs": 0, "usage": {}, "adapter_position": 1,
         "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "context_summary": {},
         "tool_history": [], "pending_tool_calls": [call], "next_tool_index": 0,
-        "adapter_identity_hash": "adapter",
+        "adapter_identity_hash": "adapter", "requirement_refinement": refinement_checkpoint(),
         "messages": [{"role": "assistant", "text": "", "tool_calls": [call], "tool_results": []}],
     }
     expected = {key: payload[key] for key in (
