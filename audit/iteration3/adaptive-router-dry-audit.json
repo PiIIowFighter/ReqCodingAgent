@@ -32,5 +32,15 @@
     }
   },
   "router_signature": "route_task(task: str)",
-  "schema_version": "1.0"
+  "schema_version": "1.1",
+  "selected_skill_counts": {
+    "full": {
+      "omission_recovery": 1
+    },
+    "fuzzy": {
+      "omission_recovery": 7,
+      "reference_resolution": 4,
+      "specificity_expansion": 7
+    }
+  }
 }

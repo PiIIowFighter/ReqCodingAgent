@@ -13,6 +13,7 @@ from reqagent.adaptive import (
     rank_candidates,
     route_task,
 )
+from reqagent.checkpoint import CheckpointStore, canonical_hash
 from reqagent.config import AgentConfig
 from reqagent.context import ContextLedger
 from reqagent.loop import AgentLoop
@@ -102,6 +103,24 @@ def test_fast_path_first_request_matches_frozen_baseline_v1_golden(tmp_path: Pat
     assert cfg.budgets["max_steps"] == 30 and cfg.budgets["max_tool_calls"] == 60
 
 
+def test_router_selects_distinct_runtime_skill_instructions_from_task_only():
+    reference = AdaptiveRefinementState("Fix it so this related handling works.")
+    specificity = AdaptiveRefinementState("Improve parsing behavior correctly without changing valid values.")
+    assert reference.route.selected_skills != specificity.route.selected_skills
+    assert "reference_resolution" in reference.route.selected_skills
+    assert "specificity_expansion" in specificity.route.selected_skills
+    reference_instruction = reference.refinement_instruction()
+    specificity_instruction = specificity.refinement_instruction()
+    assert reference_instruction != specificity_instruction
+    for state, instruction in ((reference, reference_instruction), (specificity, specificity_instruction)):
+        for skill_id in state.route.selected_skills:
+            policy = evidence_policy(skill_id)
+            assert skill_id in instruction
+            assert all(item in instruction for item in policy["evidence_order"])
+            assert all(item in instruction for item in policy["required_outputs"])
+        assert "ontology" not in instruction.lower()
+
+
 def test_ambiguous_task_registers_only_compact_refinement(tmp_path: Path):
     state = AdaptiveRefinementState("Improve the related handling correctly.")
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task=state.task)
@@ -114,14 +133,25 @@ def test_ambiguous_task_registers_only_compact_refinement(tmp_path: Path):
 
 def test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
+    assert [tool.name for tool in registry.definitions] == ["list_files", "read_file", "search_text", "record_requirement_brief"]
+    for hidden_name, arguments in (
+        ("apply_patch", {"patch": ""}),
+        ("run_command", {"command": "true"}),
+        ("submit", {"summary": "early", "tests": [], "limitations": ""}),
+        ("reflect_on_patch", {"decision": "accept", "reason": "too early"}),
+    ):
+        result = registry.execute(hidden_name, arguments)
+        assert not result.ok and result.error["kind"] == "inactive_tool"
     rejected = registry.execute("record_requirement_brief", brief(["E999"]))
     assert not rejected.ok and rejected.error["kind"] == "requirement_gate"
     read = registry.execute("read_file", {"path": "parser.py"})
     evidence_id = read.meta["evidence_id"]
     accepted = registry.execute("record_requirement_brief", brief([evidence_id]))
     assert accepted.ok
-    assert "record_requirement_brief" not in {definition.name for definition in registry.definitions}
+    assert [tool.name for tool in registry.definitions] == ["list_files", "read_file", "search_text", "apply_patch", "run_command", "submit"]
+    assert not registry.execute("record_requirement_brief", brief([evidence_id])).ok
     assert len(registry.adaptive.brief_message().encode()) <= 3072
+    assert "refinement is complete" in registry.adaptive.brief_message().lower()
 
 
 def test_skill_policies_and_candidate_rerank_are_executable():
@@ -139,6 +169,9 @@ def test_reflection_can_reopen_once_and_checkpoint_restores_state(tmp_path: Path
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
     assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
+    registry.adaptive.observe_tool("apply_patch", True, None, True)
+    registry.adaptive.observe_tool("run_command", False, {"kind": "nonzero_exit"}, False)
+    assert [tool.name for tool in registry.definitions] == ["reflect_on_patch"]
     revision = registry.execute("reflect_on_patch", {"decision": "revise", "reason": "Focused test contradicts the chosen interpretation."})
     assert revision.ok and registry.adaptive.revision_count == 1
     assert "record_requirement_brief" in {definition.name for definition in registry.definitions}
@@ -168,6 +201,42 @@ def test_checkpoint_restores_approved_schema_and_phase_usage(tmp_path: Path):
     assert trace["usage_by_phase"]["router"] == {}
     assert trace["usage"] == {"input_tokens": 18, "output_tokens": 5}
     assert trace["steps_by_phase"]["main"] == 0
+
+
+def test_persisted_checkpoint_restores_dynamic_schema_and_fail_open(tmp_path: Path):
+    task = "Improve the related handling correctly."
+    registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task=task)
+    evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
+    assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
+    payload = {"adaptive": registry.adaptive.to_checkpoint(), "schema_hash": canonical_hash([tool.__dict__ for tool in registry.definitions]), "tool_history": registry.history}
+    run = tmp_path / "checkpoint-run"
+    run.mkdir()
+    store = CheckpointStore(run)
+    store.save(1, payload)
+    loaded = store.load()
+    restored = build_registry(repository(tmp_path / "persisted"), config().raw, requirement_refinement="auto", task=task)
+    restored.adaptive.restore(loaded["adaptive"])
+    assert canonical_hash([tool.__dict__ for tool in restored.definitions]) == loaded["schema_hash"]
+    assert "record_requirement_brief" not in {tool.name for tool in restored.definitions}
+    assert restored.adaptive.evidence == registry.adaptive.evidence
+    assert len(loaded["tool_history"]) == len(registry.history)
+
+    fallback = build_registry(repository(tmp_path / "fallback"), config().raw, requirement_refinement="auto", task=task)
+    original_route = fallback.adaptive.route
+    fallback.adaptive.fail_open_refinement("model error")
+    fallback_payload = {"adaptive": fallback.adaptive.to_checkpoint(), "schema_hash": canonical_hash([tool.__dict__ for tool in fallback.definitions]), "tool_history": []}
+    fallback_run = tmp_path / "fallback-run"
+    fallback_run.mkdir()
+    fallback_store = CheckpointStore(fallback_run)
+    fallback_store.save(1, fallback_payload)
+    loaded_fallback = fallback_store.load()
+    resumed_fallback = build_registry(repository(tmp_path / "fallback-resumed"), config().raw, requirement_refinement="auto", task=task)
+    resumed_fallback.adaptive.restore(loaded_fallback["adaptive"])
+    assert resumed_fallback.adaptive.route == original_route
+    assert resumed_fallback.adaptive.phase == "coding"
+    assert resumed_fallback.adaptive.schema_removed is True
+    assert resumed_fallback.adaptive.fallback_reason == "model error"
+    assert canonical_hash([tool.__dict__ for tool in resumed_fallback.definitions]) == loaded_fallback["schema_hash"]
 
 
 def test_reflection_only_appears_after_refined_patch_contradiction(tmp_path: Path):

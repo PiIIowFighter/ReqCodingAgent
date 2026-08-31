@@ -46,7 +46,9 @@ def test_single_cell_smoke_scheduler_does_not_require_a_pair():
     assert single_cell_waves([cell]) == [[cell]]
 
 
-def test_iteration3_uses_independent_roots_and_specificity_smoke_cell(tmp_path: Path):
+def test_iteration3_uses_independent_roots_and_refined_smoke_cell(tmp_path: Path):
+    from reqagent.adaptive import route_task
+
     roots = iteration_roots(tmp_path)
     assert ITERATION == 3
     assert roots == {
@@ -54,9 +56,11 @@ def test_iteration3_uses_independent_roots_and_specificity_smoke_cell(tmp_path: 
         "audit": tmp_path / "audit/iteration3",
     }
     cell = development_smoke_cell(records())
-    assert cell["case_id"] == "D-S1-fuzzy"
+    assert cell["case_id"] == "D-O1-fuzzy"
     assert cell["prompt_variant"] == "fuzzy"
-    assert cell["ambiguity_type"] == "specificity_reduction"
+    decision = route_task(cell["prompt"])
+    assert decision.mode == "refine"
+    assert decision.selected_skills
 
 
 def test_iteration3_plan_preserves_frozen_cells_and_relables_experiments():
@@ -74,7 +78,8 @@ def test_requirement_snapshot_payloads_are_separate_and_versioned():
     payloads = requirement_snapshot_payloads()
     assert set(payloads) == {"requirement-ontology.json", "skill-catalog.json", "reflection-gate.json"}
     assert payloads["requirement-ontology.json"]["version"] == "coding-requirement-ontology-v1"
-    assert len(payloads["skill-catalog.json"]) == 3
+    assert payloads["skill-catalog.json"]["max_selected_skills"] == 2
+    assert set(payloads["skill-catalog.json"]["policies"]) == {"omission_recovery", "reference_resolution", "specificity_expansion"}
     assert payloads["reflection-gate.json"]["max_selected_skills"] == 2
 
 
