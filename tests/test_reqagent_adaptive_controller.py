@@ -184,6 +184,45 @@ def test_reflection_can_reopen_once_and_checkpoint_restores_state(tmp_path: Path
     assert restored.reflection["decision"] == "accept"
 
 
+def test_reflection_revision_resets_failed_synthesis_for_fresh_bounded_cycle():
+    state = AdaptiveRefinementState("Improve the related handling correctly.")
+    stale_evidence = state.add_evidence("read_file", {"path": "parser.py", "start_line": 1, "end_line": 2})
+    accepted, errors = state.record_brief(brief([stale_evidence]))
+    assert accepted and not errors
+    state.investigation_response_count = 2
+    state.investigation_tool_count = 5
+    state.synthesis_response_count = 1
+    state.synthesis_tool_count = 1
+    state.fail_open_refinement("invalid synthesis brief")
+    state.observe_tool("apply_patch", True, None, True)
+    state.observe_tool("run_command", False, {"kind": "nonzero_exit"}, False)
+    assert state.phase == "reflection"
+
+    accepted, error = state.reflect("revise", "Validation contradicts the failed synthesis.")
+
+    assert accepted and not error
+    assert state.phase == "refining"
+    assert state.refinement_stage == "investigating"
+    assert state.evidence == {}
+    assert state.brief is None
+    assert state.ranked_candidates == []
+    assert state.requires_reflection is False
+    assert state.contradiction_reason == ""
+    assert state.investigation_response_count == 0
+    assert state.investigation_tool_count == 0
+    assert state.synthesis_response_count == 0
+    assert state.synthesis_tool_count == 0
+    assert state.reflection_count == state.revision_count == 1
+
+    replacement_evidence = state.add_evidence("read_file", {"path": "parser.py", "start_line": 1, "end_line": 3})
+    state.transition_to_synthesis()
+    accepted, errors = state.record_brief(brief([replacement_evidence]))
+    assert accepted and not errors
+    assert state.phase == "coding"
+    assert state.refinement_stage == "complete"
+    assert state.brief is not None
+
+
 def test_checkpoint_restores_approved_schema_and_phase_usage(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
