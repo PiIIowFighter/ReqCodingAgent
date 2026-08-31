@@ -108,7 +108,7 @@ def test_cli_resume_continues_incomplete_run_and_rejects_changed_workspace(tmp_p
     registry.adapter_identity = model.identity
     ledger.add(ModelMessage("tool", tool_results=({"call_id": "1", "ok": True},)))
     ledger.add(ModelMessage("system", "RequirementBaseline: " + json.dumps(explicit_baseline(), sort_keys=True)))
-    payload = {**_resume_identity(store, loaded, workspace, "task", registry), "next_state": "call_model", "steps": 1, "tool_calls": 1, "invalid_outputs": 0, "usage": {}, "messages": [message.to_dict() for message in ledger.messages], "context_window": 10000, "context_summary": ledger.summary.to_dict(), "adapter_position": 1, "budgets": loaded.budgets, "elapsed_seconds": 1.0, "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "tool_history": [], "pending_tool_calls": [], "next_tool_index": 0, "requirement_refinement": approved_refinement_checkpoint(), "adaptive_refinement": None}
+    payload = {**_resume_identity(store, loaded, workspace, "task", registry), "next_state": "call_model", "steps": 1, "tool_calls": 1, "invalid_outputs": 0, "usage": {}, "messages": [message.to_dict() for message in ledger.messages], "context_window": 10000, "context_summary": ledger.summary.to_dict(), "adapter_position": 1, "budgets": loaded.budgets, "elapsed_seconds": 1.0, "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "tool_history": [], "pending_tool_calls": [], "next_tool_index": 0, "pending_phase": None, "pending_refinement_stage": None, "closed_call_ids": ["1"], "requirement_refinement": approved_refinement_checkpoint(), "adaptive_refinement": None}
     CheckpointStore(store.path).save(1, payload)
     command = [sys.executable, "-m", "reqagent.cli", "resume", "--run-id", store.run_id, "--artifact-root", str(artifact_root), "--config", str(config_path)]
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
@@ -139,7 +139,7 @@ def test_resume_validation_rejects_identity_changes_looser_budget_and_state():
         "steps": 1, "tool_calls": 2, "invalid_outputs": 0, "usage": {"input_tokens": 4},
         "adapter_position": 2, "repeat_fingerprint": "repeat", "repeat_count": 1,
         "warnings": ["warn"], "messages": [], "context_summary": {}, "tool_history": [],
-        "pending_tool_calls": [], "next_tool_index": 0, "adapter_identity_hash": "adapter", "requirement_refinement": refinement_checkpoint(), "adaptive_refinement": None,
+        "pending_tool_calls": [], "next_tool_index": 0, "pending_phase": None, "pending_refinement_stage": None, "closed_call_ids": [], "adapter_identity_hash": "adapter", "requirement_refinement": refinement_checkpoint(), "adaptive_refinement": None,
     }
     expected = {key: payload[key] for key in (
         "run_id", "source", "base_commit", "code_hash", "config_hash", "system_prompt_hash",
@@ -284,6 +284,7 @@ def test_resume_validation_rejects_pending_index_and_content_mismatch():
         "invalid_outputs": 0, "usage": {}, "adapter_position": 1,
         "repeat_fingerprint": None, "repeat_count": 0, "warnings": [], "context_summary": {},
         "tool_history": [], "pending_tool_calls": [call], "next_tool_index": 0,
+        "pending_phase": "main", "pending_refinement_stage": None, "closed_call_ids": [],
         "adapter_identity_hash": "adapter", "requirement_refinement": refinement_checkpoint(), "adaptive_refinement": None,
         "messages": [{"role": "assistant", "text": "", "tool_calls": [call], "tool_results": []}],
     }
