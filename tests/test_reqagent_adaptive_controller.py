@@ -9,6 +9,7 @@ import pytest
 
 from reqagent.adaptive import (
     AdaptiveRefinementState,
+    brief_schema,
     evidence_policy,
     rank_candidates,
     route_task,
@@ -126,14 +127,15 @@ def test_ambiguous_task_registers_only_compact_refinement(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task=state.task)
     definitions = {definition.name: definition for definition in registry.definitions}
     assert registry.adaptive.route.mode == "refine"
-    assert "record_requirement_brief" in definitions
-    assert "record_requirement_baseline" not in definitions
-    assert len(json.dumps(definitions["record_requirement_brief"].input_schema, separators=(",", ":")).encode()) < 3072
+    assert set(definitions) == {"list_files", "read_file", "search_text"}
+    schemas = {definition.name: definition for definition in registry.schema_definitions}
+    assert "record_requirement_baseline" not in schemas
+    assert len(json.dumps(schemas["record_requirement_brief"].input_schema, separators=(",", ":")).encode()) < 3072
 
 
 def test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
-    assert [tool.name for tool in registry.definitions] == ["list_files", "read_file", "search_text", "record_requirement_brief"]
+    assert [tool.name for tool in registry.definitions] == ["list_files", "read_file", "search_text"]
     for hidden_name, arguments in (
         ("apply_patch", {"patch": ""}),
         ("run_command", {"command": "true"}),
@@ -142,16 +144,31 @@ def test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears(t
     ):
         result = registry.execute(hidden_name, arguments)
         assert not result.ok and result.error["kind"] == "inactive_tool"
-    rejected = registry.execute("record_requirement_brief", brief(["E999"]))
-    assert not rejected.ok and rejected.error["kind"] == "requirement_gate"
     read = registry.execute("read_file", {"path": "parser.py"})
     evidence_id = read.meta["evidence_id"]
+    registry.adaptive.transition_to_synthesis()
+    rejected = registry.execute("record_requirement_brief", brief(["E999"]))
+    assert not rejected.ok and rejected.error["kind"] == "requirement_gate"
     accepted = registry.execute("record_requirement_brief", brief([evidence_id]))
     assert accepted.ok
     assert [tool.name for tool in registry.definitions] == ["list_files", "read_file", "search_text", "apply_patch", "run_command", "submit"]
     assert not registry.execute("record_requirement_brief", brief([evidence_id])).ok
     assert len(registry.adaptive.brief_message().encode()) <= 3072
     assert "refinement is complete" in registry.adaptive.brief_message().lower()
+
+
+def test_brief_schema_explains_deterministic_top_ranked_interpretation():
+    description = brief_schema()["properties"]["chosen_interpretation"]["description"]
+    assert "top-ranked" in description.lower()
+    assert "replaced" in description.lower()
+
+    state = AdaptiveRefinementState("Improve the related handling correctly.")
+    evidence_id = state.add_evidence("read_file", {"path": "parser.py"})
+    value = brief([evidence_id])
+    accepted, errors = state.record_brief(value)
+    assert accepted and not errors
+    assert value["chosen_interpretation"] != value["candidates"][0]["interpretation"]
+    assert state.brief["chosen_interpretation"] == value["candidates"][0]["interpretation"]
 
 
 def test_skill_policies_and_candidate_rerank_are_executable():
@@ -168,13 +185,14 @@ def test_skill_policies_and_candidate_rerank_are_executable():
 def test_reflection_can_reopen_once_and_checkpoint_restores_state(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
+    registry.adaptive.transition_to_synthesis()
     assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
     registry.adaptive.observe_tool("apply_patch", True, None, True)
     registry.adaptive.observe_tool("run_command", False, {"kind": "nonzero_exit"}, False)
     assert [tool.name for tool in registry.definitions] == ["reflect_on_patch"]
     revision = registry.execute("reflect_on_patch", {"decision": "revise", "reason": "Focused test contradicts the chosen interpretation."})
     assert revision.ok and registry.adaptive.revision_count == 1
-    assert "record_requirement_brief" in {definition.name for definition in registry.definitions}
+    assert {definition.name for definition in registry.definitions} == {"list_files", "read_file", "search_text"}
     checkpoint = registry.adaptive.to_checkpoint()
     restored = AdaptiveRefinementState(registry.adaptive.task)
     restored.restore(checkpoint)
@@ -226,6 +244,7 @@ def test_reflection_revision_resets_failed_synthesis_for_fresh_bounded_cycle():
 def test_checkpoint_restores_approved_schema_and_phase_usage(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
+    registry.adaptive.transition_to_synthesis()
     assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
     registry.adaptive.add_usage("refinement", {"input_tokens": 7, "output_tokens": 2})
     registry.adaptive.add_usage("main", {"input_tokens": 11, "output_tokens": 3})
@@ -246,6 +265,7 @@ def test_persisted_checkpoint_restores_dynamic_schema_and_fail_open(tmp_path: Pa
     task = "Improve the related handling correctly."
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task=task)
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
+    registry.adaptive.transition_to_synthesis()
     assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
     payload = {"adaptive": registry.adaptive.to_checkpoint(), "schema_hash": canonical_hash([tool.__dict__ for tool in registry.definitions]), "tool_history": registry.history}
     run = tmp_path / "checkpoint-run"
@@ -281,6 +301,7 @@ def test_persisted_checkpoint_restores_dynamic_schema_and_fail_open(tmp_path: Pa
 def test_reflection_only_appears_after_refined_patch_contradiction(tmp_path: Path):
     registry = build_registry(repository(tmp_path), config().raw, requirement_refinement="auto", task="Improve the related handling correctly.")
     evidence_id = registry.execute("read_file", {"path": "parser.py"}).meta["evidence_id"]
+    registry.adaptive.transition_to_synthesis()
     assert registry.execute("record_requirement_brief", brief([evidence_id])).ok
     assert "reflect_on_patch" not in {definition.name for definition in registry.definitions}
     registry.adaptive.observe_tool("apply_patch", True, None, True)

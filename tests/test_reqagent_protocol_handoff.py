@@ -103,11 +103,33 @@ def test_protocol_validator_rejects_orphan_duplicate_and_unknown_results():
             raise AssertionError("invalid protocol accepted")
 
 
+def test_investigating_batch_closes_brief_without_execution_and_preserves_evidence_budget(tmp_path: Path):
+    calls = [("early", "record_requirement_brief", brief(["E001"]))] + [
+        (f"e{index}", "read_file", {"path": "code.py", "start_line": 1, "end_line": index}) for index in range(1, 7)
+    ]
+    loop, registry, _, store = run_loop(tmp_path, [
+        response("investigation", calls),
+        response("synthesis", [("brief", "record_requirement_brief", brief([f"E{index:03d}" for index in range(1, 7)]))]),
+        response("submit", [("submit", "submit", {"summary": "done", "tests": [], "limitations": ""})]),
+    ])
+
+    result = loop.run()
+
+    assert result.stop_reason == "submitted"
+    assert len([item for item in registry.history if item["name"] == "record_requirement_brief"]) == 1
+    assert len([item for item in registry.history if item["name"] == "read_file"]) == 6
+    assert registry.adaptive.investigation_tool_count == 6
+    events = [json.loads(line) for line in (store.path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    early = next(event for event in events if event.get("kind") == "protocol_closure" and event.get("call_id") == "early")
+    assert early["error_kind"] == "wrong_stage"
+
+
 def test_brief_transition_closes_remaining_old_phase_calls_without_execution(tmp_path: Path):
     loop, registry, _, store = run_loop(tmp_path, [
-        response("read", [("read", "read_file", {"path": "code.py"})]),
+        response("read-1", [("read-1", "read_file", {"path": "code.py"})]),
+        response("read-2", [("read-2", "read_file", {"path": "code.py", "end_line": 2})]),
         response("brief", [
-            ("brief", "record_requirement_brief", brief(["E001"])),
+            ("brief", "record_requirement_brief", brief(["E001", "E002"])),
             ("late", "read_file", {"path": "code.py"}),
         ]),
         response("submit", [("submit", "submit", {"summary": "done", "tests": [], "limitations": ""})]),
@@ -116,7 +138,7 @@ def test_brief_transition_closes_remaining_old_phase_calls_without_execution(tmp
     events = [json.loads(line) for line in (store.path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     late = next(event for event in events if event.get("kind") == "protocol_closure" and event.get("call_id") == "late")
     assert late["error_kind"] == "phase_transition"
-    assert len([item for item in registry.history if item["name"] == "read_file"]) == 1
+    assert len([item for item in registry.history if item["name"] == "read_file"]) == 2
 
 
 def test_investigation_threshold_switches_to_synthesis_brief_only(tmp_path: Path):
@@ -135,7 +157,7 @@ def test_investigation_threshold_switches_to_synthesis_brief_only(tmp_path: Path
     loop, registry, _, _ = run_loop(tmp_path, [response("placeholder", [])])
     loop.adapter = CaptureAdapter()
     loop.run()
-    assert captured[0] == ["list_files", "read_file", "search_text", "record_requirement_brief"]
+    assert captured[0] == ["list_files", "read_file", "search_text"]
     assert captured[1] == captured[0]
     assert captured[2] == ["record_requirement_brief"]
     assert registry.adaptive.refinement_stage == "complete"
