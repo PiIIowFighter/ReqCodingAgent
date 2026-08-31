@@ -88,15 +88,19 @@ def verify_freeze_behavior_provenance(
     if not provenance:
         return
     reporter_commit = provenance.get("freeze_reporter_commit")
-    head = subprocess.run(
-        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
-        capture_output=True, check=False, text=True, encoding="utf-8", errors="replace",
+    ancestry = subprocess.run(
+        ["git", "-C", str(project_root), "merge-base", "--is-ancestor", str(reporter_commit), "HEAD"],
+        capture_output=True, check=False,
     )
-    if head.returncode or head.stdout.strip() != reporter_commit:
-        raise EvalError("freeze reporter commit does not match current HEAD", category="invalid")
+    if ancestry.returncode:
+        raise EvalError("freeze reporter commit is not an ancestor of current HEAD", category="invalid")
     if provenance.get("current_behavior_tree_sha256") != current_behavior_hash:
         raise EvalError("freeze provenance does not match current formal runtime code", category="invalid")
-    if provenance.get("agent_package_sha256") != _agent_package_hash(project_root, reporter_commit):
+    agent_hash = provenance.get("agent_package_sha256")
+    if (
+        agent_hash != _agent_package_hash(project_root, reporter_commit)
+        or agent_hash != _agent_package_hash(project_root, "HEAD")
+    ):
         raise EvalError("freeze provenance Agent package mismatch", category="invalid")
 
 
