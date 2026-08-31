@@ -547,6 +547,28 @@ def load_provider_identity(project_root: Path, summary_path: str, *, expected_en
     }
 
 
+def resolve_runtime_provider_identity(project_root: Path, identity: dict[str, Any]) -> dict[str, Any]:
+    """Restore a redacted credential binding from its audited capability receipt."""
+    if identity.get("api_key_env") != "[REDACTED]":
+        return identity
+    evidence_path = identity.get("capability_evidence")
+    if not isinstance(evidence_path, str):
+        raise EvalError("provider capability evidence is unavailable", category="invalid")
+    try:
+        audited = load_provider_identity(
+            project_root, evidence_path, expected_endpoint_sha256=identity.get("endpoint_sha256"),
+        )
+    except EvalError as exc:
+        raise EvalError("provider capability evidence cannot restore a unique binding", category="invalid") from exc
+    binding_fields = (
+        "provider", "protocol", "configured_model", "actual_model", "endpoint_sha256",
+        "base_url_env", "temperature", "seed",
+    )
+    if any(identity.get(field) != audited.get(field) for field in binding_fields):
+        raise EvalError("provider capability evidence does not match provider identity", category="invalid")
+    return {**identity, "api_key_env": audited["api_key_env"]}
+
+
 def freeze_baseline(
     project_root: Path, name: str, config: dict[str, Any], records: list[dict[str, Any]], *,
     development: dict[str, Any] | None, image_identities: dict[str, Any],
@@ -671,6 +693,7 @@ def freeze_baseline(
         raise EvalError("development harness environment receipt is missing", category="invalid")
     from .harness_environment import verify_harness_environment_receipt
     verify_harness_environment_receipt(project_root, harness_environment)
+    provider_identity = resolve_runtime_provider_identity(project_root, provider_identity)
     verify_runtime_provider(provider_identity)
     if any(cell.get("actual_model") != provider_identity["actual_model"] for cell in cells):
         raise EvalError("development cell actual model mismatch", category="invalid")
