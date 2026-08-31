@@ -559,7 +559,9 @@ def freeze_baseline(
     if not development or len(development.get("source_run_ids", [])) != expected_count:
         raise EvalError("required development evidence is incomplete", category="invalid")
     if iteration == 3:
-        expected_cells = [("D-S1-fuzzy", "scikit-learn__scikit-learn-14983", "fuzzy")]
+        from .iteration3 import development_smoke_cell
+        smoke_cell = development_smoke_cell(records)
+        expected_cells = [(smoke_cell["case_id"], smoke_cell["instance_id"], smoke_cell["prompt_variant"])]
         if development.get("scope") != "single_cell_smoke":
             raise EvalError("iteration3 freeze requires scope=single_cell_smoke", category="invalid")
     else:
