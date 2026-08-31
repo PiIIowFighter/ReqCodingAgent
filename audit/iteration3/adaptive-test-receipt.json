@@ -1,10 +1,10 @@
 {
-  "behavior_tree_sha256": "641a0a43b8c329184ab5d889a7444bd93bcd4d25a82f759247ab709ddeabde5a",
-  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_protocol_handoff.py tests/test_reqagent_adaptive_controller.py::test_fast_path_first_request_matches_frozen_baseline_v1_golden tests/test_reqagent_adaptive_controller.py::test_checkpoint_restores_approved_schema_and_phase_usage tests/test_reqagent_adaptive_controller.py::test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears tests/test_reqagent_adaptive_controller.py::test_reflection_revision_resets_failed_synthesis_for_fresh_bounded_cycle tests/test_reqagent_refinement.py tests/test_reqagent_recovery_handoff.py -q",
+  "behavior_tree_sha256": "4c9c445430af2cb32f951e8aa2fb8dab6d1f3e5f1224966417af0e0e733421a0",
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_adaptive_controller.py tests/test_reqagent_protocol_handoff.py tests/test_reqagent_recovery_handoff.py -q",
   "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
   "counts": {
     "deselected": 0,
-    "passed": 23,
+    "passed": 29,
     "skipped": 0
   },
   "exit_code": 0,
