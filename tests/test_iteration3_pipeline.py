@@ -191,6 +191,99 @@ def test_formal_gate_resume_accepts_evidence_only_descendant(tmp_path: Path):
     assert provenance["reporter_commit"] == frozen_commit
 
 
+def test_formal_plan_resume_preserves_manifest_provenance_before_verification(tmp_path: Path, monkeypatch):
+    import evalsys.iteration2 as iteration2
+    import evalsys.iteration3 as iteration3
+
+    plan = [{"sequence": 1, "case_id": "T-1", "instance_id": "one", "variant": "full"}]
+    baseline = {
+        "name": "baseline-v3", "plan_sha256": "p" * 64,
+        "agent_code_commit": "a" * 40, "behavior_tree_sha256": "b" * 64,
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 1,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+    }
+    frozen = {"baseline": baseline, "plan": plan}
+    root = tmp_path / "artifacts/runs/iteration3/formal/baseline-v3"
+    old_provenance = {"drift_mode": "formal_gate_hotfix", "reporter_commit": "1" * 40}
+    manifest = {
+        "schema_version": "1.0", "baseline": "baseline-v3", "plan_sha256": "p" * 64,
+        "cells": 24, "plan": plan, "agent_code_commit": "a" * 40,
+        "behavior_tree_sha256": "b" * 64, "formal_gate_provenance": old_provenance,
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 1,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+        "cell_runs": {},
+    }
+    root.mkdir(parents=True)
+    manifest_path = root / "experiment-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+    original = manifest_path.read_bytes()
+    settings = type("Settings", (), {
+        "project_root": tmp_path, "artifact_root": tmp_path / "artifacts",
+        "docker_prefix": lambda self, platform: [],
+    })()
+    monkeypatch.setattr(iteration2, "verify_frozen_baseline", lambda *args, **kwargs: frozen)
+    monkeypatch.setattr(iteration2, "load_public_records", lambda project: [{"split": "test", "case_id": "T-1"}])
+    monkeypatch.setattr(iteration3, "verify_iteration3_plan", lambda plan, records: None)
+    monkeypatch.setattr(iteration3, "resolve_formal_gate_provenance", lambda *args, **kwargs: {
+        **old_provenance, "reporter_commit": "2" * 40,
+    })
+    verified = []
+    def verify_resume(*args, **kwargs):
+        verified.append(kwargs["manifest"]["formal_gate_provenance"])
+        raise RuntimeError("verified")
+    monkeypatch.setattr(iteration3, "verify_formal_gate_resume", verify_resume)
+
+    with pytest.raises(RuntimeError, match="verified"):
+        iteration2.run_formal_plan(
+            settings, "baseline-v3", object(), {}, resume=True, iteration=3,
+            allow_formal_gate_hotfix=True, reporter_commit="2" * 40,
+        )
+
+    assert verified == [old_provenance]
+    assert manifest_path.read_bytes() == original
+
+
+def test_formal_plan_non_resume_rejects_provenance_identity_mismatch(tmp_path: Path, monkeypatch):
+    import evalsys.iteration2 as iteration2
+    import evalsys.iteration3 as iteration3
+
+    plan = [{"sequence": 1, "case_id": "T-1", "instance_id": "one", "variant": "full"}]
+    baseline = {
+        "name": "baseline-v3", "plan_sha256": "p" * 64,
+        "agent_code_commit": "a" * 40, "behavior_tree_sha256": "b" * 64,
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 1,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+    }
+    frozen = {"baseline": baseline, "plan": plan}
+    root = tmp_path / "artifacts/runs/iteration3/formal/baseline-v3"
+    root.mkdir(parents=True)
+    (root / "experiment-manifest.json").write_text(json.dumps({
+        "schema_version": "1.0", "baseline": "baseline-v3", "plan_sha256": "p" * 64,
+        "cells": 24, "plan": plan, "agent_code_commit": "a" * 40,
+        "behavior_tree_sha256": "b" * 64,
+        "formal_gate_provenance": {"drift_mode": "formal_gate_hotfix", "reporter_commit": "1" * 40},
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 1,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+        "cell_runs": {},
+    }), encoding="utf-8")
+    settings = type("Settings", (), {
+        "project_root": tmp_path, "artifact_root": tmp_path / "artifacts",
+        "docker_prefix": lambda self, platform: [],
+    })()
+    monkeypatch.setattr(iteration2, "verify_frozen_baseline", lambda *args, **kwargs: frozen)
+    monkeypatch.setattr(iteration2, "load_public_records", lambda project: [{"split": "test", "case_id": "T-1"}])
+    monkeypatch.setattr(iteration3, "verify_iteration3_plan", lambda plan, records: None)
+    monkeypatch.setattr(iteration3, "resolve_formal_gate_provenance", lambda *args, **kwargs: {
+        "drift_mode": "formal_gate_hotfix", "reporter_commit": "2" * 40,
+    })
+
+    with pytest.raises(EvalError, match="manifest mismatch"):
+        iteration2.run_formal_plan(
+            settings, "baseline-v3", object(), {}, resume=False, iteration=3,
+            allow_formal_gate_hotfix=True, reporter_commit="2" * 40,
+        )
+
+
 def test_formal_gate_resume_rejects_changed_evalsys_runtime(tmp_path: Path):
     import subprocess
 
