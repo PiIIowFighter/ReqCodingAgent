@@ -1,0 +1,443 @@
+{
+  "agent_code_commit": "d6550b849c6fa62e732a2767547670cd10ed4345",
+  "authorization": {
+    "kind": "conditional_pre_authorization",
+    "statement": "User authorized automatic continuation only after every freeze gate passes; user did not manually inspect this generated hash."
+  },
+  "behavior_tree_sha256": "b98d57f2fe13dca9470387ab0313d3ed4691392fabc072ab8d7ac7b3735779c7",
+  "config": {
+    "budgets": {
+      "command_timeout_seconds": 300,
+      "context_trigger_ratio": 0.8,
+      "keep_recent_rounds": 2,
+      "max_consecutive_invalid_outputs": 3,
+      "max_retries": 3,
+      "max_steps": 30,
+      "max_tool_calls": 60,
+      "max_total_invalid_outputs": 6,
+      "model_timeout_seconds": 180,
+      "wall_clock_seconds": 1800
+    },
+    "mode": "live",
+    "model": {
+      "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "context_window_tokens": 32768,
+      "max_output_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "native_tool_calling": true,
+      "protocol": "anthropic_messages",
+      "provider": "local_reverse_proxy",
+      "seed": "unsupported",
+      "temperature": "unsupported"
+    },
+    "script": [],
+    "workspace": {
+      "container_image": "ubuntu@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d",
+      "max_patch_bytes": 131072,
+      "max_patch_files": 5,
+      "max_patch_lines": 500,
+      "protected_paths": []
+    }
+  },
+  "config_sha256": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+  "created_at": "2026-08-31T19:01:35.490997Z",
+  "dependency_lock_sha256": "42021e9f2ff4b820fc3309dd530bf5d45909630a17473f24d01bfe7ffdd741e5",
+  "development": {
+    "after": {
+      "median_steps": null,
+      "resolved": 1,
+      "stop_reasons": {},
+      "total_tokens": "[REDACTED]",
+      "wall_time_seconds": 1410.6719999999914
+    },
+    "before": {
+      "median_steps": null,
+      "resolved": null,
+      "stop_reasons": {},
+      "total_tokens": "[REDACTED]",
+      "wall_time_seconds": null
+    },
+    "cells": [
+      {
+        "actual_model": "gpt-5.6-sol",
+        "agent_tests": [
+          "PYTHONPATH=/workspace python tests/runtests.py httpwrappers.tests.HttpResponseTests.test_memoryview_content --verbosity 2 (passed)",
+          "PYTHONPATH=/workspace python tests/runtests.py httpwrappers --verbosity 1 (65 tests passed)",
+          "PYTHONPATH=/workspace python tests/runtests.py responses --verbosity 1 (32 tests passed)"
+        ],
+        "ambiguity_type": "omission",
+        "case_id": "D-O1-fuzzy",
+        "checksum": "473cc8e90949e48c5a7a7886a0c7db807d207d19a6b4098d7714f8a6cf10e3b5",
+        "evaluation": {
+          "base_commit": "879cc3da6249e920b8d54518a0ae06de835d7373",
+          "case_id": "D-O1-fuzzy",
+          "classification": "resolved",
+          "cleanup": {
+            "message": null,
+            "status": "passed"
+          },
+          "data_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+          "docker_image": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+          "ended_at": "2026-08-31T18:33:57.516633Z",
+          "error": null,
+          "fail_to_pass": {
+            "test_memoryview_content (httpwrappers.tests.HttpResponseTests)": "PASSED"
+          },
+          "harness_revision": "7a21e05772954cc81471ae19d56f436cecf43c54",
+          "instance_id": "django__django-11133",
+          "logs": {
+            "harness": "harness",
+            "stderr": "stderr.log",
+            "stdout": "stdout.log"
+          },
+          "mode": "agent",
+          "pass_to_pass": {
+            "#13572 - QueryDict with a non-default encoding": "PASSED",
+            "A copy of a QueryDict is mutable.": "PASSED",
+            "Make sure HttpResponseRedirect works with lazy strings.": "PASSED",
+            "Regression test for #8278: QueryDict.update(QueryDict)": "PASSED",
+            "Semicolons and commas are decoded.": "PASSED",
+            "Semicolons and commas are encoded.": "PASSED",
+            "Test QueryDict with one key/value pair": "[REDACTED]",
+            "Test QueryDict with two key/value pairs with same keys.": "[REDACTED]",
+            "test_basic_mutable_operations (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_cookie_edgecases (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_create_with_no_args (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_dict_behavior (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_duplicates_in_fromkeys_iterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_file_interface (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_fromkeys_empty_iterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_fromkeys_is_immutable_by_default (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_fromkeys_mutable_override (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_fromkeys_noniterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_fromkeys_with_nondefault_encoding (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_fromkeys_with_nonempty_value (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_headers_type (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_httponly_after_load (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_immutability (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_immutable_basic_operations (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_immutable_get_with_default (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_invalid_cookies (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_invalid_redirect_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_iter_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_iterator_isnt_rewound (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_json_response_custom_encoder (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_list (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_non_ascii (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_passing_arguments_to_json_dumps (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_raises_type_error_with_default_setting (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_text (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_json_response_uuid (httpwrappers.tests.JsonResponseTests)": "PASSED",
+            "test_lazy_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_load_dict (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_long_line (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_missing_key (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_mutable_delete (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_newlines_in_headers (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_non_string_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_nonstandard_keys (httpwrappers.tests.CookieTests)": "[REDACTED]",
+            "test_not_allowed (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_not_allowed_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_not_allowed_repr_no_content_type (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_not_modified (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_not_modified_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_pickle (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_pickle (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_python_cookies (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_querydict_fromkeys (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+            "test_redirect (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_redirect_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+            "test_repeated_nonstandard_keys (httpwrappers.tests.CookieTests)": "[REDACTED]",
+            "test_response (httpwrappers.tests.FileCloseTests)": "PASSED",
+            "test_samesite (httpwrappers.tests.CookieTests)": "PASSED",
+            "test_stream_interface (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_streaming_response (httpwrappers.tests.FileCloseTests)": "PASSED",
+            "test_streaming_response (httpwrappers.tests.StreamingHttpResponseTests)": "PASSED",
+            "test_unsafe_redirect (httpwrappers.tests.HttpResponseTests)": "PASSED",
+            "test_urlencode (httpwrappers.tests.QueryDictTests)": "PASSED",
+            "test_urlencode_int (httpwrappers.tests.QueryDictTests)": "PASSED"
+          },
+          "repo": "django/django",
+          "run_id": "20260831T181026974170Z_dev_cell_5040d6b3d1",
+          "schema_version": "1.0",
+          "split": "dev",
+          "stages": {
+            "environment": "passed",
+            "patch": "passed",
+            "tests": "passed"
+          },
+          "started_at": "2026-08-31T18:33:07.506426Z",
+          "status": "resolved",
+          "tests_executed": true,
+          "wall_time_s": 50.0
+        },
+        "evaluator_recorded": true,
+        "image": {
+          "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+          "pinned": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+          "repo_digests": [
+            "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+          ],
+          "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+        },
+        "instance_id": "django__django-11133",
+        "patch": {
+          "additions": 8,
+          "bytes": 1799,
+          "deletions": 2,
+          "files": 2
+        },
+        "run_id": "20260831T181026974170Z_dev_cell_5040d6b3d1",
+        "status": "resolved",
+        "steps": 26,
+        "stop_reason": "submitted",
+        "tool_calls": 50,
+        "usage": {
+          "cache_creation_input_tokens": "[REDACTED]",
+          "cache_read_input_tokens": "[REDACTED]",
+          "input_tokens": "[REDACTED]",
+          "output_tokens": "[REDACTED]"
+        },
+        "variant": "fuzzy",
+        "wall_time_seconds": 1410.6719999999914
+      }
+    ],
+    "code_commit": "d6550b849c6fa62e732a2767547670cd10ed4345",
+    "code_hash": "c25e1ba8144ecab792132a86c5df1b5acf0138582377ef60515e4385c30e7e9f",
+    "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+    "created_at": "2026-08-31T18:34:07.056634Z",
+    "decision": "accepted",
+    "exact_change": "Initial candidate",
+    "expected_effect": "Establish benchmark baseline",
+    "harness_environment": {
+      "path": "audit/iteration3/harness-environment-receipt.json",
+      "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
+    },
+    "hypothesis": "ReqRefine live integration smoke",
+    "isolation_proof": {
+      "path": "audit/iteration3/adaptive-isolation-proof.json",
+      "sha256": "07e5be8ac6530faced5d09c4fabc996773dc1ad6c1ddb7f8d88648cee7a3dba1"
+    },
+    "observed_issue": "",
+    "pair_order_source": "frozen_plan",
+    "parallel_cells": 1,
+    "parent": null,
+    "protocol_prompt_hash": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
+    "provider_identity": {
+      "actual_model": "gpt-5.6-sol",
+      "api_key_env": "[REDACTED]",
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "capability_evidence": "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+      "configured_model": "gpt-5.6-sol",
+      "context_window_tokens": "[REDACTED]",
+      "endpoint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+      "max_output_tokens": "[REDACTED]",
+      "protocol": "anthropic_messages",
+      "provider": "local_reverse_proxy",
+      "seed": "unsupported",
+      "temperature": "unsupported"
+    },
+    "rationale": "The authorized single smoke cell produced a verified non-infrastructure Agent/evaluator record.",
+    "result_order": "frozen_plan_sequence",
+    "rollback_risk": "none",
+    "scheduler": "deterministic_wave_v1",
+    "scope": "single_cell_smoke",
+    "source_run_ids": [
+      "20260831T181026974170Z_dev_cell_5040d6b3d1"
+    ],
+    "successor": null,
+    "system_prompt_hash": "059db471dca6e20946bd0ee9748b964db3812153892e182f8f1ba0d04bf1aac4",
+    "test_receipt": {
+      "path": "audit/iteration3/adaptive-test-receipt.json",
+      "sha256": "029dc6b7908e9d42762c7a41e4f43dcdce930d1c967c0c40d33ac4135c75e5ce"
+    },
+    "tool_schema_hash": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc",
+    "validation_plan": "Complete only D-O1-fuzzy as the authorized smoke cell",
+    "version": "v008"
+  },
+  "formal_seed": 20260828,
+  "freeze_behavior_provenance": {
+    "agent_code_commit": "d6550b849c6fa62e732a2767547670cd10ed4345",
+    "agent_package_sha256": "2dcb7caaae18fede2ded7ad0abab4b9473d4fd41a7c527a25311208bc0379bc0",
+    "current_behavior_tree_sha256": "b98d57f2fe13dca9470387ab0313d3ed4691392fabc072ab8d7ac7b3735779c7",
+    "drift_mode": "freeze_only_hotfix",
+    "freeze_reporter_commit": "e6cc870b117d17f68b6875c6705cec2d165e20be",
+    "frozen_development_behavior_tree_sha256": "c25e1ba8144ecab792132a86c5df1b5acf0138582377ef60515e4385c30e7e9f"
+  },
+  "freeze_source_commit": "e6cc870b117d17f68b6875c6705cec2d165e20be",
+  "harness_environment": {
+    "path": "audit/iteration3/harness-environment-receipt.json",
+    "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
+  },
+  "image_identities": {
+    "astropy__astropy-14995": {
+      "available": true,
+      "image_id": "sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+      "pinned": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995:latest"
+    },
+    "django__django-10914": {
+      "available": true,
+      "image_id": "sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-10914:latest"
+    },
+    "django__django-11133": {
+      "available": true,
+      "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133:latest"
+    },
+    "django__django-13933": {
+      "available": true,
+      "image_id": "sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-13933:latest"
+    },
+    "matplotlib__matplotlib-23476": {
+      "available": true,
+      "image_id": "sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476:latest"
+    },
+    "matplotlib__matplotlib-25311": {
+      "available": true,
+      "image_id": "sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311:latest"
+    },
+    "matplotlib__matplotlib-25332": {
+      "available": true,
+      "image_id": "sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332:latest"
+    },
+    "psf__requests-2317": {
+      "available": true,
+      "image_id": "sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+      "pinned": "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.psf_1776_requests-2317:latest"
+    },
+    "pydata__xarray-4094": {
+      "available": true,
+      "image_id": "sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+      "pinned": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094:latest"
+    },
+    "pytest-dev__pytest-7432": {
+      "available": true,
+      "image_id": "sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+      "pinned": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432:latest"
+    },
+    "scikit-learn__scikit-learn-13439": {
+      "available": true,
+      "image_id": "sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439:latest"
+    },
+    "scikit-learn__scikit-learn-13779": {
+      "available": true,
+      "image_id": "sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779:latest"
+    },
+    "scikit-learn__scikit-learn-14983": {
+      "available": true,
+      "image_id": "sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983:latest"
+    },
+    "sphinx-doc__sphinx-8595": {
+      "available": true,
+      "image_id": "sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+      "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595:latest"
+    },
+    "sphinx-doc__sphinx-8721": {
+      "available": true,
+      "image_id": "sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+      "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721:latest"
+    }
+  },
+  "iteration": 3,
+  "name": "baseline-v3",
+  "pair_order_source": "frozen_plan",
+  "parallel_cells": 2,
+  "plan_generator": "evalsys.iteration3.build_iteration3_plan/v1",
+  "plan_generator_sha256": "0971459020686239e8245f62829c4e6879fee2efb85c646f3fe187d549ad47b1",
+  "plan_sha256": "94e28d8b55913b4ce20e921414ff3ecae9974d3fb413cb9cc274bb8fa9cee6a8",
+  "protocol_prompt_sha256": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
+  "provider_hard_context_limit": "unavailable",
+  "provider_identity": {
+    "actual_model": "gpt-5.6-sol",
+    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+    "base_url_env": "ANTHROPIC_BASE_URL",
+    "capability_evidence": "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+    "configured_model": "gpt-5.6-sol",
+    "context_window_tokens": "[REDACTED]",
+    "endpoint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+    "max_output_tokens": "[REDACTED]",
+    "protocol": "anthropic_messages",
+    "provider": "local_reverse_proxy",
+    "seed": "unsupported",
+    "temperature": "unsupported"
+  },
+  "public_manifest_sha256": "e20f0ecd0f496cde58a0dcd0797939bd0c74dd701c491fd086fef9a112b4d6e6",
+  "reflection_gate_sha256": "81b37c0ba048bf0cfc2430a59f51f24e99f714f261df57ba4c3fc666806b5818",
+  "requirement_ontology_sha256": "de063a5b1b6be99145120f1eb2728eb30f98c085b0ee6c6823dcfa01837dd2bf",
+  "result_order": "frozen_plan_sequence",
+  "scheduler": "deterministic_wave_v1",
+  "schema_version": "1.0",
+  "skill_catalog_sha256": "00ca8e58f3f97d1003b5f4a582b9b1e3f0ed55df13f61ec9c1a3ea063a209247",
+  "source_lock_sha256": "17ad662d57ebdef76efb964fde148b55351ec374f5171f232f25f33e5df6a84e",
+  "system_prompt_sha256": "059db471dca6e20946bd0ee9748b964db3812153892e182f8f1ba0d04bf1aac4",
+  "tool_schema_sha256": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc"
+}
