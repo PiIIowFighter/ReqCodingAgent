@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from reqagent.requirements import ONTOLOGY, ONTOLOGY_VERSION, SKILL_CATALOG
 
@@ -14,6 +15,45 @@ from .recovery import sha256_file
 
 ITERATION = 3
 DEVELOPMENT_CASE_ID = "D-S1-fuzzy"
+_EVALUATOR_LOCK = threading.Lock()
+
+
+def run_serialized_evaluator(lock_root: Path, operation: Callable[[], Any]) -> Any:
+    from .persistence import file_lock
+
+    stable_cwd = Path.cwd().resolve()
+    if not stable_cwd.is_dir():
+        raise EvalError("stable evaluator cwd is unavailable", category="infra_failed")
+    with _EVALUATOR_LOCK:
+        with file_lock(lock_root / ".evaluator.lock", timeout_s=7200):
+            try:
+                return operation()
+            finally:
+                if stable_cwd.is_dir():
+                    __import__("os").chdir(stable_cwd)
+
+
+def baseline_run_closure(manifest: dict[str, Any], audit_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {run.get("run_id"): run for run in audit_runs if isinstance(run.get("run_id"), str)}
+    roots = {
+        entry.get("run_id")
+        for entry in manifest.get("cell_runs", {}).values()
+        if entry.get("state") == "complete" and isinstance(entry.get("run_id"), str)
+    }
+    if len(roots) != len(manifest.get("cell_runs", {})):
+        raise EvalError("baseline manifest contains incomplete run identities", category="invalid")
+    selected: set[str] = set()
+    pending = list(roots)
+    while pending:
+        run_id = pending.pop()
+        if run_id in selected:
+            continue
+        run = by_id.get(run_id)
+        if run is None:
+            raise EvalError("baseline supersession closure is incomplete", category="invalid")
+        selected.add(run_id)
+        pending.extend(run.get("supersedes", []))
+    return [run for run in audit_runs if run.get("run_id") in selected]
 
 
 def iteration_roots(project_root: Path) -> dict[str, Path]:
@@ -99,7 +139,7 @@ def summarize_audited_iteration3_results(
     }
     if set(cell_identities) != {row.get("run_id") for row in rows} or any(identity != expected for identity in cell_identities.values()):
         raise EvalError("iteration3 active cell identity differs from frozen baseline", category="invalid")
-    formal_runs = [run for run in audit_runs if run.get("run_type") == "formal_cell"]
+    formal_runs = baseline_run_closure(manifest, [run for run in audit_runs if run.get("run_type") == "formal_cell"])
     active = select_current_runs(formal_runs)
     if {run["run_id"] for run in active} != {row["run_id"] for row in rows}:
         raise EvalError("iteration3 audit leaves differ from report cells", category="invalid")
@@ -126,7 +166,7 @@ def summarize_audited_iteration3_results(
         "reporter_commit": reporter_commit,
         "report_only_hotfix": True,
         "report_hotfix_reason": "Iteration3 labels and superseded infrastructure history are normalized from frozen raw evidence.",
-        "experimental_outcomes_provenance": "All outcomes were produced by baseline-v2; reporter code only aggregates immutable evidence.",
+        "experimental_outcomes_provenance": f"All outcomes were produced by {baseline['name']}; reporter code only aggregates immutable evidence.",
     }
 
 
@@ -254,13 +294,15 @@ def summarize_comparison(previous: dict[str, Any], candidate: dict[str, Any]) ->
     fuzzy_after = _by_cell(candidate_cells, "fuzzy")
     prior_categories = _category_counts(previous_cells, "fuzzy")
     current_categories = _category_counts(candidate_cells, "fuzzy")
+    previous_is_base = "E1_resolved" in previous
+    prior_full_label, prior_fuzzy_label = ("E1", "E2") if previous_is_base else ("prior_E3", "prior_E4")
     categories = {
-        category: {"E2": prior_categories.get(category, {"count": 0, "total": 0}), "E4": current_categories.get(category, {"count": 0, "total": 0})}
+        category: {prior_fuzzy_label: prior_categories.get(category, {"count": 0, "total": 0}), "E4": current_categories.get(category, {"count": 0, "total": 0})}
         for category in sorted(set(prior_categories) | set(current_categories))
     }
     resolved = {
-        "E1": _rate(previous["E1_resolved"]),
-        "E2": _rate(previous["E2_resolved"]),
+        prior_full_label: _rate(previous["E1_resolved"] if previous_is_base else previous["E3_resolved"]),
+        prior_fuzzy_label: _rate(previous["E2_resolved"] if previous_is_base else previous["E4_resolved"]),
         "E3": _rate(candidate["E3_resolved"]),
         "E4": _rate(candidate["E4_resolved"]),
     }
@@ -268,7 +310,7 @@ def summarize_comparison(previous: dict[str, Any], candidate: dict[str, Any]) ->
         "schema_version": "1.0",
         "statement": "Iteration three introduced structured requirement refinement from aggregate fuzzy-task error analysis and compares it in the same controlled environment.",
         "resolved": resolved,
-        "full_performance_degraded": resolved["E3"]["count"] < resolved["E1"]["count"],
+        "full_performance_degraded": resolved["E3"]["count"] < resolved[prior_full_label]["count"],
         "paired_transitions": {
             "full": _transitions(full_before, full_after),
             "fuzzy": _transitions(fuzzy_before, fuzzy_after),

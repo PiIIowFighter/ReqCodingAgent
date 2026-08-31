@@ -77,13 +77,18 @@ def main() -> int:
             keywords["skip_patch"] = True
             return original_run_instances(*positional, **keywords)
         module.run_instances = run_instances
-    args.report_dir.mkdir(parents=True, exist_ok=True)
-    os.chdir(args.report_dir)
+    report_dir = args.report_dir.resolve()
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stable_cwd = Path.cwd().resolve()
+    os.chdir(report_dir)
     import resource
     _, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
     safe_limit = 4096 if hard_limit == resource.RLIM_INFINITY else min(4096, hard_limit)
-    module.main(dataset_name=str(args.dataset), split="test", instance_ids=[args.instance_id], predictions_path=args.predictions, max_workers=args.max_workers, open_file_limit=safe_limit, run_id=args.run_id, timeout=args.timeout, rewrite_reports=False, modal=False, report_dir=".", task_repo=None)
-    log_root = Path.cwd() / "logs/run_evaluation" / args.run_id
+    try:
+        module.main(dataset_name=str(args.dataset), split="test", instance_ids=[args.instance_id], predictions_path=args.predictions, max_workers=args.max_workers, open_file_limit=safe_limit, run_id=args.run_id, timeout=args.timeout, rewrite_reports=False, modal=False, report_dir=str(report_dir), task_repo=None)
+    finally:
+        os.chdir(stable_cwd if stable_cwd.is_dir() else Path.home())
+    log_root = report_dir / "logs/run_evaluation" / args.run_id
     test_outputs = list(log_root.glob(f"*/{args.instance_id}/test_output.txt"))
     outcomes = None
     if test_outputs:
@@ -97,7 +102,7 @@ def main() -> int:
         result = classify_artifacts(log_root, args.instance_id, skip_patch=args.skip_patch)
     else:
         result = {"status": "completed", "classification": "test_results_parsed", "tests_executed": True, "outcomes": outcomes}
-    (Path.cwd() / "adapter-result.json").write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    (report_dir / "adapter-result.json").write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     args.pgid_file.unlink(missing_ok=True)
     return 0
 

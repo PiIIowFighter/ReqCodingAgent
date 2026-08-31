@@ -1081,12 +1081,21 @@ def run_agent_cell(
             raise EvalError("source row is missing the frozen harness revision", category="invalid")
         source_row["docker_image"] = image
         evaluation_path, evaluation_resume = select_evaluation_attempt(store.path / "evaluation")
-        evaluation = replay_case(
-            settings, case, source_row, "agent", run_id=store.run_id,
-            timeout_s=effective.budgets["wall_clock_seconds"], workers=1,
-            resume=evaluation_resume,
-            patch_path=store.path / "agent.patch", unit_root=evaluation_path,
-        ) if result.patch.bytes else {"status": "agent_no_patch", "classification": "agent_no_patch", "tests_executed": False}
+        if result.patch.bytes:
+            def evaluate_patch():
+                return replay_case(
+                    settings, case, source_row, "agent", run_id=store.run_id,
+                    timeout_s=effective.budgets["wall_clock_seconds"], workers=1,
+                    resume=evaluation_resume,
+                    patch_path=store.path / "agent.patch", unit_root=evaluation_path,
+                )
+            if iteration == 3:
+                from .iteration3 import run_serialized_evaluator
+                evaluation = run_serialized_evaluator(settings.artifact_root / "runs/iteration3", evaluate_patch)
+            else:
+                evaluation = evaluate_patch()
+        else:
+            evaluation = {"status": "agent_no_patch", "classification": "agent_no_patch", "tests_executed": False}
         status = evaluation["status"]
         if status in {"infra_failed", "invalid"}:
             status = "eval_infra_failed"

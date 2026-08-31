@@ -174,11 +174,19 @@ def main(argv: list[str] | None = None) -> int:
                 destination = settings.project_root / f"audit/iteration{iteration}/reports" / f"{args.name}.json"
                 from .persistence import atomic_json
                 atomic_json(destination, report)
-                if iteration == 3:
+                if iteration == 3 and args.name != "baseline-v2":
                     from .iteration3 import summarize_comparison
-                    previous = json.loads((settings.project_root / "audit/iteration2/reports/baseline-v1.json").read_text(encoding="utf-8"))
-                    comparison = summarize_comparison(previous, report)
-                    atomic_json(settings.project_root / "audit/iteration3/reports/comparison-v1-v2.json", comparison)
+                    report_root = settings.project_root / "audit/iteration3/reports"
+                    prior_reports = (
+                        ("baseline-v1", settings.project_root / "audit/iteration2/reports/baseline-v1.json"),
+                        ("baseline-v2", report_root / "baseline-v2.json"),
+                    )
+                    for prior_name, prior_path in prior_reports:
+                        if not prior_path.is_file():
+                            raise EvalError(f"comparison source report is missing: {prior_name}", category="invalid")
+                        previous = json.loads(prior_path.read_text(encoding="utf-8"))
+                        comparison = summarize_comparison(previous, report)
+                        atomic_json(report_root / f"comparison-{prior_name.removeprefix('baseline-')}-{args.name.removeprefix('baseline-')}.json", comparison)
                 report = {"status": "passed", "report": str(destination), **report}
             else:
                 if args.allow_report_only_hotfix or args.confirm:
