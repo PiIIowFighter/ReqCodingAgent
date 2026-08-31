@@ -124,6 +124,60 @@ def test_loop_rejects_invalid_call_without_execution(tmp_path: Path):
     assert workspace.diff() == ""
 
 
+def test_compaction_waits_for_complete_tool_batch(tmp_path: Path):
+    source = repository(tmp_path)
+    batch = {
+        "text": "run both checks",
+        "tool_calls": [
+            {"call_id": "first", "name": "run_command", "arguments": {"command": "printf first", "timeout_seconds": 2}},
+            {"call_id": "second", "name": "run_command", "arguments": {"command": "printf second", "timeout_seconds": 2}},
+        ],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "finish_reason": "tool_calls",
+        "provider_request_id": "batch",
+    }
+    script = [
+        response("warmup", "run_command", {"command": "printf warmup", "timeout_seconds": 2}),
+        batch,
+        response("submit", "submit", {"summary": "both checks ran", "tests": ["first", "second"], "limitations": ""}),
+    ]
+    cfg = config(tmp_path, script)
+    workspace = GitWorkspace.create(source)
+    store = RunStore.create(tmp_path / "runs")
+    ledger = ContextLedger("system", "task", context_window=40, trigger_ratio=.5, keep_recent_rounds=1)
+
+    class CapturingScriptedModel(ScriptedModel):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.requests = []
+
+        def complete(self, request):
+            self.requests.append(request)
+            return super().complete(request)
+
+    model = CapturingScriptedModel(cfg.script)
+    result = AgentLoop(
+        model,
+        build_registry(workspace, cfg.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=store.path / "commands"),
+        workspace,
+        cfg,
+        ledger,
+        store,
+    ).run()
+
+    assert result.stop_reason == "submitted"
+    submit_request = model.requests[-1]
+    batch_messages = [message for message in submit_request.messages if message.role in {"assistant", "tool"}]
+    assistant = next(message for message in batch_messages if [call.call_id for call in message.tool_calls] == ["first", "second"])
+    assert assistant.tool_calls
+    assert [
+        item["call_id"]
+        for message in batch_messages
+        for item in message.tool_results
+        if item["call_id"] in {"first", "second"}
+    ] == ["first", "second"]
+
+
 def test_fake_model_end_to_end_and_patch_applies_fresh(tmp_path: Path):
     source = repository(tmp_path)
     patch = "--- a/hello.py\n+++ b/hello.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n"
