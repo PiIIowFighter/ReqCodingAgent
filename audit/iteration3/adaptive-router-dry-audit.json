@@ -1,0 +1,36 @@
+{
+  "agent_runs": 0,
+  "api_calls": 0,
+  "counts": {
+    "full": {
+      "fast": 11,
+      "refine": 1
+    },
+    "fuzzy": {
+      "fast": 2,
+      "refine": 10
+    }
+  },
+  "evaluator_runs": 0,
+  "provenance": "aggregate-error-analysis-informed/post-hoc revised candidate design check",
+  "reason_codes": {
+    "full": {
+      "detailed_behavior_contract": 8,
+      "observable_behavior": 1,
+      "task_is_actionable": 3,
+      "validation": 1
+    },
+    "fuzzy": {
+      "abstract_behavior": 5,
+      "detailed_behavior_contract": 2,
+      "goal": 1,
+      "observable_behavior": 3,
+      "target": 4,
+      "unresolved_reference": 4,
+      "validation": 7,
+      "weak_language": 3
+    }
+  },
+  "router_signature": "route_task(task: str)",
+  "schema_version": "1.0"
+}

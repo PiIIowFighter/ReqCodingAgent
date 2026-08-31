@@ -41,9 +41,16 @@ def test_container_command_bootstraps_existing_testbed_environment_and_records_i
     assert command[command.index("--pull") + 1] == "never"
     assert command[command.index("--network") + 1] == "none"
     shell = command[-1]
-    assert "/opt/miniconda3/envs/testbed/bin/python" in shell
-    assert "/opt/miniconda3/bin/activate" in shell
-    assert "pip install" not in shell and "conda install" not in shell
+    assert "$" not in shell
+    assert "base64 -d" in shell
+    assert command[command.index("--entrypoint") + 1] == "/bin/bash"
+    assert command[-2] == "-c"
+    assert command[-3].endswith("@sha256:" + "a" * 64)
+    decoded = __import__("base64").b64decode(shell.split("'")[3]).decode("utf-8")
+    assert "/opt/miniconda3/envs/testbed/bin/python" in decoded
+    assert "/opt/miniconda3/bin/activate" in decoded
+    assert 'exec bash -lc "$REQAGENT_COMMAND"' not in decoded
+    assert "pip install" not in decoded and "conda install" not in decoded
     assert result.bootstrap == {
         "identity": "conda:testbed",
         "interpreter": "/opt/miniconda3/envs/testbed/bin/python",
