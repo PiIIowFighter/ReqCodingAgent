@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     report_target = report.add_mutually_exclusive_group(required=True)
     report_target.add_argument("run_directory", type=Path, nargs="?")
     report_target.add_argument("--name", help="frozen iteration-2 baseline name")
+    report.add_argument("--allow-report-only-hotfix", action="store_true")
+    report.add_argument("--confirm", action="store_true")
     smoke = sub.add_parser("smoke-report", help="aggregate one django__django-11133 noop/gold pair")
     smoke.add_argument("--noop-run", type=Path, required=True)
     smoke.add_argument("--gold-run", type=Path, required=True)
@@ -111,16 +113,42 @@ def main(argv: list[str] | None = None) -> int:
             report = replay_cases(settings, cases, prepared.source_rows, args.mode, harness_revision=prepared.lock_heads["harness"], timeout_s=args.timeout, workers=args.workers, resume=args.resume, run_id=args.run_id)
         elif args.command == "report":
             if args.name:
-                from .iteration2 import load_formal_results, summarize_formal_results, verify_frozen_baseline
-                frozen = verify_frozen_baseline(settings.project_root / "configs/frozen" / args.name, project_root=settings.project_root)
+                from .iteration2 import (
+                    audited_formal_cell_identities, behavior_tree_hash, load_formal_results,
+                    load_public_records, summarize_audited_formal_results, summarize_formal_results,
+                    verify_formal_plan, verify_frozen_baseline, verify_git_gate,
+                )
+                baseline_root = settings.project_root / "configs/frozen" / args.name
                 formal_root = settings.artifact_root / "runs/iteration2/formal" / args.name
-                rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], formal_root / "experiment-manifest.json")
-                report = summarize_formal_results(rows)
+                if args.allow_report_only_hotfix:
+                    if not args.confirm:
+                        raise EvalError("report-only hotfix requires --confirm", category="invalid")
+                    from .evidence import verify_active_audit_runs, verify_audit_index_metadata
+                    reporter_commit = verify_git_gate(settings.project_root)
+                    frozen = verify_frozen_baseline(baseline_root)
+                    verify_formal_plan(frozen["plan"], [record for record in load_public_records(settings.project_root) if record["split"] == "test"])
+                    manifest_path = formal_root / "experiment-manifest.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], manifest_path)
+                    if any(verify_active_audit_runs(settings.project_root, iteration=2).values()) or verify_audit_index_metadata(settings.project_root, iteration=2):
+                        raise EvalError("report-only hotfix requires valid audit evidence", category="invalid")
+                    identities = audited_formal_cell_identities(settings.project_root, settings.artifact_root / "runs/iteration2", rows, frozen["baseline"], manifest)
+                    report = summarize_audited_formal_results(
+                        rows, baseline=frozen["baseline"], manifest=manifest, cell_identities=identities,
+                        reporter_behavior_tree_sha256=behavior_tree_hash(settings.project_root), reporter_commit=reporter_commit,
+                        allow_report_only_hotfix=True, confirmed=True,
+                    )
+                else:
+                    frozen = verify_frozen_baseline(baseline_root, project_root=settings.project_root)
+                    rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], formal_root / "experiment-manifest.json")
+                    report = summarize_formal_results(rows)
                 destination = settings.project_root / "audit/iteration2/reports" / f"{args.name}.json"
                 from .persistence import atomic_json
                 atomic_json(destination, report)
                 report = {"status": "passed", "report": str(destination), **report}
             else:
+                if args.allow_report_only_hotfix or args.confirm:
+                    raise EvalError("report-only options require --name", category="invalid")
                 prepared = load_prepared(settings)
                 instance_ids = list(CASE_IDS)
                 paths = generate_report(args.run_directory, expected_instance_ids=instance_ids)

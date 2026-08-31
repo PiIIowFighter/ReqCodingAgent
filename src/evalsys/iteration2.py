@@ -1335,6 +1335,75 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
     return summary
 
 
+def audited_formal_cell_identities(
+    project_root: Path, artifact_root: Path, rows: list[dict[str, Any]],
+    baseline: dict[str, Any], manifest: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    from reqagent.config import AgentConfig
+
+    identities = {}
+    expected_config = baseline.get("config", {})
+    expected_public = AgentConfig(expected_config, project_root / "configs/frozen" / baseline["name"] / "baseline.json").public_dict()
+    for row in rows:
+        run_id = row["run_id"]
+        raw = artifact_root / run_id
+        try:
+            run_manifest = json.loads((raw / "run-manifest.json").read_text(encoding="utf-8"))
+            snapshot = json.loads((raw / "config.snapshot.json").read_text(encoding="utf-8"))
+            effective = snapshot["agent"]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise EvalError("formal active cell identity evidence is incomplete", category="invalid") from exc
+        expected_path = (project_root / "configs/frozen" / baseline["name"] / "baseline.json").resolve()
+        if Path(run_manifest.get("config_path", "")).resolve() != expected_path:
+            raise EvalError("formal active cell baseline identity mismatch", category="invalid")
+        normalized = json.loads(json.dumps(effective))
+        normalized["workspace"]["container_image"] = expected_public["workspace"]["container_image"]
+        if normalized != expected_public:
+            raise EvalError("formal active cell config identity mismatch", category="invalid")
+        identities[run_id] = {
+            "behavior_tree_sha256": manifest.get("behavior_tree_sha256"),
+            "config_hash": baseline.get("config_sha256"),
+            "baseline": manifest.get("baseline"),
+            "plan_sha256": manifest.get("plan_sha256"),
+            "actual_model": row.get("actual_model"),
+        }
+    return identities
+
+
+def summarize_audited_formal_results(
+    rows: list[dict[str, Any]], *, baseline: dict[str, Any], manifest: dict[str, Any],
+    cell_identities: dict[str, dict[str, Any]], reporter_behavior_tree_sha256: str,
+    reporter_commit: str, allow_report_only_hotfix: bool, confirmed: bool,
+) -> dict[str, Any]:
+    if not allow_report_only_hotfix or not confirmed:
+        raise EvalError("report-only hotfix requires explicit confirmation", category="invalid")
+    tracked = manifest.get("cell_runs", {})
+    if len(tracked) != 24 or any(entry.get("state") != "complete" for entry in tracked.values()):
+        raise EvalError("report-only hotfix requires 24 complete formal cells", category="invalid")
+    if manifest.get("baseline") != baseline.get("name") or manifest.get("plan_sha256") != baseline.get("plan_sha256") or manifest.get("behavior_tree_sha256") != baseline.get("behavior_tree_sha256"):
+        raise EvalError("formal manifest identity differs from frozen baseline", category="invalid")
+    expected = {
+        "behavior_tree_sha256": baseline.get("behavior_tree_sha256"),
+        "config_hash": baseline.get("config_sha256"),
+        "baseline": baseline.get("name"),
+        "plan_sha256": baseline.get("plan_sha256"),
+        "actual_model": baseline.get("provider_identity", {}).get("actual_model"),
+    }
+    if set(cell_identities) != {row.get("run_id") for row in rows} or any(identity != expected for identity in cell_identities.values()):
+        raise EvalError("formal active cell identity differs from frozen baseline", category="invalid")
+    report = summarize_formal_results(rows)
+    return {
+        **report,
+        "frozen_behavior_tree_sha256": baseline["behavior_tree_sha256"],
+        "reporter_behavior_tree_sha256": reporter_behavior_tree_sha256,
+        "reporter_commit": reporter_commit,
+        "report_only_hotfix": True,
+        "report_hotfix_commit": "e1e8d9a8440d724029f409159f949a8f2457be22",
+        "report_hotfix_reason": "Full-prompt cells use ambiguity_type=null; the report category is normalized to the string 'full'.",
+        "experimental_outcomes_provenance": "All experimental outcomes were produced by the frozen behavior tree; the current code is used only as the report generator.",
+    }
+
+
 def summarize_formal_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if len(rows) != 24:
         raise EvalError(f"formal report requires 24 cells; found {len(rows)}", category="invalid")

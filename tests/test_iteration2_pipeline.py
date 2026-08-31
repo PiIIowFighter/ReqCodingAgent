@@ -35,6 +35,7 @@ from evalsys.iteration2 import (
     resolve_image_identity,
     select_public_case,
     summarize_formal_results,
+    summarize_audited_formal_results,
     behavior_tree_hash,
     current_tool_schema_bytes,
     load_provider_identity,
@@ -575,6 +576,44 @@ def test_formal_report_counts_pairs_categories_and_usage():
     assert report["totals"]["wall_time_seconds"] == 120
     assert report["patch"] == {"files": 24, "additions": 24, "deletions": 0, "bytes": 480}
     assert report["infrastructure"] == {"superseded_runs": 0, "infra_failures": 0}
+
+    baseline = {
+        "name": "baseline-v1", "behavior_tree_sha256": "f" * 64,
+        "config_sha256": "c" * 64, "plan_sha256": "p" * 64,
+        "provider_identity": {"actual_model": "gpt-5.6-sol"},
+    }
+    manifest = {
+        "baseline": "baseline-v1", "behavior_tree_sha256": "f" * 64,
+        "plan_sha256": "p" * 64,
+        "cell_runs": {row["run_id"]: {"run_id": row["run_id"], "state": "complete"} for row in rows},
+    }
+    identities = {
+        row["run_id"]: {
+            "behavior_tree_sha256": "f" * 64, "config_hash": "c" * 64,
+            "baseline": "baseline-v1", "plan_sha256": "p" * 64,
+            "actual_model": "gpt-5.6-sol",
+        }
+        for row in rows
+    }
+    with pytest.raises(EvalError, match="explicit"):
+        summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=identities, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=False, confirmed=True)
+    incomplete_manifest = {**manifest, "cell_runs": dict(list(manifest["cell_runs"].items())[:-1])}
+    with pytest.raises(EvalError, match="24 complete"):
+        summarize_audited_formal_results(rows, baseline=baseline, manifest=incomplete_manifest, cell_identities=identities, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
+    drifted = {key: dict(value) for key, value in identities.items()}
+    drifted[rows[0]["run_id"]]["baseline"] = "other"
+    with pytest.raises(EvalError, match="cell identity"):
+        summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=drifted, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
+    audited = summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=identities, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
+    assert audited["frozen_behavior_tree_sha256"] == "f" * 64
+    assert audited["reporter_behavior_tree_sha256"] == "r" * 64
+    assert audited["report_only_hotfix"] is True and audited["report_hotfix_commit"] == "e1e8d9a8440d724029f409159f949a8f2457be22"
+    assert audited["categories"]["full"]["E1"] == {"count": 12, "total": 12}
+    assert audited["E1_resolved"] == report["E1_resolved"] and audited["E2_resolved"] == report["E2_resolved"]
+    assert audited["paired_outcomes"] == report["paired_outcomes"]
+    assert sum(audited["paired_outcomes"].values()) == 12
+    assert json.loads(json.dumps(audited, sort_keys=True))["reporter_commit"] == "a" * 40
+
     incomplete = [dict(row) for row in rows]
     incomplete[0]["status"] = "eval_infra_failed"
     with pytest.raises(EvalError, match="incomplete"):
