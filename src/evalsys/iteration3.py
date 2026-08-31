@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +18,86 @@ from .recovery import sha256_file
 ITERATION = 3
 DEVELOPMENT_CASE_ID = "D-O1-fuzzy"
 _EVALUATOR_LOCK = threading.Lock()
+
+
+def _agent_package_hash(project_root: Path, commit: str | None = None) -> str:
+    if commit is None:
+        files = sorted((project_root / "src/reqagent").rglob("*.py"))
+        if not files:
+            raise EvalError("current Agent package files are missing", category="invalid")
+        blobs = [
+            (path.relative_to(project_root).as_posix(), path.read_bytes())
+            for path in files
+        ]
+    else:
+        listed = subprocess.run(
+            ["git", "-C", str(project_root), "ls-tree", "-r", "--name-only", commit, "--", "src/reqagent"],
+            capture_output=True, check=False, text=True, encoding="utf-8", errors="replace",
+        )
+        names = sorted(name for name in listed.stdout.splitlines() if name.endswith(".py"))
+        if listed.returncode or not names:
+            raise EvalError("development Agent commit or package files are unavailable", category="invalid")
+        blobs = []
+        for name in names:
+            shown = subprocess.run(
+                ["git", "-C", str(project_root), "show", f"{commit}:{name}"],
+                capture_output=True, check=False,
+            )
+            if shown.returncode:
+                raise EvalError("development Agent commit or package files are unavailable", category="invalid")
+            blobs.append((name, shown.stdout))
+    digest = hashlib.sha256()
+    for name, content in blobs:
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def resolve_freeze_behavior_provenance(
+    project_root: Path, *, development: dict[str, Any], freeze_commit: str,
+    current_behavior_hash: str, allow_freeze_only_hotfix: bool, iteration: int,
+) -> dict[str, Any]:
+    if development.get("code_hash") == current_behavior_hash:
+        return {}
+    if not allow_freeze_only_hotfix:
+        raise EvalError("development code_hash does not match current behavior", category="invalid")
+    if iteration != 3:
+        raise EvalError("freeze-only hotfix is restricted to iteration 3", category="invalid")
+    development_commit = development.get("code_commit")
+    if not isinstance(development_commit, str) or len(development_commit) != 40:
+        raise EvalError("development Agent commit is invalid", category="invalid")
+    historical_agent_hash = _agent_package_hash(project_root, development_commit)
+    current_agent_hash = _agent_package_hash(project_root, freeze_commit)
+    if historical_agent_hash != current_agent_hash:
+        raise EvalError("current Agent package does not match development Agent package", category="invalid")
+    return {
+        "drift_mode": "freeze_only_hotfix",
+        "frozen_development_behavior_tree_sha256": development["code_hash"],
+        "agent_code_commit": development_commit,
+        "freeze_reporter_commit": freeze_commit,
+        "current_behavior_tree_sha256": current_behavior_hash,
+        "agent_package_sha256": current_agent_hash,
+    }
+
+
+def verify_freeze_behavior_provenance(
+    project_root: Path, *, provenance: dict[str, Any], current_behavior_hash: str,
+) -> None:
+    if not provenance:
+        return
+    reporter_commit = provenance.get("freeze_reporter_commit")
+    head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        capture_output=True, check=False, text=True, encoding="utf-8", errors="replace",
+    )
+    if head.returncode or head.stdout.strip() != reporter_commit:
+        raise EvalError("freeze reporter commit does not match current HEAD", category="invalid")
+    if provenance.get("current_behavior_tree_sha256") != current_behavior_hash:
+        raise EvalError("freeze provenance does not match current formal runtime code", category="invalid")
+    if provenance.get("agent_package_sha256") != _agent_package_hash(project_root, reporter_commit):
+        raise EvalError("freeze provenance Agent package mismatch", category="invalid")
 
 
 def revised_gate_paths(project_root: Path) -> dict[str, Path]:

@@ -551,7 +551,7 @@ def freeze_baseline(
     project_root: Path, name: str, config: dict[str, Any], records: list[dict[str, Any]], *,
     development: dict[str, Any] | None, image_identities: dict[str, Any],
     authorized: bool, git_commit: str, artifact_root: Path | None = None,
-    iteration: int = 2,
+    iteration: int = 2, allow_freeze_only_hotfix: bool = False,
 ) -> Path:
     if not authorized:
         raise EvalError("freeze requires explicit user authorization", category="invalid")
@@ -634,16 +634,22 @@ def freeze_baseline(
     system_bytes = system_source.read_bytes()
     protocol_bytes = protocol_source.read_bytes()
     tool_schema_bytes = current_tool_schema_bytes(project_root, config)
+    current_behavior_hash = behavior_tree_hash(project_root)
     current_bindings = {
         "config_hash": frozen_config_hash,
         "system_prompt_hash": _sha256_bytes(system_bytes),
         "protocol_prompt_hash": _sha256_bytes(protocol_bytes),
         "tool_schema_hash": _sha256_bytes(tool_schema_bytes),
-        "code_hash": behavior_tree_hash(project_root),
     }
     for field, digest in current_bindings.items():
         if development.get(field) != digest:
             raise EvalError(f"development {field} does not match current behavior", category="invalid")
+    from .iteration3 import resolve_freeze_behavior_provenance
+    freeze_behavior_provenance = resolve_freeze_behavior_provenance(
+        project_root, development=development, freeze_commit=git_commit,
+        current_behavior_hash=current_behavior_hash,
+        allow_freeze_only_hotfix=allow_freeze_only_hotfix, iteration=iteration,
+    )
     scheduler = {
         "scheduler": development.get("scheduler"),
         "parallel_cells": development.get("parallel_cells"),
@@ -701,7 +707,8 @@ def freeze_baseline(
         "formal_seed": FORMAL_SEED,
         "plan_generator": "evalsys.iteration3.build_iteration3_plan/v1" if iteration == 3 else "evalsys.baseline.build_formal_plan/v1",
         "plan_generator_sha256": sha256_file(project_root / "src/evalsys/iteration3.py") if iteration == 3 else plan_generator_hash(project_root),
-        "behavior_tree_sha256": behavior_tree_hash(project_root),
+        "behavior_tree_sha256": current_behavior_hash,
+        "freeze_behavior_provenance": freeze_behavior_provenance,
         "plan_sha256": _sha256_bytes(plan_bytes), "system_prompt_sha256": _sha256_bytes(system_bytes),
         "protocol_prompt_sha256": _sha256_bytes(protocol_bytes), "tool_schema_sha256": _sha256_bytes(tool_schema_bytes),
         "public_manifest_sha256": sha256_file(manifest_path), "source_lock_sha256": sha256_file(source_lock_path),
@@ -805,6 +812,13 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
         for field, digest in current.items():
             if baseline.get(field) != digest:
                 raise EvalError(f"current {field} does not match frozen baseline", category="invalid")
+        if baseline.get("iteration") == 3:
+            from .iteration3 import verify_freeze_behavior_provenance
+            verify_freeze_behavior_provenance(
+                project_root,
+                provenance=baseline.get("freeze_behavior_provenance", {}),
+                current_behavior_hash=current["behavior_tree_sha256"],
+            )
     if image_resolver is not None:
         for instance_id, frozen_identity in baseline.get("image_identities", {}).items():
             current = image_resolver(instance_id)

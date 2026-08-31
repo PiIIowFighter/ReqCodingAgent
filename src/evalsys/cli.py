@@ -81,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     freeze.add_argument("--config", type=Path, required=True)
     freeze.add_argument("--confirm", action="store_true")
     freeze.add_argument("--iteration", type=int, choices=(2, 3), default=2)
+    freeze.add_argument("--allow-freeze-only-hotfix", action="store_true")
     formal = sub.add_parser("run-formal", help="protected formal evaluation entry point")
     formal.add_argument("--name", required=True)
     formal.add_argument("--confirm", action="store_true")
@@ -93,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_freeze_only_hotfix_options(args: argparse.Namespace) -> None:
+    if not getattr(args, "allow_freeze_only_hotfix", False):
+        return
+    if not args.confirm:
+        raise EvalError("freeze-only hotfix requires --confirm", category="invalid")
+    if args.iteration != 3:
+        raise EvalError("freeze-only hotfix is restricted to iteration 3", category="invalid")
+
+
 def exit_code_for_status(status: str) -> int:
     return 0 if status in {"passed", "paused"} else 1
 
@@ -100,6 +110,8 @@ def exit_code_for_status(status: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "freeze-baseline":
+            validate_freeze_only_hotfix_options(args)
         settings = Settings.from_env(args.project_root)
         if args.command == "preflight":
             report = run_preflight(settings)
@@ -290,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                     settings.project_root, args.name, config.raw, records,
                     development=development, image_identities=images, authorized=True,
                     git_commit=commit, iteration=iteration,
+                    allow_freeze_only_hotfix=args.allow_freeze_only_hotfix,
                 )
                 report = {"status": "passed", "baseline": str(destination)}
             else:
