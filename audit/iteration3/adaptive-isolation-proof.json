@@ -1,5 +1,5 @@
 {
-  "behavior_tree_sha256": "4c9c445430af2cb32f951e8aa2fb8dab6d1f3e5f1224966417af0e0e733421a0",
+  "behavior_tree_sha256": "c25e1ba8144ecab792132a86c5df1b5acf0138582377ef60515e4385c30e7e9f",
   "cleanup": {
     "actual": "passed",
     "expected": "passed"
@@ -107,14 +107,14 @@
   "protected_paths": [
     "benchmark/private",
     "oracles.jsonl",
-    "璁″垝",
-    "璧勬枡",
+    "计划",
+    "资料",
     "project_root",
     "host_paths"
   ],
   "protocol_prompt_hash": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
   "residual_containers": [],
-  "run_id": "adaptive-isolation-proof-staged-brief",
+  "run_id": "adaptive-isolation-proof-batch-compaction",
   "runtime": {
     "cap_drop": "ALL",
     "network": "none",
