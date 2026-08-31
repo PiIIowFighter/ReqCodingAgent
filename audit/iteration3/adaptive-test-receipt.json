@@ -1,10 +1,10 @@
 {
-  "behavior_tree_sha256": "d7da496b83b7bf82adb8d74bfeb9f85f4b78eaa18ad786f3e8211a07e3d2f362",
-  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_adaptive_controller.py tests/test_reqagent_recovery_handoff.py tests/test_iteration3_pipeline.py::test_iteration3_uses_independent_roots_and_refined_smoke_cell tests/test_iteration3_pipeline.py::test_requirement_snapshot_payloads_are_separate_and_versioned tests/test_iteration3_pipeline.py::test_baseline_snapshots_bind_ontology_skills_reflection_and_prompts tests/test_iteration3_pipeline.py::test_targeted_receipt_records_profile_and_iteration3_path tests/test_iteration3_revised_infra.py::test_revised_gate_paths_do_not_overwrite_baseline_v2_receipts -q",
+  "behavior_tree_sha256": "12968fdc5001002c66077491118e633fe29063005639dc5e36a7b077f727fc06",
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_protocol_handoff.py tests/test_reqagent_adaptive_controller.py::test_fast_path_first_request_matches_frozen_baseline_v1_golden tests/test_reqagent_adaptive_controller.py::test_checkpoint_restores_approved_schema_and_phase_usage tests/test_reqagent_adaptive_controller.py::test_evidence_ids_must_come_from_real_read_or_search_and_schema_disappears tests/test_reqagent_refinement.py tests/test_reqagent_recovery_handoff.py -q",
   "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
   "counts": {
     "deselected": 0,
-    "passed": 24,
+    "passed": 21,
     "skipped": 0
   },
   "exit_code": 0,
