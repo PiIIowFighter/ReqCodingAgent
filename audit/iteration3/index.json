@@ -462,6 +462,18 @@
       "status": "resolved",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T210140515320Z_formal_cell_aeaadce07d",
+      "config_hash": "aeaadce07d",
+      "raw_path": "artifacts/runs/iteration3/20260831T210140515320Z_formal_cell_aeaadce07d",
+      "run_id": "20260831T210140515320Z_formal_cell_aeaadce07d",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [
+        "20260831T204742343248Z_formal_cell_aeaadce07d"
+      ],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",
