@@ -50,7 +50,7 @@ class ToolRegistry:
         elif adaptive.phase == "refining" and adaptive.refinement_stage == "synthesizing":
             active = {"record_requirement_brief"}
         elif adaptive.phase == "refining":
-            active = {"list_files", "read_file", "search_text", "record_requirement_brief"}
+            active = {"list_files", "read_file", "search_text"}
         elif adaptive.phase == "reflection":
             active = {"reflect_on_patch"}
         else:

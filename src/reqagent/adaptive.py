@@ -132,7 +132,12 @@ def brief_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "ambiguity_reason": {"type": "string", "minLength": 1, "maxLength": 400},
-            "chosen_interpretation": {"type": "string", "minLength": 1, "maxLength": 600},
+            "chosen_interpretation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600,
+                "description": "State the preferred interpretation. This value is replaced server-side with the top-ranked candidate interpretation, selected by deterministic score.",
+            },
             "targets": {"type": "array", "items": {"type": "string", "maxLength": 160}, "maxItems": 6},
             "expected_behavior": {"type": "string", "minLength": 1, "maxLength": 600},
             "regression_invariants": {"type": "array", "items": {"type": "string", "maxLength": 240}, "maxItems": 6},
@@ -224,12 +229,10 @@ class AdaptiveRefinementState:
         except (KeyError, TypeError, ValueError) as exc:
             errors.append(str(exc))
             ranked = []
-        chosen = value.get("chosen_interpretation", "")
-        if ranked and ranked[0]["interpretation"] != chosen and ranked[0]["interpretation"] not in chosen:
-            errors.append("chosen interpretation is not the top-ranked candidate")
         if errors:
             return False, errors
         self.brief = json.loads(payload.decode())
+        self.brief["chosen_interpretation"] = ranked[0]["interpretation"]
         self.ranked_candidates = ranked
         self.phase = "coding"
         self.refinement_stage = "complete"

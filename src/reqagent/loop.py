@@ -362,6 +362,28 @@ class AgentLoop:
                     pending_stage = self.pending_refinement_stage
                     phase_tool_calls = adaptive.investigation_tool_count if adaptive is not None and pending_stage == "investigating" else adaptive.synthesis_tool_count if adaptive is not None and pending_stage == "synthesizing" else adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
                     phase_tool_limit = 6 if pending_stage == "investigating" else 1 if pending_stage == "synthesizing" else 2 if pending_phase == "reflection" else self.config.budgets["max_tool_calls"]
+                    call = self.pending_tool_calls[self.next_tool_index]
+                    allowed_stage_tools = (
+                        {"list_files", "read_file", "search_text"} if pending_stage == "investigating"
+                        else {"record_requirement_brief"} if pending_stage == "synthesizing"
+                        else None
+                    )
+                    if allowed_stage_tools is not None and call.name not in allowed_stage_tools:
+                        self._synthetic_result(call, "wrong_stage", f"{call.name} is not executable during {pending_stage}")
+                        self.next_tool_index += 1
+                        if self.next_tool_index < len(self.pending_tool_calls):
+                            self._checkpoint("execute")
+                            continue
+                        validate_tool_protocol(self.context.messages)
+                        self._clear_pending()
+                        self._checkpoint("call_model")
+                        if pending_stage == "investigating" and (
+                            adaptive.investigation_response_count >= 2 or adaptive.investigation_tool_count >= 6
+                        ):
+                            self._enter_synthesis()
+                        elif pending_stage == "synthesizing":
+                            self._fail_open_refinement("synthesis did not submit a brief")
+                        continue
                     if phase_tool_calls >= phase_tool_limit:
                         self._close_remaining("phase_budget_exhausted", f"{pending_phase} tool budget exhausted")
                         if adaptive is not None and pending_stage == "investigating":
@@ -374,7 +396,6 @@ class AgentLoop:
                         else:
                             stop_reason = "tool_budget"
                         break
-                    call = self.pending_tool_calls[self.next_tool_index]
                     before = self.workspace.diff_hash()
                     fingerprint = hashlib.sha256(json.dumps({"name": call.name, "arguments": call.arguments, "diff": before}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
                     result = self.registry.execute(call.name, call.arguments)
