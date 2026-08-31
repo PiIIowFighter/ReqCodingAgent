@@ -898,8 +898,9 @@ def ensure_experiment_manifest(root: Path, manifest: dict[str, Any]) -> Path:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise EvalError("formal experiment manifest is invalid", category="invalid") from exc
-        stable_existing = {key: value for key, value in existing.items() if key != "cell_runs"}
-        stable_requested = {key: value for key, value in manifest.items() if key != "cell_runs"}
+        mutable = {"cell_runs", "formal_gate_resume_provenance"}
+        stable_existing = {key: value for key, value in existing.items() if key not in mutable}
+        stable_requested = {key: value for key, value in manifest.items() if key not in mutable}
         if stable_existing != stable_requested:
             raise EvalError("formal experiment manifest mismatch", category="invalid")
     else:
@@ -1401,7 +1402,8 @@ def run_formal_plan(
         from .iteration3 import verify_formal_gate_resume
         verify_formal_gate_resume(
             settings.project_root, baseline=frozen["baseline"], frozen_plan=frozen["plan"],
-            records=test_records, manifest=experiment, reporter_commit=reporter_commit,
+            records=test_records, manifest=experiment, manifest_path=manifest_path,
+            reporter_commit=reporter_commit,
         )
     tracked_runs = experiment.get("cell_runs", {})
     for planned in frozen["plan"]:

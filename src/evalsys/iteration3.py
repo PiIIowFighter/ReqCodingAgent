@@ -148,26 +148,117 @@ def resolve_formal_gate_provenance(
     }
 
 
+def _source_hash_at_commit(project_root: Path, commit: str, paths: list[str]) -> str:
+    listed = subprocess.run(
+        ["git", "-C", str(project_root), "ls-tree", "-r", "--name-only", commit, "--", *paths],
+        capture_output=True, check=False, text=True, encoding="utf-8", errors="replace",
+    )
+    names = sorted(
+        name for name in listed.stdout.splitlines()
+        if name.endswith(".py") or name == "scripts/official_harness_adapter.py"
+    )
+    if listed.returncode or not names:
+        raise EvalError("formal reporter source commit is unavailable", category="invalid")
+    digest = hashlib.sha256()
+    for name in names:
+        shown = subprocess.run(
+            ["git", "-C", str(project_root), "show", f"{commit}:{name}"],
+            capture_output=True, check=False,
+        )
+        if shown.returncode:
+            raise EvalError("formal reporter source commit is unavailable", category="invalid")
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(shown.stdout)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _formal_reporter_identity(project_root: Path, commit: str, agent_hash: str) -> dict[str, str]:
+    reporter_agent_hash = _agent_package_hash(project_root, commit)
+    if reporter_agent_hash != agent_hash:
+        raise EvalError("formal resume reporter Agent package mismatch", category="invalid")
+    generator = subprocess.run(
+        ["git", "-C", str(project_root), "show", f"{commit}:src/evalsys/iteration3.py"],
+        capture_output=True, check=False,
+    )
+    if generator.returncode:
+        raise EvalError("formal reporter plan generator is unavailable", category="invalid")
+    return {
+        "reporter_commit": commit,
+        "reporter_behavior_tree_sha256": _source_hash_at_commit(
+            project_root, commit, ["src/reqagent", "src/evalsys", "scripts/official_harness_adapter.py"],
+        ),
+        "reporter_plan_generator_sha256": hashlib.sha256(generator.stdout).hexdigest(),
+        "agent_package_sha256": reporter_agent_hash,
+    }
+
+
 def verify_formal_gate_resume(
     project_root: Path, *, baseline: dict[str, Any], frozen_plan: list[dict[str, Any]],
-    records: list[dict[str, Any]], manifest: dict[str, Any], reporter_commit: str,
+    records: list[dict[str, Any]], manifest: dict[str, Any], manifest_path: Path,
+    reporter_commit: str,
 ) -> None:
+    from .persistence import atomic_json, file_lock
+
     provenance = manifest.get("formal_gate_provenance")
     if not isinstance(provenance, dict) or provenance.get("drift_mode") != "formal_gate_hotfix":
         raise EvalError("formal drift resume provenance is missing", category="invalid")
-    manifest_reporter_commit = provenance.get("reporter_commit")
+    anchor_commit = provenance.get("reporter_commit")
+    anchor_agent_hash = provenance.get("agent_package_sha256")
+    if not isinstance(anchor_commit, str) or not isinstance(anchor_agent_hash, str):
+        raise EvalError("formal drift resume provenance is invalid", category="invalid")
+    if _agent_package_hash(project_root, anchor_commit) != anchor_agent_hash:
+        raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
+    expected_anchor = {
+        "frozen_baseline_behavior_tree_sha256": baseline.get("behavior_tree_sha256"),
+        "frozen_plan_generator_sha256": baseline.get("plan_generator_sha256"),
+    }
+    if any(provenance.get(key) != value for key, value in expected_anchor.items()):
+        raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
+    for key in ("reporter_behavior_tree_sha256", "reporter_plan_generator_sha256"):
+        if not isinstance(provenance.get(key), str) or len(provenance[key]) != 64:
+            raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
+    if frozen_plan != build_iteration3_plan(records):
+        raise EvalError("current iteration3 plan does not exactly match frozen plan", category="invalid")
+
+    entries = manifest.get("formal_gate_resume_provenance", [])
+    if not isinstance(entries, list):
+        raise EvalError("formal resume provenance chain is invalid", category="invalid")
+    previous = anchor_commit
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("reporter_commit"), str):
+            raise EvalError("formal resume provenance chain is invalid", category="invalid")
+        commit = entry["reporter_commit"]
+        if commit in seen or entry != _formal_reporter_identity(project_root, commit, anchor_agent_hash):
+            raise EvalError("formal resume provenance chain contains a duplicate or conflict", category="invalid")
+        ancestry = subprocess.run(
+            ["git", "-C", str(project_root), "merge-base", "--is-ancestor", previous, commit],
+            capture_output=True, check=False,
+        )
+        if ancestry.returncode:
+            raise EvalError("formal resume provenance chain is not ancestral", category="invalid")
+        seen.add(commit)
+        previous = commit
+
     ancestry = subprocess.run(
-        ["git", "-C", str(project_root), "merge-base", "--is-ancestor", str(manifest_reporter_commit), reporter_commit],
+        ["git", "-C", str(project_root), "merge-base", "--is-ancestor", previous, reporter_commit],
         capture_output=True, check=False,
     )
     if ancestry.returncode:
         raise EvalError("formal drift resume reporter commit is not an ancestor", category="invalid")
-    expected = resolve_formal_gate_provenance(
-        project_root, baseline=baseline, frozen_plan=frozen_plan, records=records,
-        reporter_commit=str(manifest_reporter_commit), allow_formal_gate_hotfix=True,
-    )
-    if provenance != expected:
-        raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
+    current = _formal_reporter_identity(project_root, reporter_commit, anchor_agent_hash)
+    if reporter_commit in seen:
+        if entries[-1] != current:
+            raise EvalError("formal resume provenance reporter conflict", category="invalid")
+        return
+
+    updated = {**manifest, "formal_gate_resume_provenance": [*entries, current]}
+    with file_lock(manifest_path.parent / ".manifest.lock", timeout_s=1.0):
+        atomic_json(manifest_path, updated)
+    manifest.clear()
+    manifest.update(updated)
 
 
 def revised_gate_paths(project_root: Path) -> dict[str, Path]:
