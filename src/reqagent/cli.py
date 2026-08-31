@@ -87,7 +87,7 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
         config.raw,
         command_executor=executor,
         artifact_dir=run_store.path / "commands",
-        requirement_refinement=True,
+        requirement_refinement="auto",
         task=task,
     )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
@@ -126,15 +126,19 @@ def _resume_execute(config: AgentConfig, store: RunStore, *, finalize: bool = Tr
         model, executor = build_live_runtime(config, run_id=store.run_id)
     else:
         model, executor = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0), None
+    refinement_mode: bool | str = True if checkpoint.get("requirement_refinement") is not None and checkpoint.get("adaptive_refinement") is None else "auto"
     registry = build_registry(
         workspace,
         config.raw,
         command_executor=executor,
         artifact_dir=store.path / "commands",
-        requirement_refinement=True,
+        requirement_refinement=refinement_mode,
         task=manifest["task"],
     )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
+    adaptive = checkpoint.get("adaptive_refinement")
+    if getattr(registry, "adaptive", None) is not None and adaptive is not None:
+        registry.adaptive.restore(adaptive)
     expected = _resume_identity(store, config, workspace, manifest["task"], registry)
     validate_resume_payload(checkpoint, expected, config.budgets)
     system, protocol = _prompts()

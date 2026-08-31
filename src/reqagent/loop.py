@@ -106,6 +106,7 @@ class AgentLoop:
             ],
             "next_tool_index": self.next_tool_index,
             "requirement_refinement": self.registry.refinement.to_checkpoint() if self.registry.refinement is not None else None,
+            "adaptive_refinement": self.registry.adaptive.to_checkpoint() if getattr(self.registry, "adaptive", None) is not None else None,
         })
 
     def restore(self, checkpoint: dict[str, Any]) -> None:
@@ -127,6 +128,12 @@ class AgentLoop:
             raise ValueError("resume refused: requirement refinement mode changed")
         if self.registry.refinement is not None:
             self.registry.refinement.restore(refinement)
+        adaptive = checkpoint["adaptive_refinement"]
+        current_adaptive = getattr(self.registry, "adaptive", None)
+        if (current_adaptive is None) != (adaptive is None):
+            raise ValueError("resume refused: adaptive refinement mode changed")
+        if current_adaptive is not None:
+            current_adaptive.restore(adaptive)
 
     def _interrupt(self, point: str) -> None:
         if self.interrupt_after == point:
@@ -148,8 +155,11 @@ class AgentLoop:
 
     def _write_static_evidence(self) -> None:
         atomic_text(self.run_store.path / "prompt.snapshot.txt", self.context.messages[0].text + "\n\n" + self.context.task + "\n")
-        atomic_json(self.run_store.path / "tool-schemas.json", [definition.__dict__ for definition in self.registry.definitions])
+        atomic_json(self.run_store.path / "tool-schemas.json", [definition.__dict__ for definition in self.registry.schema_definitions])
         atomic_json(self.run_store.path / "workspace-before.json", {"base_commit": self.workspace.base_commit, "diff_sha256": hashlib.sha256(b"").hexdigest()})
+        adaptive = getattr(self.registry, "adaptive", None)
+        if adaptive is not None and adaptive.route.mode == "refine" and not any(message.text.startswith("Adaptive refinement phase:") for message in self.context.messages):
+            self.context.add(ModelMessage("system", "Adaptive refinement phase: use repository reads/searches according to the routed skill policies, compare at most three interpretations, then record a compact evidence-backed RequirementBrief. The original task remains authoritative."))
 
     def run(self) -> AgentResult:
         self._write_static_evidence()
@@ -160,14 +170,44 @@ class AgentLoop:
                     stop_reason = "wall_clock_timeout"
                     break
                 if self.next_state == "call_model":
-                    if self.steps >= self.config.budgets["max_steps"]:
+                    adaptive = getattr(self.registry, "adaptive", None)
+                    phase = adaptive.phase_for_model() if adaptive is not None else "main"
+                    phase_limit = 6 if phase == "refinement" else 2 if phase == "reflection" else self.config.budgets["max_steps"]
+                    phase_steps = adaptive.steps_by_phase[phase] if adaptive is not None else self.steps
+                    if phase_steps >= phase_limit:
+                        if adaptive is not None and phase in {"refinement", "reflection"}:
+                            if phase == "reflection":
+                                adaptive.fail_open_reflection("reflection step budget exhausted")
+                            else:
+                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_step_budget",))
+                                adaptive.phase = "coding"
+                            continue
                         stop_reason = "step_budget"
                         break
-                    self.steps += 1
-                    response = self._call_model()
-                    self.run_store.event("model_response", sequence=self.steps, response=response.to_dict())
+                    if phase == "main":
+                        if self.steps >= self.config.budgets["max_steps"]:
+                            stop_reason = "step_budget"
+                            break
+                        self.steps += 1
+                    if adaptive is not None:
+                        adaptive.steps_by_phase[phase] += 1
+                    try:
+                        response = self._call_model()
+                    except Exception as exc:
+                        if adaptive is not None and phase in {"refinement", "reflection"}:
+                            if phase == "reflection":
+                                adaptive.fail_open_reflection(f"model failure: {type(exc).__name__}")
+                            else:
+                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_model_error",))
+                                adaptive.phase = "coding"
+                            self.warnings.append(f"{phase} failed open: {type(exc).__name__}")
+                            continue
+                        raise
+                    self.run_store.event("model_response", sequence=self.steps, phase=phase, response=response.to_dict())
                     for key, value in response.usage.items():
                         self.usage[key] = self.usage.get(key, 0) + value
+                    if adaptive is not None:
+                        adaptive.add_usage(phase, response.usage)
                     self.context.add(ModelMessage("assistant", response.text, response.tool_calls))
                     if response.finish_reason == "refusal":
                         stop_reason = "model_refusal"
@@ -196,14 +236,29 @@ class AgentLoop:
                 while self.next_state == "execute":
                     if self.next_tool_index >= len(self.pending_tool_calls):
                         raise ValueError("execute state has no pending tool call")
-                    if self.tool_calls >= self.config.budgets["max_tool_calls"]:
+                    adaptive = getattr(self.registry, "adaptive", None)
+                    pending_phase = adaptive.phase_for_model() if adaptive is not None else "main"
+                    phase_tool_limit = 12 if pending_phase == "refinement" else 2 if pending_phase == "reflection" else self.config.budgets["max_tool_calls"]
+                    phase_tool_calls = adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
+                    if phase_tool_calls >= phase_tool_limit:
+                        if adaptive is not None and pending_phase in {"refinement", "reflection"}:
+                            if pending_phase == "reflection":
+                                adaptive.fail_open_reflection("reflection tool budget exhausted")
+                            else:
+                                adaptive.route = type(adaptive.route)("fast", ("refinement_fail_open_tool_budget",))
+                                adaptive.phase = "coding"
+                            self.pending_tool_calls = ()
+                            self.next_tool_index = 0
+                            self.next_state = "call_model"
+                            break
                         stop_reason = "tool_budget"
                         break
                     call = self.pending_tool_calls[self.next_tool_index]
                     before = self.workspace.diff_hash()
                     fingerprint = hashlib.sha256(json.dumps({"name": call.name, "arguments": call.arguments, "diff": before}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
                     result = self.registry.execute(call.name, call.arguments)
-                    self.tool_calls += 1
+                    if adaptive is None or pending_phase == "main":
+                        self.tool_calls += 1
                     if not result.ok and result.error and result.error["kind"] in {"invalid_arguments", "unknown_tool"}:
                         self.invalid_outputs += 1
                         self.consecutive_invalid_outputs += 1
@@ -232,7 +287,14 @@ class AgentLoop:
                     ):
                         self.context.add(ModelMessage("system", refinement.context_message()))
                         refinement.context_injected = True
-                    self.run_store.event("tool_result", sequence=self.tool_calls, call_id=call.call_id, result=result.to_dict())
+                    adaptive = getattr(self.registry, "adaptive", None)
+                    if adaptive is not None:
+                        tool_phase = "refinement" if call.name == "record_requirement_brief" or adaptive.phase == "refining" else "reflection" if call.name == "reflect_on_patch" else "main"
+                        adaptive.tools_by_phase[tool_phase] += 1
+                        adaptive.observe_tool(call.name, result.ok, result.error, after != before)
+                    if call.name == "record_requirement_brief" and result.ok and adaptive is not None:
+                        self.context.add(ModelMessage("system", adaptive.brief_message()))
+                    self.run_store.event("tool_result", sequence=self.tool_calls, phase=tool_phase if adaptive is not None else "main", call_id=call.call_id, result=result.to_dict())
                     self.context.compact_if_needed(self.registry.history, after)
                     self.next_tool_index += 1
                     if call.name == "submit" and result.ok:
@@ -290,6 +352,12 @@ class AgentLoop:
             atomic_json(self.run_store.path / "requirement-baseline.json", refinement.baseline or {})
             atomic_json(self.run_store.path / "refinement-trace.json", refinement.trace())
             names.extend(("requirement-baseline.json", "refinement-trace.json"))
+        adaptive = getattr(self.registry, "adaptive", None)
+        if adaptive is not None:
+            atomic_json(self.run_store.path / "requirement-brief.json", adaptive.brief or {})
+            atomic_json(self.run_store.path / "refinement-trace.json", adaptive.trace())
+            atomic_json(self.run_store.path / "requirement-baseline.json", {"ontology_version": "coding-requirement-ontology-v1", "mode": adaptive.route.mode, "audit_expansion": adaptive.trace()})
+            names.extend(("requirement-baseline.json", "requirement-brief.json", "refinement-trace.json"))
         lines = [f"{hashlib.sha256((self.run_store.path / name).read_bytes()).hexdigest()}  {name}" for name in names]
         atomic_text(self.run_store.path / "checksums.sha256", "\n".join(lines) + "\n")
         atomic_text(self.run_store.path / "COMPLETE", "complete\n")

@@ -44,12 +44,42 @@ class ToolRegistry:
 
     @property
     def definitions(self) -> tuple[ToolDefinition, ...]:
+        adaptive = getattr(self, "adaptive", None)
+        hidden = set()
+        if adaptive is not None:
+            if adaptive.phase != "refining":
+                hidden.add("record_requirement_brief")
+            if adaptive.route.mode == "fast" or adaptive.phase in {"refining", "accepted"} or not adaptive.requires_reflection:
+                hidden.add("reflect_on_patch")
+        return tuple(value[0] for name, value in self._tools.items() if name not in hidden)
+
+    @property
+    def schema_definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(value[0] for value in self._tools.values())
 
     def execute(self, name: str, arguments: dict[str, Any]) -> ToolEnvelope:
         started = time.monotonic()
         blocked = {"apply_patch", "run_command", "submit"}
-        if self.refinement is not None and not self.refinement.approved and name in blocked:
+        adaptive = getattr(self, "adaptive", None)
+        if adaptive is not None and adaptive.route.mode == "refine" and adaptive.phase == "refining" and name in blocked:
+            result = ToolEnvelope(
+                False,
+                name,
+                {},
+                {"kind": "requirement_gate", "message": "record a compact evidence-backed RequirementBrief before mutation or execution"},
+                False,
+                {},
+            )
+        elif adaptive is not None and adaptive.route.mode == "refine" and adaptive.requires_reflection and name == "submit" and adaptive.phase != "accepted":
+            result = ToolEnvelope(
+                False,
+                name,
+                {},
+                {"kind": "reflection_gate", "message": "reflect_on_patch must accept the patch before submit"},
+                False,
+                {},
+            )
+        elif self.refinement is not None and not self.refinement.approved and name in blocked:
             result = ToolEnvelope(
                 False,
                 name,

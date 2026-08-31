@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -164,7 +165,11 @@ pytest_available=false
 if [ -n "$interpreter" ] && "$interpreter" -c 'import pytest' >/dev/null 2>&1; then pytest_available=true; fi
 printf '__REQAGENT_BOOTSTRAP__={"identity":"%s","interpreter":"%s","pytest_available":%s,"fallback":%s}\n' "$identity" "$interpreter" "$pytest_available" "$fallback"
 if [ -n "$interpreter" ]; then export PATH="$(dirname "$interpreter"):$PATH"; fi
-exec bash -lc "$REQAGENT_COMMAND"'''
+command_payload="__COMMAND_PAYLOAD__"
+printf '%s' "$command_payload" | base64 -d | exec bash'''
+        bootstrap_script = bootstrap_script.replace("__COMMAND_PAYLOAD__", base64.b64encode(command.encode("utf-8")).decode("ascii"))
+        script_payload = base64.b64encode(bootstrap_script.encode("utf-8")).decode("ascii")
+        wrapper = f"printf '%s' '{script_payload}' | base64 -d | /bin/bash"
         argv = [
             *self.command_prefix, "run", "--pull", "never", "--rm", "--name", container_name,
             "--network", "none", "--cap-drop", "ALL",
@@ -174,8 +179,7 @@ exec bash -lc "$REQAGENT_COMMAND"'''
             "--mount", f"type=bind,src={git_mount},dst=/workspace/.git,readonly",
             "--workdir", "/workspace" if relative_cwd == "." else f"/workspace/{relative_cwd}",
             "--env", "HOME=/tmp", "--env", "PYTHONDONTWRITEBYTECODE=1",
-            "--env", f"REQAGENT_COMMAND={command}",
-            self.image, "bash", "-lc", bootstrap_script,
+            "--entrypoint", "/bin/bash", self.image, "-c", wrapper,
         ]
         started = time.monotonic()
         try:

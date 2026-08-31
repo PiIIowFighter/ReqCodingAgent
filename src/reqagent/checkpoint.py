@@ -23,7 +23,7 @@ REQUIRED_RESUME_FIELDS = frozenset({
     "steps", "tool_calls", "invalid_outputs", "usage", "adapter_position",
     "repeat_fingerprint", "repeat_count", "warnings", "messages", "context_summary",
     "tool_history", "pending_tool_calls", "next_tool_index", "adapter_identity_hash",
-    "requirement_refinement",
+    "requirement_refinement", "adaptive_refinement",
 })
 _ALLOWED_NEXT_STATES = frozenset({"call_model", "execute"})
 _IDENTITY_LABELS = {
