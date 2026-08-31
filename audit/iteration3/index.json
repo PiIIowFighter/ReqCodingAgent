@@ -298,6 +298,18 @@
       "status": "unresolved",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T074654448620Z_formal_cell_178cf17646",
+      "config_hash": "178cf17646",
+      "raw_path": "artifacts/runs/iteration3/20260831T074654448620Z_formal_cell_178cf17646",
+      "run_id": "20260831T074654448620Z_formal_cell_178cf17646",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [
+        "20260831T072325977625Z_formal_cell_178cf17646"
+      ],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",
