@@ -162,6 +162,84 @@ def test_formal_gate_hotfix_accepts_evalsys_drift_with_exact_plan_and_audits_rep
         )
 
 
+def test_formal_gate_resume_accepts_evidence_only_descendant(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    provenance = resolve_formal_gate_provenance(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
+    )
+    evidence = tmp_path / "audit/iteration3/evidence.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "formal evidence"], check=True)
+    evidence_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    manifest = {"formal_gate_provenance": provenance}
+
+    verify_formal_gate_resume(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        manifest=manifest, reporter_commit=evidence_commit,
+    )
+
+    assert manifest["formal_gate_provenance"] == provenance
+    assert provenance["reporter_commit"] == frozen_commit
+
+
+def test_formal_gate_resume_rejects_changed_evalsys_runtime(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    provenance = resolve_formal_gate_provenance(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
+    )
+    (tmp_path / "src/evalsys/gate.py").write_text("GATE = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "runtime drift"], check=True)
+    runtime_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    with pytest.raises(EvalError, match="provenance mismatch"):
+        verify_formal_gate_resume(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+            manifest={"formal_gate_provenance": provenance}, reporter_commit=runtime_commit,
+        )
+
+
+def test_formal_gate_resume_rejects_nonancestor_reporter(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    provenance = resolve_formal_gate_provenance(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "--orphan", "unrelated"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "rm", "-qrf", "."], check=True)
+    (tmp_path / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "unrelated"], check=True)
+    unrelated_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    with pytest.raises(EvalError, match="ancestor"):
+        verify_formal_gate_resume(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+            manifest={"formal_gate_provenance": provenance}, reporter_commit=unrelated_commit,
+        )
+
+
 def test_formal_gate_hotfix_rejects_plan_or_agent_drift(tmp_path: Path):
     import subprocess
 
