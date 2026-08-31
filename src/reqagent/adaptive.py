@@ -274,8 +274,17 @@ class AdaptiveRefinementState:
                 return True, ""
             self.revision_count += 1
             self.phase = "refining"
+            self.refinement_stage = "investigating"
+            self.evidence = {}
             self.brief = None
+            self.ranked_candidates = []
+            self.requires_reflection = False
+            self.contradiction_reason = ""
             self.schema_removed = False
+            self.investigation_response_count = 0
+            self.investigation_tool_count = 0
+            self.synthesis_response_count = 0
+            self.synthesis_tool_count = 0
         else:
             self.phase = "accepted"
         self.reflection = {"decision": decision, "reason": reason[:500], "revision_count": self.revision_count}
