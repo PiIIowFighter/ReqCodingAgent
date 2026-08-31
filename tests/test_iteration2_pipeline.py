@@ -39,6 +39,7 @@ from evalsys.iteration2 import (
     behavior_tree_hash,
     current_tool_schema_bytes,
     load_provider_identity,
+    resolve_runtime_provider_identity,
     load_completed_agent_result,
     select_evaluation_attempt,
     verify_runtime_provider,
@@ -956,6 +957,61 @@ def test_runtime_provider_rejects_endpoint_or_actual_model_drift(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint + "/changed")
     with pytest.raises(EvalError, match="endpoint"):
         verify_runtime_provider(identity)
+
+
+def test_redacted_provider_identity_resolves_from_audited_capability_receipt(tmp_path: Path, monkeypatch):
+    endpoint = "https://example.invalid/proxy"
+    evidence = {
+        "status": "passed", "provider": "local_reverse_proxy", "protocol": "anthropic_messages",
+        "configured_model": "gpt-5.6-sol", "actual_model": "gpt-5.6-sol",
+        "environment_variables": ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"],
+        "endpoint_fingerprint_sha256": __import__("hashlib").sha256(endpoint.encode()).hexdigest(),
+        "temperature": "unsupported", "seed": "unsupported", "native_tool_calling": "passed",
+    }
+    receipt = tmp_path / "audit/capability/summary.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps(evidence), encoding="utf-8")
+    identity = {
+        "provider": evidence["provider"], "protocol": evidence["protocol"],
+        "configured_model": evidence["configured_model"], "actual_model": evidence["actual_model"],
+        "endpoint_sha256": evidence["endpoint_fingerprint_sha256"],
+        "base_url_env": "ANTHROPIC_BASE_URL", "api_key_env": "[REDACTED]",
+        "temperature": evidence["temperature"], "seed": evidence["seed"],
+        "capability_evidence": receipt.relative_to(tmp_path).as_posix(),
+    }
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", endpoint)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder-token")
+    resolved = resolve_runtime_provider_identity(tmp_path, identity)
+    assert resolved["api_key_env"] == "ANTHROPIC_AUTH_TOKEN"
+    assert identity["api_key_env"] == "[REDACTED]"
+    verify_runtime_provider(resolved)
+
+
+@pytest.mark.parametrize("environment_variables", [[], ["ANTHROPIC_BASE_URL", "TOKEN_A", "TOKEN_B"]])
+def test_redacted_provider_identity_fails_closed_without_unique_audited_binding(tmp_path: Path, environment_variables):
+    identity = {
+        "provider": "local_reverse_proxy", "protocol": "anthropic_messages",
+        "configured_model": "gpt-5.6-sol", "actual_model": "gpt-5.6-sol",
+        "endpoint_sha256": "a" * 64, "base_url_env": "ANTHROPIC_BASE_URL",
+        "api_key_env": "[REDACTED]", "temperature": "unsupported", "seed": "unsupported",
+        "capability_evidence": "audit/capability/summary.json",
+    }
+    receipt = tmp_path / identity["capability_evidence"]
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps({
+        "status": "passed", "provider": identity["provider"], "protocol": identity["protocol"],
+        "configured_model": identity["configured_model"], "actual_model": identity["actual_model"],
+        "endpoint_fingerprint_sha256": identity["endpoint_sha256"],
+        "temperature": identity["temperature"], "seed": identity["seed"],
+        "native_tool_calling": "passed", "environment_variables": environment_variables,
+    }), encoding="utf-8")
+    with pytest.raises(EvalError, match="capability evidence"):
+        resolve_runtime_provider_identity(tmp_path, identity)
+
+
+def test_unredacted_provider_identity_remains_unchanged(tmp_path: Path):
+    identity = {"base_url_env": "ANTHROPIC_BASE_URL", "api_key_env": "ANTHROPIC_AUTH_TOKEN"}
+    assert resolve_runtime_provider_identity(tmp_path, identity) == identity
 
 
 def test_formal_loader_revalidates_plan_manifest_raw_and_audit(tmp_path: Path):
