@@ -175,7 +175,9 @@ def test_freeze_only_hotfix_rejects_agent_package_drift(tmp_path: Path):
         )
 
 
-def test_verify_freeze_behavior_provenance_binds_current_head(tmp_path: Path):
+def test_verify_freeze_behavior_provenance_accepts_artifact_only_descendant(tmp_path: Path):
+    import subprocess
+
     development_commit, freeze_commit = _init_agent_history(tmp_path)
     provenance = resolve_freeze_behavior_provenance(
         tmp_path,
@@ -185,13 +187,68 @@ def test_verify_freeze_behavior_provenance_binds_current_head(tmp_path: Path):
         allow_freeze_only_hotfix=True,
         iteration=3,
     )
+    artifact = tmp_path / "audit/baseline-v3.json"
+    artifact.parent.mkdir()
+    artifact.write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "baseline artifact"], check=True)
+
     verify_freeze_behavior_provenance(
         tmp_path, provenance=provenance, current_behavior_hash="d" * 64,
     )
-    with pytest.raises(EvalError, match="current HEAD"):
+
+
+def test_verify_freeze_behavior_provenance_rejects_nonancestor_reporter(tmp_path: Path):
+    import subprocess
+
+    development_commit, freeze_commit = _init_agent_history(tmp_path)
+    provenance = resolve_freeze_behavior_provenance(
+        tmp_path,
+        development={"code_commit": development_commit, "code_hash": "b" * 64},
+        freeze_commit=freeze_commit,
+        current_behavior_hash="d" * 64,
+        allow_freeze_only_hotfix=True,
+        iteration=3,
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "--orphan", "unrelated"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "rm", "-qrf", "."], check=True)
+    (tmp_path / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "unrelated"], check=True)
+    unrelated_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "master"], check=True)
+
+    with pytest.raises(EvalError, match="ancestor"):
         verify_freeze_behavior_provenance(
-            tmp_path, provenance={**provenance, "freeze_reporter_commit": "a" * 40},
+            tmp_path, provenance={**provenance, "freeze_reporter_commit": unrelated_commit},
             current_behavior_hash="d" * 64,
+        )
+
+
+def test_verify_freeze_behavior_provenance_rejects_runtime_or_agent_drift(tmp_path: Path):
+    import subprocess
+
+    development_commit, freeze_commit = _init_agent_history(tmp_path)
+    provenance = resolve_freeze_behavior_provenance(
+        tmp_path,
+        development={"code_commit": development_commit, "code_hash": "b" * 64},
+        freeze_commit=freeze_commit,
+        current_behavior_hash="d" * 64,
+        allow_freeze_only_hotfix=True,
+        iteration=3,
+    )
+    with pytest.raises(EvalError, match="runtime code"):
+        verify_freeze_behavior_provenance(
+            tmp_path, provenance=provenance, current_behavior_hash="e" * 64,
+        )
+
+    (tmp_path / "src/reqagent/agent.py").write_text("AGENT = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "agent drift"], check=True)
+    with pytest.raises(EvalError, match="Agent package"):
+        verify_freeze_behavior_provenance(
+            tmp_path, provenance=provenance, current_behavior_hash="d" * 64,
         )
 
 
