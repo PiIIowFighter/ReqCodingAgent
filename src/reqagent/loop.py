@@ -206,9 +206,13 @@ class AgentLoop:
             call = self.pending_tool_calls[self.next_tool_index]
             self._synthetic_result(call, kind, message)
             self.next_tool_index += 1
-        validate_tool_protocol(self.context.messages)
+        self._compact_closed_batch()
         self._clear_pending()
         self._checkpoint("call_model")
+
+    def _compact_closed_batch(self) -> None:
+        validate_tool_protocol(self.context.messages)
+        self.context.compact_if_needed(self.registry.history, self.workspace.diff_hash())
 
     def _clear_pending(self) -> None:
         self.pending_tool_calls = ()
@@ -374,7 +378,7 @@ class AgentLoop:
                         if self.next_tool_index < len(self.pending_tool_calls):
                             self._checkpoint("execute")
                             continue
-                        validate_tool_protocol(self.context.messages)
+                        self._compact_closed_batch()
                         self._clear_pending()
                         self._checkpoint("call_model")
                         if pending_stage == "investigating" and (
@@ -446,14 +450,13 @@ class AgentLoop:
                     if call.name == "record_requirement_brief" and result.ok and adaptive is not None:
                         brief_message = adaptive.brief_message()
                     self.run_store.event("tool_result", sequence=self.tool_calls, phase=tool_phase if adaptive is not None else "main", call_id=call.call_id, result=result.to_dict())
-                    self.context.compact_if_needed(self.registry.history, after)
                     self.next_tool_index += 1
                     if call.name == "submit" and result.ok:
                         self.submitted = result.data
                         if self.next_tool_index < len(self.pending_tool_calls):
                             self._close_remaining("phase_transition", "submit completed the run")
                         else:
-                            validate_tool_protocol(self.context.messages)
+                            self._compact_closed_batch()
                             self._clear_pending()
                             self._checkpoint("call_model")
                         stop_reason = "submitted"
@@ -468,7 +471,7 @@ class AgentLoop:
                     if self.next_tool_index < len(self.pending_tool_calls):
                         self.next_state = "execute"
                     else:
-                        validate_tool_protocol(self.context.messages)
+                        self._compact_closed_batch()
                         self._clear_pending()
                         self._checkpoint("call_model")
                         if adaptive is not None and pending_stage == "investigating" and (

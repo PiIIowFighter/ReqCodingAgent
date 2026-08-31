@@ -58,15 +58,16 @@ class ContextLedger:
     def compact_if_needed(self, tool_history: list[dict[str, Any]], diff_fingerprint: str) -> bool:
         if self.estimate_tokens() < int(self.context_window * self.trigger_ratio):
             return False
-        preserve = 2 + self.keep_recent_rounds * 2
-        if len(self.messages) <= preserve:
+        assistant_indices = [index for index, message in enumerate(self.messages[2:], 2) if message.role == "assistant"]
+        if len(assistant_indices) <= self.keep_recent_rounds:
             return False
-        old = self.messages[2:-self.keep_recent_rounds * 2]
+        recent_start = assistant_indices[-self.keep_recent_rounds]
+        old = self.messages[2:recent_start]
         inspected = sorted({item["arguments"].get("path") for item in tool_history if item["name"] in {"read_file", "list_files"} and item["arguments"].get("path")})
         modifications = sorted({path for item in tool_history if item["name"] == "apply_patch" and item["result"]["ok"] for path in item["result"]["data"].get("paths", [])})
         commands = tuple(item["arguments"]["command"] for item in tool_history if item["name"] == "run_command")
         self.summary = ContextSummary(tuple(inspected), tuple(message.text[:500] for message in old if message.text), tuple(modifications), commands, (), (), (), diff_fingerprint)
-        recent = self.messages[-self.keep_recent_rounds * 2:]
+        recent = self.messages[recent_start:]
         self.messages = self.messages[:2] + [ModelMessage("system", "Earlier interaction summary: " + self.summary.text())] + recent
         return True
 
