@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from evalsys.baseline import build_formal_plan
-from evalsys.cli import build_parser, validate_freeze_only_hotfix_options
+from evalsys.cli import build_parser, validate_formal_gate_hotfix_options, validate_freeze_only_hotfix_options
 from evalsys.errors import EvalError
 from evalsys.harness_environment import harness_receipt_path
 from evalsys.iteration2 import (
@@ -22,10 +22,12 @@ from evalsys.iteration3 import (
     development_smoke_cell,
     iteration_roots,
     requirement_snapshot_payloads,
+    resolve_formal_gate_provenance,
     resolve_freeze_behavior_provenance,
     single_cell_waves,
     summarize_audited_iteration3_results,
     summarize_comparison,
+    verify_formal_gate_resume,
     verify_freeze_behavior_provenance,
     write_test_receipt,
 )
@@ -76,6 +78,114 @@ def test_freeze_only_hotfix_cli_is_explicit_and_iteration3_only():
             validate_freeze_only_hotfix_options(parser.parse_args(argv))
 
 
+def test_formal_gate_hotfix_cli_is_explicit_confirmed_and_iteration3_only():
+    parser = build_parser()
+    default = parser.parse_args([
+        "run-formal", "--name", "baseline-v3", "--iteration", "3", "--confirm",
+    ])
+    assert default.allow_formal_gate_hotfix is False
+
+    opted_in = parser.parse_args([
+        "run-formal", "--name", "baseline-v3", "--iteration", "3", "--confirm",
+        "--allow-formal-gate-hotfix",
+    ])
+    validate_formal_gate_hotfix_options(opted_in)
+
+    for argv, message in (
+        (["run-formal", "--name", "baseline-v3", "--iteration", "3", "--allow-formal-gate-hotfix"], "--confirm"),
+        (["run-formal", "--name", "baseline-v2", "--iteration", "2", "--confirm", "--allow-formal-gate-hotfix"], "iteration 3"),
+    ):
+        with pytest.raises(EvalError, match=message):
+            validate_formal_gate_hotfix_options(parser.parse_args(argv))
+
+
+def _formal_records() -> list[dict]:
+    return [row for row in records() if row["split"] == "test"]
+
+
+def _formal_baseline(project: Path, frozen_commit: str) -> tuple[dict, list[dict]]:
+    frozen_agent_hash = __import__("evalsys.iteration3", fromlist=["_agent_package_hash"])._agent_package_hash(project, frozen_commit)
+    plan = build_iteration3_plan(_formal_records())
+    return {
+        "name": "baseline-v3", "iteration": 3,
+        "behavior_tree_sha256": "b" * 64,
+        "freeze_source_commit": frozen_commit,
+        "freeze_behavior_provenance": {"agent_package_sha256": frozen_agent_hash},
+    }, plan
+
+
+def test_formal_gate_hotfix_defaults_to_strict_hash_equality(tmp_path: Path):
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    with pytest.raises(EvalError, match="behavior_tree_sha256"):
+        resolve_formal_gate_provenance(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=_formal_records(),
+            reporter_commit=frozen_commit, allow_formal_gate_hotfix=False,
+        )
+
+
+def test_formal_gate_hotfix_accepts_evalsys_drift_with_exact_plan_and_audits_reporter(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    (tmp_path / "src/evalsys/gate.py").write_text("GATE = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "formal reporter"], check=True)
+    reporter_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    provenance = resolve_formal_gate_provenance(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        reporter_commit=reporter_commit, allow_formal_gate_hotfix=True,
+    )
+
+    assert provenance["drift_mode"] == "formal_gate_hotfix"
+    assert provenance["frozen_baseline_behavior_tree_sha256"] == "b" * 64
+    assert provenance["reporter_commit"] == reporter_commit
+    assert len(provenance["reporter_behavior_tree_sha256"]) == 64
+    assert provenance["agent_package_sha256"] == baseline["freeze_behavior_provenance"]["agent_package_sha256"]
+
+    manifest = {
+        "formal_gate_provenance": provenance,
+        "plan": [{"case_id": row["case_id"]} for row in plan],
+    }
+    verify_formal_gate_resume(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        manifest=manifest, reporter_commit=reporter_commit,
+    )
+    with pytest.raises(EvalError, match="reporter"):
+        verify_formal_gate_resume(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+            manifest=manifest, reporter_commit=frozen_commit,
+        )
+
+
+def test_formal_gate_hotfix_rejects_plan_or_agent_drift(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    with pytest.raises(EvalError, match="plan"):
+        resolve_formal_gate_provenance(
+            tmp_path, baseline=baseline, frozen_plan=plan[:-1], records=records,
+            reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
+        )
+
+    (tmp_path / "src/reqagent/agent.py").write_text("AGENT = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "agent drift"], check=True)
+    agent_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    with pytest.raises(EvalError, match="Agent package"):
+        resolve_formal_gate_provenance(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+            reporter_commit=agent_commit, allow_formal_gate_hotfix=True,
+        )
+
+
 def test_single_cell_smoke_scheduler_does_not_require_a_pair():
     cell = {"case_id": "D-S1-fuzzy", "instance_id": "scikit-learn__scikit-learn-14983", "sequence": 1}
     assert single_cell_waves([cell]) == [[cell]]
@@ -118,10 +228,12 @@ def _init_agent_history(project: Path) -> tuple[str, str]:
     subprocess.run(["git", "-C", str(project), "config", "user.name", "Test"], check=True)
     agent = project / "src/reqagent/agent.py"
     evalsys = project / "src/evalsys/gate.py"
+    iteration3 = project / "src/evalsys/iteration3.py"
     agent.parent.mkdir(parents=True)
     evalsys.parent.mkdir(parents=True)
-    agent.write_text("AGENT = 1\n", encoding="utf-8")
-    evalsys.write_text("GATE = 1\n", encoding="utf-8")
+    agent.write_bytes(b"AGENT = 1\n")
+    evalsys.write_bytes(b"GATE = 1\n")
+    iteration3.write_bytes(b"PLAN = 1\n")
     subprocess.run(["git", "-C", str(project), "add", "."], check=True)
     subprocess.run(["git", "-C", str(project), "commit", "-qm", "development"], check=True)
     development_commit = subprocess.run(
