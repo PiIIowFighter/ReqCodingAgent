@@ -245,8 +245,9 @@ def behavior_tree_hash(project_root: Path) -> str:
     return digest.hexdigest()
 
 
-def plan_generator_hash(project_root: Path) -> str:
-    return sha256_file(project_root / "src/evalsys/baseline.py")
+def plan_generator_hash(project_root: Path, *, iteration: int = 2) -> str:
+    source = "iteration3.py" if iteration == 3 else "baseline.py"
+    return sha256_file(project_root / "src/evalsys" / source)
 
 
 def _tool_schemas(project_root: Path, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -729,7 +730,7 @@ def freeze_baseline(
         "iteration": iteration,
         "formal_seed": FORMAL_SEED,
         "plan_generator": "evalsys.iteration3.build_iteration3_plan/v1" if iteration == 3 else "evalsys.baseline.build_formal_plan/v1",
-        "plan_generator_sha256": sha256_file(project_root / "src/evalsys/iteration3.py") if iteration == 3 else plan_generator_hash(project_root),
+        "plan_generator_sha256": plan_generator_hash(project_root, iteration=iteration),
         "behavior_tree_sha256": current_behavior_hash,
         "freeze_behavior_provenance": freeze_behavior_provenance,
         "plan_sha256": _sha256_bytes(plan_bytes), "system_prompt_sha256": _sha256_bytes(system_bytes),
@@ -827,7 +828,7 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
             "public_manifest_sha256": sha256_file(project_root / "benchmark/manifests/paired-cases.jsonl"),
             "source_lock_sha256": sha256_file(project_root / "benchmark/source-lock.json"),
             "dependency_lock_sha256": sha256_file(project_root / "uv.lock"),
-            "plan_generator_sha256": plan_generator_hash(project_root),
+            "plan_generator_sha256": plan_generator_hash(project_root, iteration=baseline.get("iteration", 2)),
             "behavior_tree_sha256": behavior_tree_hash(project_root),
             "system_prompt_sha256": sha256_file(project_root / "prompts/baseline/system.txt"),
             "protocol_prompt_sha256": sha256_file(project_root / "prompts/baseline/protocol.txt"),
