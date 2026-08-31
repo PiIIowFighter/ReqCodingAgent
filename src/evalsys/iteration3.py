@@ -104,6 +104,67 @@ def verify_freeze_behavior_provenance(
         raise EvalError("freeze provenance Agent package mismatch", category="invalid")
 
 
+def resolve_formal_gate_provenance(
+    project_root: Path, *, baseline: dict[str, Any], frozen_plan: list[dict[str, Any]],
+    records: list[dict[str, Any]], reporter_commit: str, allow_formal_gate_hotfix: bool,
+) -> dict[str, Any]:
+    """Audit an iteration-3 evalsys-only gate drift without relaxing the frozen experiment."""
+    from .iteration2 import behavior_tree_hash, plan_generator_hash
+
+    current_behavior_hash = behavior_tree_hash(project_root)
+    current_generator_hash = plan_generator_hash(project_root, iteration=3)
+    frozen_behavior_hash = baseline.get("behavior_tree_sha256")
+    frozen_generator_hash = baseline.get("plan_generator_sha256")
+    if not allow_formal_gate_hotfix:
+        if current_behavior_hash != frozen_behavior_hash:
+            raise EvalError("current behavior_tree_sha256 does not match frozen baseline", category="invalid")
+        if current_generator_hash != frozen_generator_hash:
+            raise EvalError("current plan_generator_sha256 does not match frozen baseline", category="invalid")
+        return {}
+    if baseline.get("iteration") != 3:
+        raise EvalError("formal gate hotfix is restricted to iteration 3", category="invalid")
+    if frozen_plan != build_iteration3_plan(records):
+        raise EvalError("current iteration3 plan does not exactly match frozen plan", category="invalid")
+    provenance = baseline.get("freeze_behavior_provenance", {})
+    frozen_agent_hash = provenance.get("agent_package_sha256")
+    current_agent_hash = _agent_package_hash(project_root)
+    if not isinstance(frozen_agent_hash, str) or current_agent_hash != frozen_agent_hash:
+        raise EvalError("current Agent package does not match frozen provenance", category="invalid")
+    frozen_commit = baseline.get("freeze_source_commit")
+    ancestry = subprocess.run(
+        ["git", "-C", str(project_root), "merge-base", "--is-ancestor", str(frozen_commit), reporter_commit],
+        capture_output=True, check=False,
+    )
+    if ancestry.returncode:
+        raise EvalError("formal reporter commit is not a descendant of the frozen baseline", category="invalid")
+    return {
+        "drift_mode": "formal_gate_hotfix",
+        "frozen_baseline_behavior_tree_sha256": frozen_behavior_hash,
+        "frozen_plan_generator_sha256": frozen_generator_hash,
+        "reporter_commit": reporter_commit,
+        "reporter_behavior_tree_sha256": current_behavior_hash,
+        "reporter_plan_generator_sha256": current_generator_hash,
+        "agent_package_sha256": current_agent_hash,
+    }
+
+
+def verify_formal_gate_resume(
+    project_root: Path, *, baseline: dict[str, Any], frozen_plan: list[dict[str, Any]],
+    records: list[dict[str, Any]], manifest: dict[str, Any], reporter_commit: str,
+) -> None:
+    provenance = manifest.get("formal_gate_provenance")
+    if not isinstance(provenance, dict) or provenance.get("drift_mode") != "formal_gate_hotfix":
+        raise EvalError("formal drift resume provenance is missing", category="invalid")
+    if provenance.get("reporter_commit") != reporter_commit:
+        raise EvalError("formal drift resume requires identical reporter commit", category="invalid")
+    expected = resolve_formal_gate_provenance(
+        project_root, baseline=baseline, frozen_plan=frozen_plan, records=records,
+        reporter_commit=reporter_commit, allow_formal_gate_hotfix=True,
+    )
+    if provenance != expected:
+        raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
+
+
 def revised_gate_paths(project_root: Path) -> dict[str, Path]:
     return {
         "test_receipt": project_root / "audit/iteration3/adaptive-test-receipt.json",

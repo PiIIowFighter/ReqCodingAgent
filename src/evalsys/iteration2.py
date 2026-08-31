@@ -766,7 +766,10 @@ def freeze_baseline(
     return baseline_root
 
 
-def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, image_resolver=None) -> dict[str, Any]:
+def verify_frozen_baseline(
+    root: Path, *, project_root: Path | None = None, image_resolver=None,
+    allow_formal_gate_hotfix: bool = False,
+) -> dict[str, Any]:
     checksum_path = root / "checksums.sha256"
     try:
         lines = checksum_path.read_text(encoding="utf-8").splitlines()
@@ -833,10 +836,14 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
             "system_prompt_sha256": sha256_file(project_root / "prompts/baseline/system.txt"),
             "protocol_prompt_sha256": sha256_file(project_root / "prompts/baseline/protocol.txt"),
         }
+        allowed_formal_drift = (
+            allow_formal_gate_hotfix and baseline.get("iteration") == 3
+            and {"plan_generator_sha256", "behavior_tree_sha256"}
+        ) or set()
         for field, digest in current.items():
-            if baseline.get(field) != digest:
+            if baseline.get(field) != digest and field not in allowed_formal_drift:
                 raise EvalError(f"current {field} does not match frozen baseline", category="invalid")
-        if baseline.get("iteration") == 3:
+        if baseline.get("iteration") == 3 and not allow_formal_gate_hotfix:
             from .iteration3 import verify_freeze_behavior_provenance
             verify_freeze_behavior_provenance(
                 project_root,
@@ -1328,6 +1335,7 @@ def run_development(
 def run_formal_plan(
     settings, baseline_name: str, config, source_rows: dict[str, dict[str, Any]], *,
     resume: bool, max_new_cells: int | None = None, iteration: int = 2,
+    allow_formal_gate_hotfix: bool = False, reporter_commit: str | None = None,
 ) -> dict[str, Any]:
     if max_new_cells is not None and (isinstance(max_new_cells, bool) or max_new_cells <= 0):
         raise EvalError("--max-new-cells must be a positive integer", category="invalid")
@@ -1341,12 +1349,21 @@ def run_formal_plan(
             next(digest for digest in initial["baseline"]["image_identities"][instance_id]["repo_digests"] if "@sha256:" in digest),
             docker_prefix=prefix,
         ),
+        allow_formal_gate_hotfix=allow_formal_gate_hotfix,
     )
     records = load_public_records(settings.project_root)
     test_records = [record for record in records if record["split"] == "test"]
+    formal_gate_provenance = {}
     if iteration == 3:
-        from .iteration3 import verify_iteration3_plan
+        from .iteration3 import resolve_formal_gate_provenance, verify_iteration3_plan
         verify_iteration3_plan(frozen["plan"], test_records)
+        if reporter_commit is None:
+            reporter_commit = _git(settings.project_root, "rev-parse", "HEAD")
+        formal_gate_provenance = resolve_formal_gate_provenance(
+            settings.project_root, baseline=frozen["baseline"], frozen_plan=frozen["plan"],
+            records=test_records, reporter_commit=reporter_commit,
+            allow_formal_gate_hotfix=allow_formal_gate_hotfix,
+        )
     else:
         verify_formal_plan(frozen["plan"], test_records)
     by_case = {record["case_id"]: record for record in records}
@@ -1363,11 +1380,19 @@ def run_formal_plan(
             for cell in frozen["plan"]
         ],
         "agent_code_commit": frozen["baseline"]["agent_code_commit"],
-        "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"], **scheduler,
+        "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"],
+        **({"formal_gate_provenance": formal_gate_provenance} if formal_gate_provenance else {}),
+        **scheduler,
     })
     raw_root = settings.artifact_root / f"runs/iteration{iteration}"
     results_by_case: dict[str, dict[str, Any]] = {}
     experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if resume and formal_gate_provenance:
+        from .iteration3 import verify_formal_gate_resume
+        verify_formal_gate_resume(
+            settings.project_root, baseline=frozen["baseline"], frozen_plan=frozen["plan"],
+            records=test_records, manifest=experiment, reporter_commit=reporter_commit,
+        )
     tracked_runs = experiment.get("cell_runs", {})
     for planned in frozen["plan"]:
         cell = by_case[planned["case_id"]]

@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     formal.add_argument("--resume", action="store_true")
     formal.add_argument("--max-new-cells", type=int)
     formal.add_argument("--iteration", type=int, choices=(2, 3), default=2)
+    formal.add_argument("--allow-formal-gate-hotfix", action="store_true")
     status = sub.add_parser("experiment-status", help="show resumable development or formal progress")
     status.add_argument("--kind", choices=("dev", "formal"), required=True)
     status.add_argument("--name", required=True)
@@ -103,6 +104,15 @@ def validate_freeze_only_hotfix_options(args: argparse.Namespace) -> None:
         raise EvalError("freeze-only hotfix is restricted to iteration 3", category="invalid")
 
 
+def validate_formal_gate_hotfix_options(args: argparse.Namespace) -> None:
+    if not getattr(args, "allow_formal_gate_hotfix", False):
+        return
+    if not args.confirm:
+        raise EvalError("formal gate hotfix requires --confirm", category="invalid")
+    if args.iteration != 3:
+        raise EvalError("formal gate hotfix is restricted to iteration 3", category="invalid")
+
+
 def exit_code_for_status(status: str) -> int:
     return 0 if status in {"passed", "paused"} else 1
 
@@ -112,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "freeze-baseline":
             validate_freeze_only_hotfix_options(args)
+        elif args.command == "run-formal":
+            validate_formal_gate_hotfix_options(args)
         settings = Settings.from_env(args.project_root)
         if args.command == "preflight":
             report = run_preflight(settings)
@@ -310,12 +322,14 @@ def main(argv: list[str] | None = None) -> int:
                 frozen = verify_frozen_baseline(baseline_root)
                 if frozen["baseline"].get("harness_environment") != harness_environment.get("reference"):
                     raise EvalError("current harness environment differs from frozen receipt", category="infra_failed")
-                verify_git_gate(settings.project_root)
+                reporter_commit = verify_git_gate(settings.project_root)
                 frozen_config = AgentConfig(frozen["baseline"]["config"], baseline_root / "baseline.json")
                 frozen_config.validate(live=True)
                 formal_result = run_formal_plan(
                     settings, args.name, frozen_config, source_rows,
                     resume=args.resume, max_new_cells=args.max_new_cells, iteration=iteration,
+                    allow_formal_gate_hotfix=args.allow_formal_gate_hotfix,
+                    reporter_commit=reporter_commit,
                 )
                 report = {"status": formal_result.get("status", "passed"), **formal_result}
         elif args.command == "validate-all":
