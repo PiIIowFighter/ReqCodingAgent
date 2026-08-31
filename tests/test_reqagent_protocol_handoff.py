@@ -142,6 +142,42 @@ def test_investigation_threshold_switches_to_synthesis_brief_only(tmp_path: Path
     assert registry.adaptive.fallback_reason
 
 
+def test_first_synthesis_brief_executes_after_five_investigation_tools(tmp_path: Path):
+    investigation = [
+        response("r1", [
+            ("r1a", "read_file", {"path": "code.py"}),
+            ("r1b", "search_text", {"query": "VALUE", "path": "."}),
+            ("r1c", "list_files", {"path": "."}),
+        ]),
+        response("r2", [
+            ("r2a", "read_file", {"path": "code.py"}),
+            ("r2b", "search_text", {"query": "VALUE", "path": "."}),
+        ]),
+    ]
+    loop, registry, _, store = run_loop(tmp_path, investigation + [
+        response("synthesis", [
+            ("brief", "record_requirement_brief", brief(["E001", "E002", "E003", "E004", "E005"])),
+            ("late", "record_requirement_brief", brief(["E001"])),
+        ]),
+        response("submit", [("submit", "submit", {"summary": "done", "tests": [], "limitations": ""})]),
+    ])
+
+    result = loop.run()
+
+    assert result.stop_reason == "submitted"
+    brief_calls = [item for item in registry.history if item["name"] == "record_requirement_brief"]
+    assert len(brief_calls) == 1
+    assert brief_calls[0]["result"]["ok"] is True
+    events = [json.loads(line) for line in (store.path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    late = next(event for event in events if event.get("kind") == "protocol_closure" and event.get("call_id") == "late")
+    assert late["error_kind"] == "phase_transition"
+    assert registry.adaptive.investigation_tool_count == 5
+    assert registry.adaptive.synthesis_tool_count == 1
+    trace = registry.adaptive.trace()
+    checkpoint = registry.adaptive.to_checkpoint()
+    assert trace["synthesis_tool_count"] == checkpoint["synthesis_tool_count"] == 1
+
+
 def test_synthesis_failure_restores_clean_baseline_context(tmp_path: Path):
     loop, registry, ledger, _ = run_loop(tmp_path, [
         response("r1", [("r1", "read_file", {"path": "code.py"})]),
