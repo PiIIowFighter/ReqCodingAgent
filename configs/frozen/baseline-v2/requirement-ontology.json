@@ -1,0 +1,1 @@
+{"ontology":{"Change Intent":["goal","current_behavior_or_symptom","expected_behavior"],"Code Scope":["target_component","relevant_symbol_or_api","affected_consumers"],"Constraints":["compatibility","boundary_and_error_semantics","excluded_scope"],"Validation":["acceptance_criteria","relevant_tests_or_checks"]},"version":"coding-requirement-ontology-v1"}

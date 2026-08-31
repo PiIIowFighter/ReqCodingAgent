@@ -1,0 +1,242 @@
+[
+  {
+    "ambiguity_type": "referential_ambiguity",
+    "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+    "case_id": "T-R2-fuzzy",
+    "experiment": "E4",
+    "instance_id": "psf__requests-2317",
+    "prompt_sha256": "3577be1441b7e8c17aa72cb823d0d40e6b3319cf2106f42a5a0a71b5fbfb0c51",
+    "sequence": 1,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+    "case_id": "T-R2-full",
+    "experiment": "E3",
+    "instance_id": "psf__requests-2317",
+    "prompt_sha256": "9fdbda259c2e75551a5282e979edf4ca93ba378bee22df393fe02998991cfd1a",
+    "sequence": 2,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "e6e300e729dd33956e5448d8be9a0b1540b4e53a",
+    "case_id": "T-O3-full",
+    "experiment": "E3",
+    "instance_id": "pytest-dev__pytest-7432",
+    "prompt_sha256": "f8453cfb1e017be81d0fd5ac8fc5b6faeff6045f71763c81e7fd51537a81ef31",
+    "sequence": 3,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "omission",
+    "base_commit": "e6e300e729dd33956e5448d8be9a0b1540b4e53a",
+    "case_id": "T-O3-fuzzy",
+    "experiment": "E4",
+    "instance_id": "pytest-dev__pytest-7432",
+    "prompt_sha256": "edb7eca48215f4457ded5ede7a31ecf7514ecd9e1628e2b35213b39e23e6cff2",
+    "sequence": 4,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": "specificity_reduction",
+    "base_commit": "a62775e99f2a5ea3d51db7160fad783f6cd8a4c5",
+    "case_id": "T-S3-fuzzy",
+    "experiment": "E4",
+    "instance_id": "scikit-learn__scikit-learn-13439",
+    "prompt_sha256": "c27832fcbfbfeabc2ffa9d9f2c851252fb35ab17cbafcece41684cb083c99327",
+    "sequence": 5,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "a62775e99f2a5ea3d51db7160fad783f6cd8a4c5",
+    "case_id": "T-S3-full",
+    "experiment": "E3",
+    "instance_id": "scikit-learn__scikit-learn-13439",
+    "prompt_sha256": "bcdb7c064b7370929b2d8b37e9b35008d95bc4050e49372d9f13723e13f8baa4",
+    "sequence": 6,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "omission",
+    "base_commit": "b16c7d12ccbc7b2d20364b89fb44285bcbfede54",
+    "case_id": "T-O1-fuzzy",
+    "experiment": "E4",
+    "instance_id": "astropy__astropy-14995",
+    "prompt_sha256": "0fcc157f51bdf3d09d9a08c1a76dfdf86ae9b48eed89fe624361c2847a040dbc",
+    "sequence": 7,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "b16c7d12ccbc7b2d20364b89fb44285bcbfede54",
+    "case_id": "T-O1-full",
+    "experiment": "E3",
+    "instance_id": "astropy__astropy-14995",
+    "prompt_sha256": "2eb1c507dd3ad67acc74872966e4bb5e14d571e20e67f246fc454ed9461f5745",
+    "sequence": 8,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "omission",
+    "base_commit": "a64cf2d5476e7bbda099b34c40b7be1880dbd39a",
+    "case_id": "T-O2-fuzzy",
+    "experiment": "E4",
+    "instance_id": "pydata__xarray-4094",
+    "prompt_sha256": "0ab2873943891689475966ccc5b3a283230725dae298a5a97da3d7385ab34881",
+    "sequence": 9,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "a64cf2d5476e7bbda099b34c40b7be1880dbd39a",
+    "case_id": "T-O2-full",
+    "experiment": "E3",
+    "instance_id": "pydata__xarray-4094",
+    "prompt_sha256": "4c60cee2e4247fd72e76052ae5938216ea38eca360d5b87d2a006d71bf4a91bc",
+    "sequence": 10,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "42e8cf47c7ee2db238bf91197ea398126c546741",
+    "case_id": "T-R1-full",
+    "experiment": "E3",
+    "instance_id": "django__django-13933",
+    "prompt_sha256": "401348caf9cb639acfea61bb1f3bbc93a59d3e8a025d2fb99dd17c4a512723dd",
+    "sequence": 11,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "referential_ambiguity",
+    "base_commit": "42e8cf47c7ee2db238bf91197ea398126c546741",
+    "case_id": "T-R1-fuzzy",
+    "experiment": "E4",
+    "instance_id": "django__django-13933",
+    "prompt_sha256": "f5c3c4b2f8a9d15c2397320626b2b0fbcae748e73c7b4c6341dbbe46840752ca",
+    "sequence": 12,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "b34751b7ed02b2cfcc36037fb729d4360480a299",
+    "case_id": "T-R3-full",
+    "experiment": "E3",
+    "instance_id": "scikit-learn__scikit-learn-13779",
+    "prompt_sha256": "d32c6ecdfaf0eeb42a35e7cb05bd03fc034571aaef7c7743a452422c2bcdc6bc",
+    "sequence": 13,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "referential_ambiguity",
+    "base_commit": "b34751b7ed02b2cfcc36037fb729d4360480a299",
+    "case_id": "T-R3-fuzzy",
+    "experiment": "E4",
+    "instance_id": "scikit-learn__scikit-learn-13779",
+    "prompt_sha256": "ba7bbfc0df695ff27913a4a59906727909562d9aaaa5ba98115c34bcb460964b",
+    "sequence": 14,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": "specificity_reduction",
+    "base_commit": "b19bce971e82f2497d67fdacdeca8db08ae0ba56",
+    "case_id": "T-S4-fuzzy",
+    "experiment": "E4",
+    "instance_id": "sphinx-doc__sphinx-8595",
+    "prompt_sha256": "799f20c0e66b4c0bef749fb6f8ad4a16b3da779557c6a7122535998dd929e259",
+    "sequence": 15,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "b19bce971e82f2497d67fdacdeca8db08ae0ba56",
+    "case_id": "T-S4-full",
+    "experiment": "E3",
+    "instance_id": "sphinx-doc__sphinx-8595",
+    "prompt_sha256": "f5549e64af66510e584758f04371935b8c6c3a5fec4fda812b8571a7bd733be4",
+    "sequence": 16,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "e7fd69d051eaa67cb17f172a39b57253e9cb831a",
+    "case_id": "T-S1-full",
+    "experiment": "E3",
+    "instance_id": "django__django-10914",
+    "prompt_sha256": "ba101c6d80094fe56bc64d74dcb7efe033a6e0d43dd77e8f00e65806fdbcdb8b",
+    "sequence": 17,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "specificity_reduction",
+    "base_commit": "e7fd69d051eaa67cb17f172a39b57253e9cb831a",
+    "case_id": "T-S1-fuzzy",
+    "experiment": "E4",
+    "instance_id": "django__django-10914",
+    "prompt_sha256": "81940c55cfbfd49e904e1800c87125f6daf0c75d8593b635e3b484bcc238c1f9",
+    "sequence": 18,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "430fb1db88843300fb4baae3edc499bbfe073b0c",
+    "case_id": "T-O4-full",
+    "experiment": "E3",
+    "instance_id": "matplotlib__matplotlib-25311",
+    "prompt_sha256": "a2583ca80e1609006e02901af35754c41bc9bb0c325da37d2f6fef434d7f2ff7",
+    "sequence": 19,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "omission",
+    "base_commit": "430fb1db88843300fb4baae3edc499bbfe073b0c",
+    "case_id": "T-O4-fuzzy",
+    "experiment": "E4",
+    "instance_id": "matplotlib__matplotlib-25311",
+    "prompt_sha256": "b01b20ba472746e9692a50a63532112a9f25fa738dde6f6ee3403bda9e428469",
+    "sequence": 20,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": "referential_ambiguity",
+    "base_commit": "82ef497a8c88f0f6e50d84520e7276bfbf65025d",
+    "case_id": "T-R4-fuzzy",
+    "experiment": "E4",
+    "instance_id": "sphinx-doc__sphinx-8721",
+    "prompt_sha256": "60731690e4e489e21a464b039e877545747a1b2c73a9199ea88925e8738f03da",
+    "sequence": 21,
+    "variant": "fuzzy"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "82ef497a8c88f0f6e50d84520e7276bfbf65025d",
+    "case_id": "T-R4-full",
+    "experiment": "E3",
+    "instance_id": "sphinx-doc__sphinx-8721",
+    "prompt_sha256": "684041d7ab737dd04914a0017b92d238cd8dae72182457e3f3a21f494e7acb3e",
+    "sequence": 22,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": null,
+    "base_commit": "33a0599711d26dc2b79f851c6daed4947df7c167",
+    "case_id": "T-S2-full",
+    "experiment": "E3",
+    "instance_id": "matplotlib__matplotlib-23476",
+    "prompt_sha256": "09f6a686f1cdc38099eeaf53b4f8d5d7f5ccc2587d792da3f5f5ac0ee5e94eab",
+    "sequence": 23,
+    "variant": "full"
+  },
+  {
+    "ambiguity_type": "specificity_reduction",
+    "base_commit": "33a0599711d26dc2b79f851c6daed4947df7c167",
+    "case_id": "T-S2-fuzzy",
+    "experiment": "E4",
+    "instance_id": "matplotlib__matplotlib-23476",
+    "prompt_sha256": "90c1d497ce8b4a54db1fa5c60872c859e85942f9bc0ec9dc5a35991620dd01b4",
+    "sequence": 24,
+    "variant": "fuzzy"
+  }
+]

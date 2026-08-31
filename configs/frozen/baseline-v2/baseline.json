@@ -1,0 +1,471 @@
+{
+  "agent_code_commit": "d7905e28fbd241eeb78c0e571ce11be98c5df236",
+  "authorization": {
+    "kind": "conditional_pre_authorization",
+    "statement": "User authorized automatic continuation only after every freeze gate passes; user did not manually inspect this generated hash."
+  },
+  "behavior_tree_sha256": "3e5cde8f9418335a399892baa1f5b098560fe8994f450045e2458ddc3e338313",
+  "config": {
+    "budgets": {
+      "command_timeout_seconds": 300,
+      "context_trigger_ratio": 0.8,
+      "keep_recent_rounds": 2,
+      "max_consecutive_invalid_outputs": 3,
+      "max_retries": 3,
+      "max_steps": 30,
+      "max_tool_calls": 60,
+      "max_total_invalid_outputs": 6,
+      "model_timeout_seconds": 180,
+      "wall_clock_seconds": 1800
+    },
+    "mode": "live",
+    "model": {
+      "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "context_window_tokens": 32768,
+      "max_output_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "native_tool_calling": true,
+      "protocol": "anthropic_messages",
+      "provider": "local_reverse_proxy",
+      "seed": "unsupported",
+      "temperature": "unsupported"
+    },
+    "script": [],
+    "workspace": {
+      "container_image": "ubuntu@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d",
+      "max_patch_bytes": 131072,
+      "max_patch_files": 5,
+      "max_patch_lines": 500,
+      "protected_paths": []
+    }
+  },
+  "config_sha256": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+  "created_at": "2026-08-31T03:50:00.693947Z",
+  "dependency_lock_sha256": "42021e9f2ff4b820fc3309dd530bf5d45909630a17473f24d01bfe7ffdd741e5",
+  "development": {
+    "after": {
+      "median_steps": null,
+      "resolved": 1,
+      "stop_reasons": {},
+      "total_tokens": "[REDACTED]",
+      "wall_time_seconds": 461.78100000001723
+    },
+    "before": {
+      "median_steps": null,
+      "resolved": null,
+      "stop_reasons": {},
+      "total_tokens": "[REDACTED]",
+      "wall_time_seconds": null
+    },
+    "cells": [
+      {
+        "actual_model": "gpt-5.6-sol",
+        "agent_tests": [
+          "python -m py_compile sklearn/model_selection/_split.py sklearn/model_selection/tests/test_split.py"
+        ],
+        "ambiguity_type": "specificity_reduction",
+        "case_id": "D-S1-fuzzy",
+        "checksum": "a2e3207e84b64731013d2e40081c806abef1352fce60a7ec71e99f8c2967b915",
+        "evaluation": {
+          "base_commit": "06632c0d185128a53c57ccc73b25b6408e90bb89",
+          "case_id": "D-S1-fuzzy",
+          "classification": "resolved",
+          "cleanup": {
+            "message": null,
+            "status": "passed"
+          },
+          "data_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+          "docker_image": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+          "ended_at": "2026-08-31T03:47:33.540132Z",
+          "error": null,
+          "fail_to_pass": {
+            "sklearn/model_selection/tests/test_split.py::test_repeated_cv_repr[RepeatedKFold]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_repeated_cv_repr[RepeatedStratifiedKFold]": "PASSED"
+          },
+          "harness_revision": "7a21e05772954cc81471ae19d56f436cecf43c54",
+          "instance_id": "scikit-learn__scikit-learn-14983",
+          "logs": {
+            "harness": "harness",
+            "stderr": "stderr.log",
+            "stdout": "stdout.log"
+          },
+          "mode": "agent",
+          "pass_to_pass": {
+            "sklearn/model_selection/tests/test_split.py::test_2d_y": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_build_repr": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_check_cv": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_cross_validator_with_default_params": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_cv_iterable_wrapper": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_get_n_splits_for_repeated_kfold": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_get_n_splits_for_repeated_stratified_kfold": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_group_kfold": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_group_shuffle_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_group_shuffle_split_default_test_size[0.7-7-3]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_group_shuffle_split_default_test_size[7-7-3]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_group_shuffle_split_default_test_size[None-8-2]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_kfold_balance": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_kfold_can_detect_dependent_samples_on_digits": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_kfold_indices": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_kfold_no_shuffle": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_kfold_valueerrors": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_leave_group_out_changing_groups": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_leave_one_out_empty_trainset": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_leave_one_p_group_out": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_leave_one_p_group_out_error_on_fewer_number_of_groups": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_leave_p_out_empty_trainset": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_nested_cv": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_predefinedsplit_with_kfold_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_repeated_cv_value_errors": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_repeated_kfold_determinstic_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_repeated_stratified_kfold_determinstic_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_kfold": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_kfold_stratifiedkfold_reproducibility": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[0.8-8-2-ShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[0.8-8-2-StratifiedShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[8-8-2-ShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[8-8-2-StratifiedShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[None-9-1-ShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_default_test_size[None-9-1-StratifiedShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_empty_trainset[GroupShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_empty_trainset[ShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_split_empty_trainset[StratifiedShuffleSplit]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shuffle_stratifiedkfold": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[0.1-0.95]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[1.0-None]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[10-None]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[11-None]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[2.0-None]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[8-3]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_errors[None-train_size3]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_shufflesplit_reproducible": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[4-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[4-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[6-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[6-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[7-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_label_invariance[7-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_no_shuffle": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[10-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[10-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[4-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[4-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[5-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[5-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[6-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[6-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[7-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[7-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[8-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[8-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[9-False]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_kfold_ratios[9-True]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_even": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_init": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_iter": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_multilabel": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_multilabel_many_labels": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_overlap_train_test_bug": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratified_shuffle_split_respects_test_size": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratifiedkfold_balance": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_stratifiedshufflesplit_list_input": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_time_series_cv": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_time_series_max_train_size": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_allow_nans": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_default_test_size[0.8-8-2]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_default_test_size[8-8-2]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_default_test_size[None-7-3]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_empty_trainset": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_errors": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[-0.2-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[0.0-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[0.8--0.2]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[0.8-0.0]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[0.8-1.0]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[0.8-1.2]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[1.0-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes1[1.2-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[-10-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[0-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[0.8--10]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[0.8-0]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[0.8-11]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_invalid_sizes2[11-0.8]": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_list_input": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_mock_pandas": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_pandas": "PASSED",
+            "sklearn/model_selection/tests/test_split.py::test_train_test_split_sparse": "PASSED"
+          },
+          "repo": "scikit-learn/scikit-learn",
+          "run_id": "20260831T033951906421Z_dev_cell_525bb3df49",
+          "schema_version": "1.0",
+          "split": "dev",
+          "stages": {
+            "environment": "passed",
+            "patch": "passed",
+            "tests": "passed"
+          },
+          "started_at": "2026-08-31T03:46:34.979163Z",
+          "status": "resolved",
+          "tests_executed": true,
+          "wall_time_s": 58.562999999994645
+        },
+        "evaluator_recorded": true,
+        "image": {
+          "image_id": "sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+          "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+          "repo_digests": [
+            "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836"
+          ],
+          "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836"
+        },
+        "instance_id": "scikit-learn__scikit-learn-14983",
+        "patch": {
+          "additions": 16,
+          "bytes": 2141,
+          "deletions": 0,
+          "files": 2
+        },
+        "run_id": "20260831T033951906421Z_dev_cell_525bb3df49",
+        "status": "resolved",
+        "steps": 23,
+        "stop_reason": "submitted",
+        "tool_calls": 38,
+        "usage": {
+          "cache_creation_input_tokens": "[REDACTED]",
+          "cache_read_input_tokens": "[REDACTED]",
+          "input_tokens": "[REDACTED]",
+          "output_tokens": "[REDACTED]"
+        },
+        "variant": "fuzzy",
+        "wall_time_seconds": 461.78100000001723
+      }
+    ],
+    "code_commit": "d7905e28fbd241eeb78c0e571ce11be98c5df236",
+    "code_hash": "3e5cde8f9418335a399892baa1f5b098560fe8994f450045e2458ddc3e338313",
+    "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+    "created_at": "2026-08-31T03:47:35.501823Z",
+    "decision": "accepted",
+    "exact_change": "Initial candidate",
+    "expected_effect": "Establish benchmark baseline",
+    "harness_environment": {
+      "path": "audit/iteration3/harness-environment-receipt.json",
+      "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
+    },
+    "hypothesis": "ReqRefine live integration smoke",
+    "observed_issue": "",
+    "pair_order_source": "frozen_plan",
+    "parallel_cells": 1,
+    "parent": null,
+    "protocol_prompt_hash": "d69b71a379f310937f8db1e64e1298eb6ae21a4ab5c1e5804bd6345f394cb945",
+    "provider_identity": {
+      "actual_model": "gpt-5.6-sol",
+      "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "capability_evidence": "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+      "configured_model": "gpt-5.6-sol",
+      "context_window_tokens": 32768,
+      "endpoint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+      "max_output_tokens": 4096,
+      "protocol": "anthropic_messages",
+      "provider": "local_reverse_proxy",
+      "seed": "unsupported",
+      "temperature": "unsupported"
+    },
+    "rationale": "The authorized single smoke cell produced a verified non-infrastructure Agent/evaluator record.",
+    "result_order": "frozen_plan_sequence",
+    "rollback_risk": "none",
+    "scheduler": "deterministic_wave_v1",
+    "scope": "single_cell_smoke",
+    "source_run_ids": [
+      "20260831T033951906421Z_dev_cell_525bb3df49"
+    ],
+    "successor": null,
+    "system_prompt_hash": "b859fe906e6b09ec7b4a54d968681b2f8316538ec1c59b134a6887e1fcb5f034",
+    "test_receipt": {
+      "path": "audit/iteration3/test-receipt.json",
+      "sha256": "b8850a588611c413af2cc3803321f88ba1e881c69b703ef00d55dfb8966a8de4"
+    },
+    "tool_schema_hash": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc",
+    "validation_plan": "Complete only D-S1-fuzzy as the authorized smoke cell",
+    "version": "v002"
+  },
+  "formal_seed": 20260828,
+  "freeze_source_commit": "11cf800e2f202418b1bbca4fdc927191bc751fe7",
+  "harness_environment": {
+    "path": "audit/iteration3/harness-environment-receipt.json",
+    "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
+  },
+  "image_identities": {
+    "astropy__astropy-14995": {
+      "available": true,
+      "image_id": "sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+      "pinned": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995@sha256:e1c746371f8f7132c29768bea9cc1380871c87f6e4404a2282d8d3c582786874"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.astropy_1776_astropy-14995:latest"
+    },
+    "django__django-10914": {
+      "available": true,
+      "image_id": "sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-10914@sha256:f26f0db931c6c1e785ab8287e1ea4f5f948846267db159deaf90b3fe7adea4e9"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-10914:latest"
+    },
+    "django__django-11133": {
+      "available": true,
+      "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133:latest"
+    },
+    "django__django-13933": {
+      "available": true,
+      "image_id": "sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+      "pinned": "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.django_1776_django-13933@sha256:0f3b43fc1c71e443ccaac6c84253a158a37026f8d4bb192e2e81da36f0a3abbc"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.django_1776_django-13933:latest"
+    },
+    "matplotlib__matplotlib-23476": {
+      "available": true,
+      "image_id": "sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476@sha256:10230151c40fbb30c572497c0d2cc6bebead75042568f9223c3266043e6fc249"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-23476:latest"
+    },
+    "matplotlib__matplotlib-25311": {
+      "available": true,
+      "image_id": "sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311@sha256:3e08e93c4788b52c21ed959dc401e62e5dd6d95f52b92a389018a36b8f1e3142"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25311:latest"
+    },
+    "matplotlib__matplotlib-25332": {
+      "available": true,
+      "image_id": "sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+      "pinned": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332@sha256:e730789910800c84441072e81399d623440a0b03838867d203e54a5f65058cb3"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-25332:latest"
+    },
+    "psf__requests-2317": {
+      "available": true,
+      "image_id": "sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+      "pinned": "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.psf_1776_requests-2317@sha256:c6b5c8846507b5e48e307decca28dbdfa4f5ef17070c1087aacde765e8c4b178"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.psf_1776_requests-2317:latest"
+    },
+    "pydata__xarray-4094": {
+      "available": true,
+      "image_id": "sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+      "pinned": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094@sha256:6bcd1fe581af0796691ac3527b940d43e5e1bfd6539adeecebb12f3e4b25dc2c"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.pydata_1776_xarray-4094:latest"
+    },
+    "pytest-dev__pytest-7432": {
+      "available": true,
+      "image_id": "sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+      "pinned": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432@sha256:5ec7065f9477542610ea5137247539d8f1c9762112803b0690d5ccb2e64d2f07"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-7432:latest"
+    },
+    "scikit-learn__scikit-learn-13439": {
+      "available": true,
+      "image_id": "sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439@sha256:0c61d64ae4c3b8a215ecc4f8efbde87dd6bb9d2583579a82b24ecc7780631775"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13439:latest"
+    },
+    "scikit-learn__scikit-learn-13779": {
+      "available": true,
+      "image_id": "sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779@sha256:f7188477fd1e48e0e9bb1efa8a47068979127e1995fbab4c9eb3b04eaadf0618"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13779:latest"
+    },
+    "scikit-learn__scikit-learn-14983": {
+      "available": true,
+      "image_id": "sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+      "pinned": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983@sha256:96e1896b74d100457d8d82f3683ea4c6f807235755f89cc61862f0da7f5f5836"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-14983:latest"
+    },
+    "sphinx-doc__sphinx-8595": {
+      "available": true,
+      "image_id": "sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+      "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595@sha256:d24f9894d781546578028592ad7630cb40973b69af4705582b5e274afc573628"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8595:latest"
+    },
+    "sphinx-doc__sphinx-8721": {
+      "available": true,
+      "image_id": "sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+      "pinned": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5",
+      "repo_digests": [
+        "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721@sha256:8f02afdb324767a2e56b7940569ea822cfa58c3c1f0ef9a910162d21cf52c3f5"
+      ],
+      "requested": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-8721:latest"
+    }
+  },
+  "iteration": 3,
+  "name": "baseline-v2",
+  "pair_order_source": "frozen_plan",
+  "parallel_cells": 2,
+  "plan_generator": "evalsys.baseline.build_formal_plan/v1 + evalsys.iteration3 E3/E4 label projection",
+  "plan_generator_sha256": "78bfe5e685fc6010be20ef6bcd433a4b9a5f7a881b7cbdbbbfa19546d43596f6",
+  "plan_sha256": "94e28d8b55913b4ce20e921414ff3ecae9974d3fb413cb9cc274bb8fa9cee6a8",
+  "protocol_prompt_sha256": "d69b71a379f310937f8db1e64e1298eb6ae21a4ab5c1e5804bd6345f394cb945",
+  "provider_hard_context_limit": "unavailable",
+  "provider_identity": {
+    "actual_model": "gpt-5.6-sol",
+    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+    "base_url_env": "ANTHROPIC_BASE_URL",
+    "capability_evidence": "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+    "configured_model": "gpt-5.6-sol",
+    "context_window_tokens": 32768,
+    "endpoint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+    "max_output_tokens": 4096,
+    "protocol": "anthropic_messages",
+    "provider": "local_reverse_proxy",
+    "seed": "unsupported",
+    "temperature": "unsupported"
+  },
+  "public_manifest_sha256": "e20f0ecd0f496cde58a0dcd0797939bd0c74dd701c491fd086fef9a112b4d6e6",
+  "reflection_gate_sha256": "81b37c0ba048bf0cfc2430a59f51f24e99f714f261df57ba4c3fc666806b5818",
+  "requirement_ontology_sha256": "de063a5b1b6be99145120f1eb2728eb30f98c085b0ee6c6823dcfa01837dd2bf",
+  "result_order": "frozen_plan_sequence",
+  "scheduler": "deterministic_wave_v1",
+  "schema_version": "1.0",
+  "skill_catalog_sha256": "1cdf3e42fd98ffee9b17499fcdb182260e6ac5cda8bd8087d7847e984d76b8a3",
+  "source_lock_sha256": "17ad662d57ebdef76efb964fde148b55351ec374f5171f232f25f33e5df6a84e",
+  "system_prompt_sha256": "b859fe906e6b09ec7b4a54d968681b2f8316538ec1c59b134a6887e1fcb5f034",
+  "tool_schema_sha256": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc"
+}

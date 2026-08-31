@@ -1,0 +1,141 @@
+[
+  {
+    "description": "List repository files. Call this to locate relevant code before editing.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_entries": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "list_files"
+  },
+  {
+    "description": "Read a repository text file with line numbers. Call this before changing a file.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_line": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "read_file"
+  },
+  {
+    "description": "Search text in repository files. Call this to locate symbols and references.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "glob": {
+          "type": "string"
+        },
+        "max_results": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_text"
+  },
+  {
+    "description": "Apply one atomic unified diff. Call this only after reading the affected files.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "patch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "type": "object"
+    },
+    "name": "apply_patch"
+  },
+  {
+    "description": "Run a repository command in the configured isolated container with no network and bounded resources.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "name": "run_command"
+  },
+  {
+    "description": "Finish the task with a concise change summary and only tests actually run.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "limitations": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "name": "submit"
+  }
+]

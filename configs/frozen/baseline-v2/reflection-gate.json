@@ -1,0 +1,1 @@
+{"assumption_provenance":true,"forbidden_external_or_evaluator_data":true,"honest_slot_status":true,"max_selected_skills":2,"repository_evidence":true,"required":["goal","target_component","expected_behavior_or_acceptance_criteria"]}
