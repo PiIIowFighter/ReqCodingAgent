@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from evalsys.baseline import build_formal_plan
 from evalsys.cli import build_parser
+from evalsys.errors import EvalError
 from evalsys.harness_environment import harness_receipt_path
+from evalsys.iteration2 import freeze_baseline
 from evalsys.iteration3 import (
     ITERATION,
     baseline_snapshots,
@@ -61,6 +65,44 @@ def test_iteration3_uses_independent_roots_and_refined_smoke_cell(tmp_path: Path
     decision = route_task(cell["prompt"])
     assert decision.mode == "refine"
     assert decision.selected_skills
+
+
+def test_iteration3_freeze_uses_selected_development_smoke_cell_identity(tmp_path: Path, monkeypatch):
+    selected = development_smoke_cell(records())
+    cell = {
+        "run_id": "dev-run",
+        "case_id": selected["case_id"],
+        "instance_id": selected["instance_id"],
+        "variant": selected["prompt_variant"],
+    }
+    development = {
+        "source_run_ids": [cell["run_id"]],
+        "scope": "single_cell_smoke",
+        "cells": [cell],
+        "config_hash": "a",
+        "system_prompt_hash": "b",
+        "protocol_prompt_hash": "c",
+        "tool_schema_hash": "d",
+        "code_commit": "e" * 40,
+        "code_hash": "f",
+    }
+
+    def downstream(*args, **kwargs):
+        raise RuntimeError("reached downstream evidence verification")
+
+    monkeypatch.setattr("evalsys.iteration2.verify_development_evidence", downstream)
+    with pytest.raises(RuntimeError, match="downstream evidence"):
+        freeze_baseline(
+            tmp_path, "baseline-v3", {}, records(), development=development,
+            image_identities={}, authorized=True, git_commit="a" * 40, iteration=3,
+        )
+
+    development["cells"] = [{**cell, "case_id": "D-S1-fuzzy", "instance_id": "scikit-learn__scikit-learn-14983"}]
+    with pytest.raises(EvalError, match="identities"):
+        freeze_baseline(
+            tmp_path, "baseline-v3", {}, records(), development=development,
+            image_identities={}, authorized=True, git_commit="a" * 40, iteration=3,
+        )
 
 
 def test_iteration3_plan_preserves_frozen_cells_and_relables_experiments():
