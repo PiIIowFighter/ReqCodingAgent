@@ -39,6 +39,12 @@ names=['docker','swebench','datasets','GitPython','tqdm','unidiff','rich','reque
 print(json.dumps({'python':'.'.join(map(str,sys.version_info[:3])),'versions':{n:m.version(n) for n in names},'imports':True,'docker_ping':docker.from_env().ping(),'sys_executable':sys.executable,'sys_prefix':sys.prefix,'site_packages':site.getsitepackages(),'no_site':sys.flags.no_site,'distribution':os.environ.get('WSL_DISTRO_NAME','unavailable'),'environment':{n:('set' if os.environ.get(n) else 'unset') for n in ('PYTHONPATH','PYTHONHOME','VIRTUAL_ENV','WSLENV')}},sort_keys=True))"""
 
 
+def harness_receipt_path(project_root: Path, *, iteration: int) -> Path:
+    if iteration not in {2, 3}:
+        raise ValueError("unsupported iteration")
+    return project_root / f"audit/iteration{iteration}/harness-environment-receipt.json"
+
+
 def verify_harness_environment(
     project_root: Path,
     checkout: Path,
@@ -49,6 +55,7 @@ def verify_harness_environment(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     command_prefix: list[str] | None = None,
     execution_checkout: str | None = None,
+    iteration: int = 2,
 ) -> dict[str, Any]:
     checkout = checkout.resolve()
     execution_root = execution_checkout or str(checkout)
@@ -90,14 +97,14 @@ def verify_harness_environment(
         "distribution": runtime.get("distribution", "unavailable"), "imports": True,
         "docker_ping": True, "no_site": runtime["no_site"], "environment": runtime.get("environment", {}),
     }
-    destination = project_root / "audit/iteration2/harness-environment-receipt.json"
+    destination = harness_receipt_path(project_root, iteration=iteration)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(sanitize(receipt, project_root=project_root), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     receipt["reference"] = {"path": destination.relative_to(project_root).as_posix(), "sha256": sha256_file(destination)}
     return receipt
 
 
-def verify_settings_harness_environment(settings) -> dict[str, Any]:
+def verify_settings_harness_environment(settings, *, iteration: int = 2) -> dict[str, Any]:
     lock = json.loads((settings.project_root / "benchmark/source-lock.json").read_text(encoding="utf-8"))
     expected_head = lock["sources"]["harness"]["revision"]
     checkout = settings.cache_root / "swe-bench"
@@ -116,7 +123,7 @@ def verify_settings_harness_environment(settings) -> dict[str, Any]:
     return verify_harness_environment(
         settings.project_root, checkout, settings.wsl_python,
         expected_head=expected_head, runner=subprocess.run, command_prefix=prefix,
-        execution_checkout=execution_checkout,
+        execution_checkout=execution_checkout, iteration=iteration,
     )
 
 

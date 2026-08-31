@@ -58,6 +58,7 @@ from evalsys.iteration2 import (
 )
 from reqagent.config import AgentConfig
 from reqagent.context import ContextLedger
+from reqagent.requirements import SLOT_NAMES
 from reqagent.loop import AgentLoop
 from reqagent.model import ScriptedModel
 from reqagent.tools import build_registry
@@ -1284,7 +1285,15 @@ def test_execute_cleans_normal_temporary_clone(tmp_path: Path):
     subprocess.run(["git", "-C", str(repo), "add", "x"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True)
     raw = json.loads((ROOT / "configs/agent/offline-scripted.json").read_text(encoding="utf-8"))
-    raw["script"] = [{"text": "", "tool_calls": [{"call_id": "submit", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "one"}]
+    slots = {name: {"value": "", "status": "unresolved", "evidence": [], "confidence": 0.0} for name in SLOT_NAMES}
+    evidence = [{"kind": "user_task", "reference": "task", "detail": "Explicit task statement"}]
+    for name, value in {"goal": "Complete the task", "expected_behavior": "The task is complete", "target_component": "x", "acceptance_criteria": "The task is complete"}.items():
+        slots[name] = {"value": value, "status": "explicit", "evidence": evidence, "confidence": 1.0}
+    baseline = {"ambiguity_types": [], "selected_skills": [], "slots": slots, "assumptions": [], "original_summary": "task", "refined_summary": "Complete the explicit task in x"}
+    raw["script"] = [
+        {"text": "", "tool_calls": [{"call_id": "baseline", "name": "record_requirement_baseline", "arguments": baseline}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "one"},
+        {"text": "", "tool_calls": [{"call_id": "submit", "name": "submit", "arguments": {"summary": "done", "tests": [], "limitations": ""}}], "usage": {}, "finish_reason": "tool_calls", "provider_request_id": "two"},
+    ]
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(raw), encoding="utf-8")
     config = AgentConfig.load(config_path)

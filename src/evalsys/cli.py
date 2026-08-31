@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_target.add_argument("--name", help="frozen iteration-2 baseline name")
     report.add_argument("--allow-report-only-hotfix", action="store_true")
     report.add_argument("--confirm", action="store_true")
+    report.add_argument("--iteration", type=int, choices=(2, 3), default=2)
     smoke = sub.add_parser("smoke-report", help="aggregate one django__django-11133 noop/gold pair")
     smoke.add_argument("--noop-run", type=Path, required=True)
     smoke.add_argument("--gold-run", type=Path, required=True)
@@ -73,16 +74,19 @@ def build_parser() -> argparse.ArgumentParser:
     run_dev.add_argument("--resume", action="store_true")
     run_dev.add_argument("--max-new-cells", type=int)
     run_dev.add_argument("--parallel-cells", type=int, choices=(1, 2), default=1)
+    run_dev.add_argument("--iteration", type=int, choices=(2, 3), default=2)
     freeze = sub.add_parser("freeze-baseline", help="freeze an accepted development baseline")
     freeze.add_argument("--name", required=True)
     freeze.add_argument("--dev-version", required=True)
     freeze.add_argument("--config", type=Path, required=True)
     freeze.add_argument("--confirm", action="store_true")
+    freeze.add_argument("--iteration", type=int, choices=(2, 3), default=2)
     formal = sub.add_parser("run-formal", help="protected formal evaluation entry point")
     formal.add_argument("--name", required=True)
     formal.add_argument("--confirm", action="store_true")
     formal.add_argument("--resume", action="store_true")
     formal.add_argument("--max-new-cells", type=int)
+    formal.add_argument("--iteration", type=int, choices=(2, 3), default=2)
     status = sub.add_parser("experiment-status", help="show resumable development or formal progress")
     status.add_argument("--kind", choices=("dev", "formal"), required=True)
     status.add_argument("--name", required=True)
@@ -118,8 +122,11 @@ def main(argv: list[str] | None = None) -> int:
                     load_public_records, summarize_audited_formal_results, summarize_formal_results,
                     verify_formal_plan, verify_frozen_baseline, verify_git_gate,
                 )
+                iteration = args.iteration
                 baseline_root = settings.project_root / "configs/frozen" / args.name
-                formal_root = settings.artifact_root / "runs/iteration2/formal" / args.name
+                formal_root = settings.artifact_root / f"runs/iteration{iteration}/formal" / args.name
+                if iteration == 3 and args.allow_report_only_hotfix:
+                    raise EvalError("iteration3 has no authorized report-only hotfix", category="invalid")
                 if args.allow_report_only_hotfix:
                     if not args.confirm:
                         raise EvalError("report-only hotfix requires --confirm", category="invalid")
@@ -141,11 +148,25 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 else:
                     frozen = verify_frozen_baseline(baseline_root, project_root=settings.project_root)
-                    rows = load_formal_results(settings.project_root, settings.artifact_root / "runs/iteration2", frozen["plan"], formal_root / "experiment-manifest.json")
-                    report = summarize_formal_results(rows)
-                destination = settings.project_root / "audit/iteration2/reports" / f"{args.name}.json"
+                    rows = load_formal_results(
+                        settings.project_root,
+                        settings.artifact_root / f"runs/iteration{iteration}",
+                        frozen["plan"],
+                        formal_root / "experiment-manifest.json",
+                        iteration=iteration,
+                    )
+                    if iteration == 3:
+                        from .iteration3 import summarize_comparison, summarize_iteration3_results
+                        report = summarize_iteration3_results(rows)
+                    else:
+                        report = summarize_formal_results(rows)
+                destination = settings.project_root / f"audit/iteration{iteration}/reports" / f"{args.name}.json"
                 from .persistence import atomic_json
                 atomic_json(destination, report)
+                if iteration == 3:
+                    previous = json.loads((settings.project_root / "audit/iteration2/reports/baseline-v1.json").read_text(encoding="utf-8"))
+                    comparison = summarize_comparison(previous, report)
+                    atomic_json(settings.project_root / "audit/iteration3/reports/comparison-v1-v2.json", comparison)
                 report = {"status": "passed", "report": str(destination), **report}
             else:
                 if args.allow_report_only_hotfix or args.confirm:
@@ -182,9 +203,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             if not args.confirm:
                 raise EvalError(f"{args.command} requires --confirm", category="invalid")
+            iteration = getattr(args, "iteration", 2)
             if args.command in {"agent-run", "run-dev", "freeze-baseline"}:
                 config = preflight_agent_config(args.config, confirmed=True)
-            harness_environment = verify_settings_harness_environment(settings)
+            harness_environment = verify_settings_harness_environment(settings, iteration=iteration)
             prepared = load_prepared(settings)
             source_rows = {
                 instance_id: {**row, "harness_revision": prepared.lock_heads["harness"]}
@@ -209,23 +231,32 @@ def main(argv: list[str] | None = None) -> int:
                 from .recovery import sha256_file
                 inventory_path = settings.project_root / "audit/iteration2/image-inventory.json"
                 inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-                def gate_reference(name: str) -> dict[str, str]:
-                    path = settings.project_root / "audit/iteration2" / name
+                def gate_reference(name: str, *, source_iteration: int = iteration) -> dict[str, str]:
+                    path = settings.project_root / f"audit/iteration{source_iteration}" / name
                     if not path.is_file():
-                        raise EvalError(f"iteration2 gate evidence is missing: {name}", category="invalid")
+                        raise EvalError(f"iteration{source_iteration} gate evidence is missing: {name}", category="invalid")
                     return {"path": path.relative_to(settings.project_root).as_posix(), "sha256": sha256_file(path)}
+                selected_cells = None
+                scope = "full_matrix"
+                if iteration == 3:
+                    from .iteration3 import development_smoke_cell
+                    selected_cells = [development_smoke_cell(records)]
+                    scope = "single_cell_smoke"
+                    if args.parallel_cells != 1:
+                        raise EvalError("iteration3 development uses exactly one Agent worker", category="invalid")
                 development = run_development(
                     settings, args.version, config, source_rows, inventory, resume=args.resume,
                     test_receipt=gate_reference("test-receipt.json"),
-                    isolation_proof=gate_reference("isolation-proof.json"),
+                    isolation_proof=None if iteration == 3 else gate_reference("isolation-proof.json"),
                     provider_identity=provider_identity,
                     harness_environment=harness_environment["reference"],
                     max_new_cells=args.max_new_cells, parallel_cells=args.parallel_cells,
+                    iteration=iteration, selected_cells=selected_cells, development_scope=scope,
                 )
                 report = {"status": development.get("status", "passed"), "development": development}
             elif args.command == "freeze-baseline":
                 commit = verify_git_gate(settings.project_root)
-                development_path = settings.project_root / "audit/iteration2/development" / f"{args.dev_version}.json"
+                development_path = settings.project_root / f"audit/iteration{iteration}/development" / f"{args.dev_version}.json"
                 if not development_path.is_file():
                     raise EvalError("development record is missing", category="invalid")
                 development = json.loads(development_path.read_text(encoding="utf-8"))
@@ -233,7 +264,11 @@ def main(argv: list[str] | None = None) -> int:
                 if not inventory_path.is_file():
                     raise EvalError("task image inventory is missing", category="invalid")
                 images = json.loads(inventory_path.read_text(encoding="utf-8"))
-                destination = freeze_baseline(settings.project_root, args.name, config.raw, records, development=development, image_identities=images, authorized=True, git_commit=commit)
+                destination = freeze_baseline(
+                    settings.project_root, args.name, config.raw, records,
+                    development=development, image_identities=images, authorized=True,
+                    git_commit=commit, iteration=iteration,
+                )
                 report = {"status": "passed", "baseline": str(destination)}
             else:
                 baseline_root = require_frozen_baseline(settings.project_root, args.name)
@@ -245,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                 frozen_config.validate(live=True)
                 formal_result = run_formal_plan(
                     settings, args.name, frozen_config, source_rows,
-                    resume=args.resume, max_new_cells=args.max_new_cells,
+                    resume=args.resume, max_new_cells=args.max_new_cells, iteration=iteration,
                 )
                 report = {"status": formal_result.get("status", "passed"), **formal_result}
         elif args.command == "validate-all":

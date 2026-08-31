@@ -288,14 +288,14 @@ def verify_development_record_cells(public_cells: list[dict[str, Any]], raw_cell
             raise EvalError("development record cell identity mismatch", category="invalid")
 
 
-def verify_development_evidence(project_root: Path, artifact_root: Path, cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def verify_development_evidence(project_root: Path, artifact_root: Path, cells: list[dict[str, Any]], *, iteration: int = 2) -> list[dict[str, Any]]:
     from .evidence import select_current_runs
 
     try:
-        index = json.loads((project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+        index = json.loads((project_root / f"audit/iteration{iteration}/index.json").read_text(encoding="utf-8"))
         leaves = {entry["run_id"]: entry for entry in select_current_runs([entry for entry in index["runs"] if "run_type" in entry])}
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise EvalError("iteration2 audit index is invalid", category="invalid") from exc
+        raise EvalError(f"iteration{iteration} audit index is invalid", category="invalid") from exc
     verified = []
     for cell in cells:
         run_id = cell.get("run_id")
@@ -484,12 +484,12 @@ def verify_runtime_provider(identity: dict[str, Any], *, actual_model: str | Non
         raise EvalError("actual model does not match frozen provider identity", category="infra_failed")
 
 
-def load_formal_results(project_root: Path, artifact_root: Path, plan: list[dict[str, Any]], manifest_path: Path) -> list[dict[str, Any]]:
+def load_formal_results(project_root: Path, artifact_root: Path, plan: list[dict[str, Any]], manifest_path: Path, *, iteration: int = 2) -> list[dict[str, Any]]:
     from .evidence import select_current_runs
 
     try:
         experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
-        index = json.loads((project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
+        index = json.loads((project_root / f"audit/iteration{iteration}/index.json").read_text(encoding="utf-8"))
         leaves = {entry["run_id"]: entry for entry in select_current_runs([entry for entry in index["runs"] if "run_type" in entry])}
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise EvalError("formal experiment or audit index is invalid", category="invalid") from exc
@@ -549,30 +549,41 @@ def freeze_baseline(
     project_root: Path, name: str, config: dict[str, Any], records: list[dict[str, Any]], *,
     development: dict[str, Any] | None, image_identities: dict[str, Any],
     authorized: bool, git_commit: str, artifact_root: Path | None = None,
+    iteration: int = 2,
 ) -> Path:
     if not authorized:
         raise EvalError("freeze requires explicit user authorization", category="invalid")
-    if not development or len(development.get("source_run_ids", [])) != 6:
-        raise EvalError("complete development matrix evidence is required", category="invalid")
-    expected_cells = [
-        (f"{_DEV_CASES[instance_id]}-{variant}", instance_id, variant)
-        for instance_id in _DEV_INSTANCES
-        for variant in ("full", "fuzzy")
-    ]
+    expected_count = 1 if iteration == 3 else 6
+    if not development or len(development.get("source_run_ids", [])) != expected_count:
+        raise EvalError("required development evidence is incomplete", category="invalid")
+    if iteration == 3:
+        expected_cells = [("D-S1-fuzzy", "scikit-learn__scikit-learn-14983", "fuzzy")]
+        if development.get("scope") != "single_cell_smoke":
+            raise EvalError("iteration3 freeze requires scope=single_cell_smoke", category="invalid")
+    else:
+        expected_cells = [
+            (f"{_DEV_CASES[instance_id]}-{variant}", instance_id, variant)
+            for instance_id in _DEV_INSTANCES
+            for variant in ("full", "fuzzy")
+        ]
     cells = development.get("cells")
     required_development = {
         "config_hash", "system_prompt_hash", "protocol_prompt_hash", "tool_schema_hash",
         "code_commit", "code_hash",
     }
-    if not isinstance(cells, list) or len(cells) != 6 or not required_development.issubset(development):
+    if not isinstance(cells, list) or len(cells) != expected_count or not required_development.issubset(development):
         raise EvalError("development cell evidence or behavior binding is incomplete", category="invalid")
     actual_cells = [(cell.get("case_id"), cell.get("instance_id"), cell.get("variant")) for cell in cells]
     if actual_cells != expected_cells:
         raise EvalError("development cell identities do not match the fixed matrix", category="invalid")
     if development["source_run_ids"] != [cell.get("run_id") for cell in cells]:
         raise EvalError("development cell run IDs do not match source_run_ids", category="invalid")
-    raw_root = artifact_root or project_root / "artifacts/runs/iteration2"
-    verified_cells = verify_development_evidence(project_root, raw_root, cells)
+    raw_root = artifact_root or project_root / f"artifacts/runs/iteration{iteration}"
+    verified_cells = (
+        verify_development_evidence(project_root, raw_root, cells, iteration=iteration)
+        if iteration != 2
+        else verify_development_evidence(project_root, raw_root, cells)
+    )
     verify_development_record_cells(cells, verified_cells)
     receipt_bindings = {
         "behavior_tree_sha256": development.get("code_hash"),
@@ -581,7 +592,8 @@ def freeze_baseline(
         "protocol_prompt_hash": development.get("protocol_prompt_hash"),
         "tool_schema_hash": development.get("tool_schema_hash"),
     }
-    for label, field in (("test receipt", "test_receipt"), ("isolation proof", "isolation_proof")):
+    required_receipts = (("test receipt", "test_receipt"),) if iteration == 3 else (("test receipt", "test_receipt"), ("isolation proof", "isolation_proof"))
+    for label, field in required_receipts:
         receipt = development.get(field)
         if not isinstance(receipt, dict):
             raise EvalError(f"valid {label} is required", category="invalid")
@@ -634,11 +646,13 @@ def freeze_baseline(
         "pair_order_source": development.get("pair_order_source"),
         "result_order": development.get("result_order"),
     }
+    expected_development_parallelism = 1 if iteration == 3 else 2
     if scheduler != {
-        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "scheduler": "deterministic_wave_v1", "parallel_cells": expected_development_parallelism,
         "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
     }:
         raise EvalError("development scheduler identity is invalid", category="invalid")
+    frozen_scheduler = {**scheduler, "parallel_cells": 2}
     provider_identity = development.get("provider_identity")
     if not isinstance(provider_identity, dict) or provider_identity.get("actual_model") != "gpt-5.6-sol":
         raise EvalError("development provider identity is incomplete", category="invalid")
@@ -653,13 +667,24 @@ def freeze_baseline(
     baseline_root = project_root / "configs/frozen" / name
     baseline_root.mkdir(parents=True, exist_ok=False)
     test_records = [record for record in records if record.get("split") == "test"]
-    plan = build_formal_plan(test_records, seed=FORMAL_SEED)
+    if iteration == 3:
+        from .iteration3 import build_iteration3_plan
+        plan = build_iteration3_plan(test_records)
+    else:
+        plan = build_formal_plan(test_records, seed=FORMAL_SEED)
     plan_bytes = (json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
     (baseline_root / "plan.json").write_bytes(plan_bytes)
     public_config = json.loads(json.dumps(config))
     (baseline_root / "system.txt").write_bytes(system_bytes)
     (baseline_root / "protocol.txt").write_bytes(protocol_bytes)
     (baseline_root / "tool-schemas.json").write_bytes(tool_schema_bytes)
+    requirement_snapshot_bytes: dict[str, bytes] = {}
+    if iteration == 3:
+        from .iteration3 import requirement_snapshot_payloads
+        for snapshot_name, payload in requirement_snapshot_payloads().items():
+            content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            (baseline_root / snapshot_name).write_bytes(content)
+            requirement_snapshot_bytes[snapshot_name] = content
     manifest_path = project_root / "benchmark/manifests/paired-cases.jsonl"
     source_lock_path = project_root / "benchmark/source-lock.json"
     dependency_lock_path = project_root / "uv.lock"
@@ -668,8 +693,10 @@ def freeze_baseline(
         "agent_code_commit": development["code_commit"],
         "freeze_source_commit": git_commit,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "formal_seed": FORMAL_SEED, "plan_generator": "evalsys.baseline.build_formal_plan/v1",
-        "plan_generator_sha256": plan_generator_hash(project_root),
+        "iteration": iteration,
+        "formal_seed": FORMAL_SEED,
+        "plan_generator": "evalsys.iteration3.build_iteration3_plan/v1" if iteration == 3 else "evalsys.baseline.build_formal_plan/v1",
+        "plan_generator_sha256": sha256_file(project_root / "src/evalsys/iteration3.py") if iteration == 3 else plan_generator_hash(project_root),
         "behavior_tree_sha256": behavior_tree_hash(project_root),
         "plan_sha256": _sha256_bytes(plan_bytes), "system_prompt_sha256": _sha256_bytes(system_bytes),
         "protocol_prompt_sha256": _sha256_bytes(protocol_bytes), "tool_schema_sha256": _sha256_bytes(tool_schema_bytes),
@@ -681,7 +708,8 @@ def freeze_baseline(
         "provider_identity": provider_identity,
         "harness_environment": harness_environment,
         "image_identities": image_identities,
-        **scheduler,
+        **frozen_scheduler,
+        **(__import__("evalsys.iteration3", fromlist=["baseline_snapshots"]).baseline_snapshots(project_root) if iteration == 3 else {}),
         "authorization": {
             "kind": "conditional_pre_authorization",
             "statement": "User authorized automatic continuation only after every freeze gate passes; user did not manually inspect this generated hash.",
@@ -695,6 +723,7 @@ def freeze_baseline(
         "protocol.txt": _sha256_bytes(protocol_bytes),
         "system.txt": _sha256_bytes(system_bytes),
         "tool-schemas.json": _sha256_bytes(tool_schema_bytes),
+        **{name: _sha256_bytes(content) for name, content in requirement_snapshot_bytes.items()},
     }
     (baseline_root / "checksums.sha256").write_text(
         "".join(f"{digest}  {path}\n" for path, digest in sorted(checksums.items())), encoding="utf-8", newline="\n",
@@ -710,7 +739,12 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
     except (OSError, ValueError) as exc:
         raise EvalError("invalid frozen baseline checksum manifest", category="invalid") from exc
     required = {"baseline.json", "plan.json", "system.txt", "protocol.txt", "tool-schemas.json"}
-    allowed = required
+    try:
+        baseline_hint = json.loads((root / "baseline.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalError("invalid frozen baseline JSON", category="invalid") from exc
+    if baseline_hint.get("iteration") == 3:
+        required |= {"requirement-ontology.json", "skill-catalog.json", "reflection-gate.json"}
     if set(expected) != required:
         raise EvalError("invalid frozen baseline checksum paths", category="invalid")
     for name, digest in expected.items():
@@ -737,6 +771,12 @@ def verify_frozen_baseline(root: Path, *, project_root: Path | None = None, imag
         "protocol_prompt_sha256": "protocol.txt",
         "tool_schema_sha256": "tool-schemas.json",
     }
+    if baseline.get("iteration") == 3:
+        bindings.update({
+            "requirement_ontology_sha256": "requirement-ontology.json",
+            "skill_catalog_sha256": "skill-catalog.json",
+            "reflection_gate_sha256": "reflection-gate.json",
+        })
     for field, name in bindings.items():
         if field in baseline and baseline[field] != expected[name]:
             raise EvalError(f"frozen baseline {name} checksum mismatch", category="invalid")
@@ -976,6 +1016,7 @@ def run_agent_cell(
     settings, case: dict[str, Any], source_row: dict[str, Any], config, *,
     image_identity: dict[str, Any], run_type: str, supersedes: list[str] | None = None,
     resume_run_id: str | None = None, on_started=None, provider_identity: dict[str, Any] | None = None,
+    iteration: int = 2,
 ) -> dict[str, Any]:
     """Run one Agent in a fresh task export, then evaluate its patch separately."""
     from reqagent.cli import _execute, _resume_execute
@@ -997,7 +1038,7 @@ def run_agent_cell(
     raw = json.loads(json.dumps(config.raw))
     raw["workspace"]["container_image"] = image
     effective = AgentConfig(raw, config.source)
-    recorder = EvidenceRecorder(settings.project_root, iteration=2, raw_root=settings.artifact_root / "runs/iteration2")
+    recorder = EvidenceRecorder(settings.project_root, iteration=iteration, raw_root=settings.artifact_root / f"runs/iteration{iteration}")
     evidence_config = {"case_id": case["case_id"], "config_hash": effective.canonical_hash()}
     command = ["evalsys", run_type]
     if resume_run_id:
@@ -1085,9 +1126,10 @@ def load_public_records(project_root: Path) -> list[dict[str, Any]]:
 
 def run_development(
     settings, version: str, config, source_rows: dict[str, dict[str, Any]], image_identities: dict[str, Any], *,
-    resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any], provider_identity: dict[str, Any],
+    resume: bool, test_receipt: dict[str, Any], isolation_proof: dict[str, Any] | None, provider_identity: dict[str, Any],
     harness_environment: dict[str, str] | None = None, max_new_cells: int | None = None,
-    parallel_cells: int = 1,
+    parallel_cells: int = 1, iteration: int = 2, selected_cells: list[dict[str, Any]] | None = None,
+    development_scope: str = "full_matrix",
 ) -> dict[str, Any]:
     if not __import__("re").fullmatch(r"v\d{3}", version):
         raise EvalError("development version must match vNNN", category="invalid")
@@ -1096,8 +1138,15 @@ def run_development(
     if parallel_cells not in {1, 2}:
         raise EvalError("--parallel-cells must be 1 or 2", category="invalid")
     records = load_public_records(settings.project_root)
-    root = settings.artifact_root / "runs/iteration2/dev" / version
-    cells = [{**cell, "sequence": position} for position, cell in enumerate(development_cells(records), 1)]
+    root = settings.artifact_root / f"runs/iteration{iteration}/dev" / version
+    planned_cells = selected_cells if selected_cells is not None else development_cells(records)
+    cells = [{**cell, "sequence": position} for position, cell in enumerate(planned_cells, 1)]
+    if iteration == 2 and (development_scope != "full_matrix" or len(cells) != 6):
+        raise EvalError("iteration2 development requires the complete matrix", category="invalid")
+    if development_scope not in {"full_matrix", "single_cell_smoke"}:
+        raise EvalError("invalid development scope", category="invalid")
+    if development_scope == "single_cell_smoke" and len(cells) != 1:
+        raise EvalError("single_cell_smoke requires exactly one cell", category="invalid")
     bindings = {
         "behavior_tree_sha256": behavior_tree_hash(settings.project_root),
         "config_hash": config.canonical_hash(),
@@ -1106,7 +1155,8 @@ def run_development(
         "tool_schema_hash": _sha256_bytes(current_tool_schema_bytes(settings.project_root, config.raw)),
     }
     verify_gate_receipt(settings.project_root, test_receipt, bindings, label="test receipt")
-    verify_gate_receipt(settings.project_root, isolation_proof, bindings, label="isolation proof")
+    if isolation_proof is not None:
+        verify_gate_receipt(settings.project_root, isolation_proof, bindings, label="isolation proof")
     if harness_environment is not None:
         from .harness_environment import verify_harness_environment_receipt
         verify_harness_environment_receipt(settings.project_root, harness_environment)
@@ -1115,11 +1165,11 @@ def run_development(
         "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
     }
     manifest_path = ensure_experiment_manifest(root, {
-        "schema_version": "1.0", "version": version, "cells": 6,
+        "schema_version": "1.0", "version": version, "cells": len(cells), "scope": development_scope,
         "plan": [{"sequence": cell["sequence"], "case_id": cell["case_id"], "instance_id": cell["instance_id"], "variant": cell["prompt_variant"]} for cell in cells],
         **bindings, **scheduler,
     })
-    raw_root = settings.artifact_root / "runs/iteration2"
+    raw_root = settings.artifact_root / f"runs/iteration{iteration}"
     results_by_case: dict[str, dict[str, Any]] = {}
     experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
     tracked_runs = experiment.get("cell_runs", {})
@@ -1161,7 +1211,7 @@ def run_development(
                     settings, cell, source_rows[cell["instance_id"]], config,
                     image_identity=image_identities[cell["instance_id"]], run_type="dev_cell", resume_run_id=resume_run_id,
                     on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
-                    provider_identity=provider_identity,
+                    provider_identity=provider_identity, iteration=iteration,
                 )
                 if result.get("actual_model") != provider_identity.get("actual_model"):
                     raise EvalError("development actual model does not match provider identity", category="invalid")
@@ -1192,29 +1242,36 @@ def run_development(
             "resume_command": f"evalsys run-dev --version {version} --config {config.source} --parallel-cells {parallel_cells} --resume --confirm",
             "cells": results, **scheduler,
         }
-    results = verify_development_evidence(settings.project_root, raw_root, results)
+    results = verify_development_evidence(settings.project_root, raw_root, results, iteration=iteration)
     record = {
-        "version": version, "parent": None, "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "version": version, "scope": development_scope, "parent": None, "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "code_commit": _git(settings.project_root, "rev-parse", "HEAD"), "code_hash": bindings["behavior_tree_sha256"],
         "config_hash": bindings["config_hash"], "system_prompt_hash": bindings["system_prompt_hash"],
         "protocol_prompt_hash": bindings["protocol_prompt_hash"], "tool_schema_hash": bindings["tool_schema_hash"],
-        "test_receipt": test_receipt, "isolation_proof": isolation_proof, "provider_identity": provider_identity,
+        "test_receipt": test_receipt, "provider_identity": provider_identity,
         "harness_environment": harness_environment, **scheduler,
+        **({"isolation_proof": isolation_proof} if isolation_proof is not None else {}),
         "source_run_ids": [row["run_id"] for row in results], "observed_issue": "",
-        "hypothesis": "Initial frozen development matrix", "exact_change": "Initial candidate",
+        "hypothesis": "Initial frozen development matrix" if development_scope == "full_matrix" else "ReqRefine live integration smoke",
+        "exact_change": "Initial candidate",
         "expected_effect": "Establish benchmark baseline", "rollback_risk": "none",
-        "validation_plan": "Complete all six full/fuzzy cells",
+        "validation_plan": "Complete all six full/fuzzy cells" if development_scope == "full_matrix" else f"Complete only {cells[0]['case_id']} as the authorized smoke cell",
         "before": {"resolved": None, "stop_reasons": {}, "median_steps": None, "total_tokens": None, "wall_time_seconds": None},
         "after": {"resolved": sum(row["status"] == "resolved" for row in results), "stop_reasons": {}, "median_steps": None, "total_tokens": sum(sum(row.get("usage", {}).values()) for row in results), "wall_time_seconds": sum(row.get("wall_time_seconds", 0) for row in results)},
-        "decision": "accepted", "rationale": "All six cells produced verified Agent/evaluator records.", "successor": None,
+        "decision": "accepted",
+        "rationale": "All six cells produced verified Agent/evaluator records." if development_scope == "full_matrix" else "The authorized single smoke cell produced a verified non-infrastructure Agent/evaluator record.",
+        "successor": None,
         "cells": results,
     }
-    destination = settings.project_root / "audit/iteration2/development" / f"{version}.json"
+    destination = settings.project_root / f"audit/iteration{iteration}/development" / f"{version}.json"
     atomic_json(destination, sanitize(record, project_root=settings.project_root))
     return record
 
 
-def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str, dict[str, Any]], *, resume: bool, max_new_cells: int | None = None) -> dict[str, Any]:
+def run_formal_plan(
+    settings, baseline_name: str, config, source_rows: dict[str, dict[str, Any]], *,
+    resume: bool, max_new_cells: int | None = None, iteration: int = 2,
+) -> dict[str, Any]:
     if max_new_cells is not None and (isinstance(max_new_cells, bool) or max_new_cells <= 0):
         raise EvalError("--max-new-cells must be a positive integer", category="invalid")
     prefix = settings.docker_prefix(sys.platform)
@@ -1229,9 +1286,14 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
         ),
     )
     records = load_public_records(settings.project_root)
-    verify_formal_plan(frozen["plan"], [record for record in records if record["split"] == "test"])
+    test_records = [record for record in records if record["split"] == "test"]
+    if iteration == 3:
+        from .iteration3 import verify_iteration3_plan
+        verify_iteration3_plan(frozen["plan"], test_records)
+    else:
+        verify_formal_plan(frozen["plan"], test_records)
     by_case = {record["case_id"]: record for record in records}
-    root = settings.artifact_root / "runs/iteration2/formal" / baseline_name
+    root = settings.artifact_root / f"runs/iteration{iteration}/formal" / baseline_name
     scheduler = {
         "scheduler": frozen["baseline"]["scheduler"], "parallel_cells": frozen["baseline"]["parallel_cells"],
         "pair_order_source": frozen["baseline"]["pair_order_source"], "result_order": frozen["baseline"]["result_order"],
@@ -1246,7 +1308,7 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
         "agent_code_commit": frozen["baseline"]["agent_code_commit"],
         "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"], **scheduler,
     })
-    raw_root = settings.artifact_root / "runs/iteration2"
+    raw_root = settings.artifact_root / f"runs/iteration{iteration}"
     results_by_case: dict[str, dict[str, Any]] = {}
     experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
     tracked_runs = experiment.get("cell_runs", {})
@@ -1300,7 +1362,7 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
                     image_identity=frozen["baseline"]["image_identities"][cell["instance_id"]],
                     run_type="formal_cell", supersedes=supersedes, resume_run_id=resume_run_id,
                     on_started=lambda run_id, case_id=cell["case_id"]: record_experiment_cell(root, case_id, run_id, "pending"),
-                    provider_identity=frozen["baseline"]["provider_identity"],
+                    provider_identity=frozen["baseline"]["provider_identity"], iteration=iteration,
                 )
                 return {**result, "sequence": planned["sequence"]}
             wave_error = None
@@ -1328,9 +1390,13 @@ def run_formal_plan(settings, baseline_name: str, config, source_rows: dict[str,
             "status": "paused", "baseline": baseline_name, "completed": len(results),
             "total": len(frozen["plan"]), "new_cells": new_cells,
             "requested_max_new_cells": max_new_cells, "actual_new_cells": new_cells,
-            "resume_command": f"evalsys run-formal --name {baseline_name} --resume --confirm", **scheduler,
+            "resume_command": f"evalsys run-formal --name {baseline_name} --iteration {iteration} --resume --confirm", **scheduler,
         }
-    summary = summarize_formal_results(results)
+    if iteration == 3:
+        from .iteration3 import summarize_iteration3_results
+        summary = summarize_iteration3_results(results)
+    else:
+        summary = summarize_formal_results(results)
     atomic_json(root / "report.json", sanitize(summary, project_root=settings.project_root))
     return summary
 
