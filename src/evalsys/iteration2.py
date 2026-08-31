@@ -1372,7 +1372,7 @@ def run_formal_plan(
         "scheduler": frozen["baseline"]["scheduler"], "parallel_cells": frozen["baseline"]["parallel_cells"],
         "pair_order_source": frozen["baseline"]["pair_order_source"], "result_order": frozen["baseline"]["result_order"],
     }
-    manifest_path = ensure_experiment_manifest(root, {
+    requested_manifest = {
         "schema_version": "1.0", "baseline": baseline_name,
         "plan_sha256": frozen["baseline"]["plan_sha256"], "cells": 24,
         "plan": [
@@ -1383,7 +1383,17 @@ def run_formal_plan(
         "behavior_tree_sha256": frozen["baseline"]["behavior_tree_sha256"],
         **({"formal_gate_provenance": formal_gate_provenance} if formal_gate_provenance else {}),
         **scheduler,
-    })
+    }
+    existing_manifest_path = root / "experiment-manifest.json"
+    if resume and formal_gate_provenance and existing_manifest_path.is_file():
+        try:
+            existing_manifest = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise EvalError("formal experiment manifest is invalid", category="invalid") from exc
+        requested_manifest.pop("formal_gate_provenance", None)
+        if "formal_gate_provenance" in existing_manifest:
+            requested_manifest["formal_gate_provenance"] = existing_manifest["formal_gate_provenance"]
+    manifest_path = ensure_experiment_manifest(root, requested_manifest)
     raw_root = settings.artifact_root / f"runs/iteration{iteration}"
     results_by_case: dict[str, dict[str, Any]] = {}
     experiment = json.loads(manifest_path.read_text(encoding="utf-8"))
