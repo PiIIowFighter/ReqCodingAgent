@@ -153,12 +153,12 @@ def test_formal_gate_hotfix_accepts_evalsys_drift_with_exact_plan_and_audits_rep
     }
     verify_formal_gate_resume(
         tmp_path, baseline=baseline, frozen_plan=plan, records=records,
-        manifest=manifest, reporter_commit=reporter_commit,
+        manifest=manifest, manifest_path=tmp_path / "experiment-manifest.json", reporter_commit=reporter_commit,
     )
     with pytest.raises(EvalError, match="reporter"):
         verify_formal_gate_resume(
             tmp_path, baseline=baseline, frozen_plan=plan, records=records,
-            manifest=manifest, reporter_commit=frozen_commit,
+            manifest=manifest, manifest_path=tmp_path / "experiment-manifest.json", reporter_commit=frozen_commit,
         )
 
 
@@ -182,9 +182,11 @@ def test_formal_gate_resume_accepts_evidence_only_descendant(tmp_path: Path):
     ).stdout.strip()
     manifest = {"formal_gate_provenance": provenance}
 
+    manifest_path = tmp_path / "experiment-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     verify_formal_gate_resume(
         tmp_path, baseline=baseline, frozen_plan=plan, records=records,
-        manifest=manifest, reporter_commit=evidence_commit,
+        manifest=manifest, manifest_path=manifest_path, reporter_commit=evidence_commit,
     )
 
     assert manifest["formal_gate_provenance"] == provenance
@@ -284,7 +286,7 @@ def test_formal_plan_non_resume_rejects_provenance_identity_mismatch(tmp_path: P
         )
 
 
-def test_formal_gate_resume_rejects_changed_evalsys_runtime(tmp_path: Path):
+def test_formal_gate_resume_appends_compatible_reporter_chain_without_changing_core(tmp_path: Path):
     import subprocess
 
     development_commit, frozen_commit = _init_agent_history(tmp_path)
@@ -294,17 +296,80 @@ def test_formal_gate_resume_rejects_changed_evalsys_runtime(tmp_path: Path):
         tmp_path, baseline=baseline, frozen_plan=plan, records=records,
         reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
     )
+    manifest = {"formal_gate_provenance": provenance, "plan": plan, "cell_runs": {}}
+    manifest_path = tmp_path / "experiment-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+    core = {key: value for key, value in manifest.items() if key != "formal_gate_resume_provenance"}
+
     (tmp_path / "src/evalsys/gate.py").write_text("GATE = 3\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "runtime drift"], check=True)
-    runtime_commit = subprocess.run(
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "gate-only fix"], check=True)
+    gate_commit = subprocess.run(
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
     ).stdout.strip()
+    verify_formal_gate_resume(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        manifest=manifest, manifest_path=manifest_path, reporter_commit=gate_commit,
+    )
 
-    with pytest.raises(EvalError, match="provenance mismatch"):
+    evidence = tmp_path / "audit/iteration3/evidence-2.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "second evidence"], check=True)
+    evidence_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    verify_formal_gate_resume(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        manifest=manifest, manifest_path=manifest_path, reporter_commit=evidence_commit,
+    )
+    verify_formal_gate_resume(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        manifest=manifest, manifest_path=manifest_path, reporter_commit=evidence_commit,
+    )
+
+    persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entries = persisted["formal_gate_resume_provenance"]
+    assert [entry["reporter_commit"] for entry in entries] == [gate_commit, evidence_commit]
+    assert all(len(entry["reporter_behavior_tree_sha256"]) == 64 for entry in entries)
+    assert all(len(entry["reporter_plan_generator_sha256"]) == 64 for entry in entries)
+    assert {key: value for key, value in persisted.items() if key != "formal_gate_resume_provenance"} == core
+
+
+def test_formal_gate_resume_rejects_agent_or_plan_drift_without_appending(tmp_path: Path):
+    import subprocess
+
+    development_commit, frozen_commit = _init_agent_history(tmp_path)
+    baseline, plan = _formal_baseline(tmp_path, frozen_commit)
+    records = _formal_records()
+    provenance = resolve_formal_gate_provenance(
+        tmp_path, baseline=baseline, frozen_plan=plan, records=records,
+        reporter_commit=frozen_commit, allow_formal_gate_hotfix=True,
+    )
+    manifest = {"formal_gate_provenance": provenance}
+    manifest_path = tmp_path / "experiment-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+    original = manifest_path.read_bytes()
+
+    (tmp_path / "src/reqagent/agent.py").write_text("AGENT = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "agent drift"], check=True)
+    agent_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    with pytest.raises(EvalError, match="Agent package"):
         verify_formal_gate_resume(
             tmp_path, baseline=baseline, frozen_plan=plan, records=records,
-            manifest={"formal_gate_provenance": provenance}, reporter_commit=runtime_commit,
+            manifest=manifest, manifest_path=manifest_path, reporter_commit=agent_commit,
         )
+    assert manifest_path.read_bytes() == original
+
+    subprocess.run(["git", "-C", str(tmp_path), "reset", "--hard", frozen_commit], check=True, capture_output=True)
+    with pytest.raises(EvalError, match="plan"):
+        verify_formal_gate_resume(
+            tmp_path, baseline=baseline, frozen_plan=plan, records=records[:-1],
+            manifest=manifest, manifest_path=manifest_path, reporter_commit=frozen_commit,
+        )
+    assert manifest_path.read_bytes() == original
 
 
 def test_formal_gate_resume_rejects_nonancestor_reporter(tmp_path: Path):
@@ -329,7 +394,8 @@ def test_formal_gate_resume_rejects_nonancestor_reporter(tmp_path: Path):
     with pytest.raises(EvalError, match="ancestor"):
         verify_formal_gate_resume(
             tmp_path, baseline=baseline, frozen_plan=plan, records=records,
-            manifest={"formal_gate_provenance": provenance}, reporter_commit=unrelated_commit,
+            manifest={"formal_gate_provenance": provenance},
+            manifest_path=tmp_path / "experiment-manifest.json", reporter_commit=unrelated_commit,
         )
 
 

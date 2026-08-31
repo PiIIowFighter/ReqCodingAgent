@@ -360,9 +360,16 @@ def test_experiment_manifest_is_stable_and_rejects_drift(tmp_path: Path):
     root = tmp_path / "formal"
     manifest = {"baseline": "baseline-v1", "plan_sha256": "a" * 64, "cells": 24}
     assert ensure_experiment_manifest(root, manifest) == root / "experiment-manifest.json"
-    assert ensure_experiment_manifest(root, manifest) == root / "experiment-manifest.json"
+    path = ensure_experiment_manifest(root, manifest)
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    existing["cell_runs"] = {"T-1": {"run_id": "run-1", "state": "complete"}}
+    existing["formal_gate_resume_provenance"] = [{"reporter_commit": "a" * 40}]
+    path.write_text(json.dumps(existing), encoding="utf-8")
+    assert ensure_experiment_manifest(root, manifest) == path
     with pytest.raises(EvalError, match="manifest mismatch"):
         ensure_experiment_manifest(root, {**manifest, "cells": 23})
+    with pytest.raises(EvalError, match="manifest mismatch"):
+        ensure_experiment_manifest(root, {**manifest, "other_mutable_field": []})
 
 
 def test_experiment_status_reports_counts_current_run_and_resume_command(tmp_path: Path):
