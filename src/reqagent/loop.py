@@ -41,6 +41,38 @@ class AgentInterrupted(RuntimeError):
     pass
 
 
+def validate_tool_protocol(messages: list[ModelMessage] | tuple[ModelMessage, ...]) -> None:
+    pending: list[str] | None = None
+    results: list[str] = []
+    for message in messages:
+        if message.role == "assistant":
+            if pending is not None and results != pending:
+                raise ValueError(f"tool protocol incomplete: expected={pending} results={results}")
+            pending = [call.call_id for call in message.tool_calls] if message.tool_calls else None
+            results = []
+            if pending is not None and len(pending) != len(set(pending)):
+                raise ValueError(f"tool protocol duplicate tool_use: {pending}")
+        elif message.role == "tool":
+            if pending is None:
+                ids = [str(result.get("call_id", "")) for result in message.tool_results]
+                raise ValueError(f"tool protocol unknown tool_result: {ids}")
+            for result in message.tool_results:
+                call_id = str(result.get("call_id", ""))
+                if call_id not in pending:
+                    raise ValueError(f"tool protocol unknown tool_result: {call_id}")
+                if call_id in results:
+                    raise ValueError(f"tool protocol duplicate tool_result: {call_id}")
+                expected = pending[len(results)] if len(results) < len(pending) else "<none>"
+                if call_id != expected:
+                    raise ValueError(f"tool protocol out of order: expected={expected} result={call_id}")
+                results.append(call_id)
+            if results == pending:
+                pending = None
+                results = []
+    if pending is not None:
+        raise ValueError(f"tool protocol orphan tool_use: {[call_id for call_id in pending if call_id not in results]}")
+
+
 class AgentLoop:
     def __init__(self, adapter: ModelAdapter, registry: ToolRegistry, workspace: GitWorkspace, config: AgentConfig, context: ContextLedger, run_store: RunStore, *, interrupt_after: str | None = None):
         self.adapter = adapter
@@ -64,6 +96,11 @@ class AgentLoop:
         self.next_state = "call_model"
         self.pending_tool_calls: tuple[NormalizedToolCall, ...] = ()
         self.next_tool_index = 0
+        self.pending_phase: str | None = None
+        self.pending_refinement_stage: str | None = None
+        self.closed_call_ids: list[str] = []
+        existing = [int(path.stem) for path in self.checkpoints.root.glob("*.json") if path.stem.isdigit()]
+        self.checkpoint_sequence = max(existing, default=0)
         self.interrupt_after = interrupt_after
 
     def _checkpoint(self, next_state: str) -> None:
@@ -71,7 +108,8 @@ class AgentLoop:
         system_path = project.parents[1] / "prompts/baseline/system.txt"
         protocol_path = project.parents[1] / "prompts/baseline/protocol.txt"
         protected = tuple(self.config.workspace["protected_paths"])
-        self.checkpoints.save(self.steps + self.tool_calls + self.invalid_outputs, {
+        self.checkpoint_sequence += 1
+        self.checkpoints.save(self.checkpoint_sequence, {
             "run_id": self.run_store.run_id,
             "source": str(self.workspace.source),
             "next_state": next_state,
@@ -105,6 +143,9 @@ class AgentLoop:
                 for call in self.pending_tool_calls
             ],
             "next_tool_index": self.next_tool_index,
+            "pending_phase": self.pending_phase,
+            "pending_refinement_stage": self.pending_refinement_stage,
+            "closed_call_ids": self.closed_call_ids,
             "requirement_refinement": self.registry.refinement.to_checkpoint() if self.registry.refinement is not None else None,
             "adaptive_refinement": self.registry.adaptive.to_checkpoint() if getattr(self.registry, "adaptive", None) is not None else None,
         })
@@ -123,6 +164,9 @@ class AgentLoop:
         self.next_state = checkpoint["next_state"]
         self.pending_tool_calls = tuple(NormalizedToolCall(**call) for call in checkpoint["pending_tool_calls"])
         self.next_tool_index = checkpoint["next_tool_index"]
+        self.pending_phase = checkpoint["pending_phase"]
+        self.pending_refinement_stage = checkpoint["pending_refinement_stage"]
+        self.closed_call_ids = list(checkpoint["closed_call_ids"])
         refinement = checkpoint["requirement_refinement"]
         if (self.registry.refinement is None) != (refinement is None):
             raise ValueError("resume refused: requirement refinement mode changed")
@@ -139,7 +183,63 @@ class AgentLoop:
         if self.interrupt_after == point:
             raise AgentInterrupted(point)
 
+    def _synthetic_result(self, call: NormalizedToolCall, kind: str, message: str) -> None:
+        if call.call_id in self.closed_call_ids:
+            raise ValueError(f"tool call already closed: {call.call_id}")
+        pending_ids = {item.call_id for item in self.pending_tool_calls}
+        if call.call_id not in pending_ids:
+            raise ValueError(f"unknown pending tool call: {call.call_id}")
+        result = {
+            "call_id": call.call_id, "ok": False, "tool": call.name, "data": {},
+            "error": {"kind": kind, "message": message}, "truncated": False,
+            "meta": {"synthetic": True},
+        }
+        self.context.add(ModelMessage("tool", tool_results=(result,)))
+        self.closed_call_ids.append(call.call_id)
+        adaptive = getattr(self.registry, "adaptive", None)
+        if adaptive is not None:
+            adaptive.closed_call_ids.append(call.call_id)
+        self.run_store.event("protocol_closure", phase=self.pending_phase, call_id=call.call_id, error_kind=kind)
+
+    def _close_remaining(self, kind: str, message: str) -> None:
+        while self.next_tool_index < len(self.pending_tool_calls):
+            call = self.pending_tool_calls[self.next_tool_index]
+            self._synthetic_result(call, kind, message)
+            self.next_tool_index += 1
+        validate_tool_protocol(self.context.messages)
+        self._clear_pending()
+        self._checkpoint("call_model")
+
+    def _clear_pending(self) -> None:
+        self.pending_tool_calls = ()
+        self.next_tool_index = 0
+        self.pending_phase = None
+        self.pending_refinement_stage = None
+        self.next_state = "call_model"
+
+    def _clean_coding_context(self, note: str | None) -> None:
+        base = self.context.messages[:2]
+        self.context.messages = list(base)
+        if note:
+            self.context.add(ModelMessage("system", note))
+
+    def _enter_synthesis(self) -> None:
+        adaptive = self.registry.adaptive
+        adaptive.transition_to_synthesis()
+        evidence = ", ".join(f"{key}:{value['summary']}" for key, value in adaptive.evidence.items())
+        self._clean_coding_context(
+            adaptive.refinement_instruction() + " Synthesis stage: immediately call record_requirement_brief using these evidence IDs: " + evidence
+        )
+        self._checkpoint("call_model")
+
+    def _fail_open_refinement(self, reason: str) -> None:
+        note = self.registry.adaptive.fail_open_refinement(reason)
+        self._clean_coding_context(None)
+        self.run_store.event("refinement_fail_open", reason=reason)
+        self._checkpoint("call_model")
+
     def _call_model(self) -> ModelResponse:
+        validate_tool_protocol(self.context.messages)
         request = ModelRequest(tuple(self.context.messages), self.registry.definitions, int(self.config.model["max_output_tokens"]), self.config.budgets["model_timeout_seconds"])
         attempts = 0
         while True:
@@ -172,15 +272,19 @@ class AgentLoop:
                 if self.next_state == "call_model":
                     adaptive = getattr(self.registry, "adaptive", None)
                     phase = adaptive.phase_for_model() if adaptive is not None else "main"
-                    phase_limit = 6 if phase == "refinement" else 2 if phase == "reflection" else self.config.budgets["max_steps"]
+                    if adaptive is not None and phase == "refinement":
+                        if adaptive.refinement_stage == "investigating" and adaptive.investigation_response_count >= 2:
+                            self._enter_synthesis()
+                            continue
+                        if adaptive.refinement_stage == "synthesizing" and adaptive.synthesis_response_count >= 1:
+                            self._fail_open_refinement("synthesis response budget exhausted")
+                            continue
+                    phase_limit = 2 if phase == "reflection" else self.config.budgets["max_steps"]
                     phase_steps = adaptive.steps_by_phase[phase] if adaptive is not None else self.steps
                     if phase_steps >= phase_limit:
-                        if adaptive is not None and phase in {"refinement", "reflection"}:
-                            if phase == "reflection":
-                                adaptive.fail_open_reflection("reflection step budget exhausted")
-                            else:
-                                message = adaptive.fail_open_refinement("step budget exhausted")
-                                self.context.add(ModelMessage("system", message))
+                        if adaptive is not None and phase == "reflection":
+                            adaptive.fail_open_reflection("reflection step budget exhausted")
+                            self._checkpoint("call_model")
                             continue
                         stop_reason = "step_budget"
                         break
@@ -191,15 +295,20 @@ class AgentLoop:
                         self.steps += 1
                     if adaptive is not None:
                         adaptive.steps_by_phase[phase] += 1
+                        if phase == "refinement":
+                            if adaptive.refinement_stage == "investigating":
+                                adaptive.investigation_response_count += 1
+                            else:
+                                adaptive.synthesis_response_count += 1
                     try:
                         response = self._call_model()
                     except Exception as exc:
                         if adaptive is not None and phase in {"refinement", "reflection"}:
                             if phase == "reflection":
                                 adaptive.fail_open_reflection(f"model failure: {type(exc).__name__}")
+                                self._checkpoint("call_model")
                             else:
-                                message = adaptive.fail_open_refinement(f"model failure: {type(exc).__name__}")
-                                self.context.add(ModelMessage("system", message))
+                                self._fail_open_refinement(f"model failure: {type(exc).__name__}")
                             self.warnings.append(f"{phase} failed open: {type(exc).__name__}")
                             continue
                         raise
@@ -213,11 +322,18 @@ class AgentLoop:
                         stop_reason = "model_refusal"
                         break
                     if not response.tool_calls:
+                        if adaptive is not None and phase == "refinement":
+                            self._fail_open_refinement(
+                                "synthesis did not submit a brief" if adaptive.refinement_stage == "synthesizing" else "investigation returned no tool call"
+                            )
+                            continue
+                        if adaptive is not None and phase == "reflection":
+                            adaptive.fail_open_reflection("reflection returned no tool call")
+                            self._checkpoint("call_model")
+                            continue
                         self.invalid_outputs += 1
                         self.consecutive_invalid_outputs += 1
-                        self.pending_tool_calls = ()
-                        self.next_tool_index = 0
-                        self.next_state = "call_model"
+                        self._clear_pending()
                         self._checkpoint(self.next_state)
                         if (
                             self.consecutive_invalid_outputs >= self.config.budgets["max_consecutive_invalid_outputs"]
@@ -227,8 +343,13 @@ class AgentLoop:
                             break
                         continue
                     self.consecutive_invalid_outputs = 0
+                    call_ids = [call.call_id for call in response.tool_calls]
+                    if len(call_ids) != len(set(call_ids)) or any(call_id in self.closed_call_ids for call_id in call_ids):
+                        raise ValueError(f"tool protocol duplicate call IDs: {call_ids}")
                     self.pending_tool_calls = response.tool_calls
                     self.next_tool_index = 0
+                    self.pending_phase = phase
+                    self.pending_refinement_stage = adaptive.refinement_stage if adaptive is not None and phase == "refinement" else None
                     self.next_state = "execute"
                     self._checkpoint(self.next_state)
                     self._interrupt("after_model_checkpoint")
@@ -237,21 +358,21 @@ class AgentLoop:
                     if self.next_tool_index >= len(self.pending_tool_calls):
                         raise ValueError("execute state has no pending tool call")
                     adaptive = getattr(self.registry, "adaptive", None)
-                    pending_phase = adaptive.phase_for_model() if adaptive is not None else "main"
-                    phase_tool_limit = 12 if pending_phase == "refinement" else 2 if pending_phase == "reflection" else self.config.budgets["max_tool_calls"]
-                    phase_tool_calls = adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
+                    pending_phase = self.pending_phase or "main"
+                    pending_stage = self.pending_refinement_stage
+                    phase_tool_calls = adaptive.investigation_tool_count if adaptive is not None and pending_stage == "investigating" else adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
+                    phase_tool_limit = 6 if pending_stage == "investigating" else 1 if pending_stage == "synthesizing" else 2 if pending_phase == "reflection" else self.config.budgets["max_tool_calls"]
                     if phase_tool_calls >= phase_tool_limit:
-                        if adaptive is not None and pending_phase in {"refinement", "reflection"}:
-                            if pending_phase == "reflection":
-                                adaptive.fail_open_reflection("reflection tool budget exhausted")
-                            else:
-                                message = adaptive.fail_open_refinement("tool budget exhausted")
-                                self.context.add(ModelMessage("system", message))
-                            self.pending_tool_calls = ()
-                            self.next_tool_index = 0
-                            self.next_state = "call_model"
-                            break
-                        stop_reason = "tool_budget"
+                        self._close_remaining("phase_budget_exhausted", f"{pending_phase} tool budget exhausted")
+                        if adaptive is not None and pending_stage == "investigating":
+                            self._enter_synthesis()
+                        elif adaptive is not None and pending_stage == "synthesizing":
+                            self._fail_open_refinement("synthesis tool budget exhausted")
+                        elif adaptive is not None and pending_phase == "reflection":
+                            adaptive.fail_open_reflection("reflection tool budget exhausted")
+                            self._checkpoint("call_model")
+                        else:
+                            stop_reason = "tool_budget"
                         break
                     call = self.pending_tool_calls[self.next_tool_index]
                     before = self.workspace.diff_hash()
@@ -277,7 +398,12 @@ class AgentLoop:
                     else:
                         self._repeat_fingerprint = repeat
                         self._repeat_count = 0
+                    if call.call_id in self.closed_call_ids:
+                        raise ValueError(f"tool call already closed: {call.call_id}")
                     self.context.add(ModelMessage("tool", tool_results=({"call_id": call.call_id, **result.to_dict()},)))
+                    self.closed_call_ids.append(call.call_id)
+                    if adaptive is not None:
+                        adaptive.closed_call_ids.append(call.call_id)
                     refinement = self.registry.refinement
                     if (
                         call.name == "record_requirement_baseline"
@@ -289,29 +415,50 @@ class AgentLoop:
                         refinement.context_injected = True
                     adaptive = getattr(self.registry, "adaptive", None)
                     if adaptive is not None:
-                        tool_phase = "refinement" if call.name == "record_requirement_brief" or adaptive.phase == "refining" else "reflection" if call.name == "reflect_on_patch" else "main"
+                        tool_phase = pending_phase
                         adaptive.tools_by_phase[tool_phase] += 1
+                        if pending_stage == "investigating" and call.name in {"list_files", "read_file", "search_text"}:
+                            adaptive.investigation_tool_count += 1
                         adaptive.observe_tool(call.name, result.ok, result.error, after != before)
                     if call.name == "record_requirement_brief" and result.ok and adaptive is not None:
-                        self.context.add(ModelMessage("system", adaptive.brief_message()))
+                        brief_message = adaptive.brief_message()
                     self.run_store.event("tool_result", sequence=self.tool_calls, phase=tool_phase if adaptive is not None else "main", call_id=call.call_id, result=result.to_dict())
                     self.context.compact_if_needed(self.registry.history, after)
                     self.next_tool_index += 1
                     if call.name == "submit" and result.ok:
                         self.submitted = result.data
-                        self.pending_tool_calls = ()
-                        self.next_tool_index = 0
-                        self.next_state = "call_model"
-                        self._checkpoint(self.next_state)
+                        if self.next_tool_index < len(self.pending_tool_calls):
+                            self._close_remaining("phase_transition", "submit completed the run")
+                        else:
+                            validate_tool_protocol(self.context.messages)
+                            self._clear_pending()
+                            self._checkpoint("call_model")
                         stop_reason = "submitted"
+                        break
+                    stage_changed = adaptive is not None and pending_stage is not None and adaptive.refinement_stage != pending_stage
+                    if stage_changed and self.next_tool_index < len(self.pending_tool_calls):
+                        self._close_remaining("phase_transition", f"adaptive stage changed from {pending_stage} to {adaptive.refinement_stage}")
+                        if call.name == "record_requirement_brief" and result.ok:
+                            self._clean_coding_context(brief_message)
+                            self._checkpoint("call_model")
                         break
                     if self.next_tool_index < len(self.pending_tool_calls):
                         self.next_state = "execute"
                     else:
-                        self.pending_tool_calls = ()
-                        self.next_tool_index = 0
-                        self.next_state = "call_model"
-                    self._checkpoint(self.next_state)
+                        validate_tool_protocol(self.context.messages)
+                        self._clear_pending()
+                        self._checkpoint("call_model")
+                        if adaptive is not None and pending_stage == "investigating" and (
+                            adaptive.investigation_response_count >= 2 or adaptive.investigation_tool_count >= 6
+                        ):
+                            self._enter_synthesis()
+                        elif call.name == "record_requirement_brief" and result.ok:
+                            self._clean_coding_context(brief_message)
+                            self._checkpoint("call_model")
+                        elif adaptive is not None and pending_stage == "synthesizing":
+                            self._fail_open_refinement("invalid synthesis brief")
+                    if self.next_state == "execute":
+                        self._checkpoint(self.next_state)
                     self._interrupt("after_tool_checkpoint")
                     if (
                         self.consecutive_invalid_outputs >= self.config.budgets["max_consecutive_invalid_outputs"]

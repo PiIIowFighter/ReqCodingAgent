@@ -23,6 +23,7 @@ REQUIRED_RESUME_FIELDS = frozenset({
     "steps", "tool_calls", "invalid_outputs", "usage", "adapter_position",
     "repeat_fingerprint", "repeat_count", "warnings", "messages", "context_summary",
     "tool_history", "pending_tool_calls", "next_tool_index", "adapter_identity_hash",
+    "pending_phase", "pending_refinement_stage", "closed_call_ids",
     "requirement_refinement", "adaptive_refinement",
 })
 _ALLOWED_NEXT_STATES = frozenset({"call_model", "execute"})
@@ -41,6 +42,13 @@ def validate_resume_payload(payload: dict[str, Any], expected: dict[str, Any], b
         raise ValueError(f"resume checkpoint is incomplete: {sorted(missing)}")
     if payload["next_state"] not in _ALLOWED_NEXT_STATES:
         raise ValueError("resume refused: illegal next state")
+    if payload["pending_phase"] not in {None, "main", "refinement", "reflection"}:
+        raise ValueError("resume refused: invalid pending phase")
+    if payload["pending_refinement_stage"] not in {None, "investigating", "synthesizing", "complete"}:
+        raise ValueError("resume refused: invalid pending refinement stage")
+    closed = payload["closed_call_ids"]
+    if not isinstance(closed, list) or len(closed) != len(set(closed)) or not all(isinstance(call_id, str) and call_id for call_id in closed):
+        raise ValueError("resume refused: invalid closed call IDs")
     pending = payload["pending_tool_calls"]
     index = payload["next_tool_index"]
     if not isinstance(pending, list) or not isinstance(index, int) or isinstance(index, bool) or index < 0:
@@ -57,7 +65,7 @@ def validate_resume_payload(payload: dict[str, Any], expected: dict[str, Any], b
         )
         if assistant_calls != pending:
             raise ValueError("resume refused: pending tool calls do not match assistant response")
-    elif pending or index != 0:
+    elif pending or index != 0 or payload["pending_phase"] is not None or payload["pending_refinement_stage"] is not None:
         raise ValueError("resume refused: call_model state contains pending tool calls")
     for key, label in _IDENTITY_LABELS.items():
         if payload[key] != expected[key]:

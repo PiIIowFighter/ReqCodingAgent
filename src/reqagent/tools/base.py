@@ -47,6 +47,8 @@ class ToolRegistry:
         adaptive = getattr(self, "adaptive", None)
         if adaptive is None or adaptive.route.mode == "fast":
             active = {"list_files", "read_file", "search_text", "apply_patch", "run_command", "submit"}
+        elif adaptive.phase == "refining" and adaptive.refinement_stage == "synthesizing":
+            active = {"record_requirement_brief"}
         elif adaptive.phase == "refining":
             active = {"list_files", "read_file", "search_text", "record_requirement_brief"}
         elif adaptive.phase == "reflection":

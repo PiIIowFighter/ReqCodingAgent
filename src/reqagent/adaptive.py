@@ -171,10 +171,16 @@ class AdaptiveRefinementState:
     })
     patch_seen: bool = False
     fallback_reason: str = ""
+    refinement_stage: str = field(init=False)
+    closed_call_ids: list[str] = field(default_factory=list)
+    investigation_response_count: int = 0
+    investigation_tool_count: int = 0
+    synthesis_response_count: int = 0
 
     def __post_init__(self) -> None:
         self.route = route_task(self.task)
         self.phase = "coding" if self.route.mode == "fast" else "refining"
+        self.refinement_stage = "complete" if self.route.mode == "fast" else "investigating"
 
     def refinement_instruction(self) -> str:
         policies = []
@@ -186,8 +192,14 @@ class AdaptiveRefinementState:
             )
         return "Adaptive refinement phase. Selected policies: " + " | ".join(policies) + ". Compare at most three interpretations, use only evidence IDs from repository tools, then record a compact RequirementBrief."
 
+    def transition_to_synthesis(self) -> None:
+        self.phase = "refining"
+        self.refinement_stage = "synthesizing"
+        self.schema_removed = False
+
     def fail_open_refinement(self, reason: str) -> str:
         self.phase = "coding"
+        self.refinement_stage = "complete"
         self.schema_removed = True
         self.fallback_reason = reason[:500]
         return "Refinement failed open. Continue with the original task and the six baseline tools."
@@ -219,6 +231,7 @@ class AdaptiveRefinementState:
         self.brief = json.loads(payload.decode())
         self.ranked_candidates = ranked
         self.phase = "coding"
+        self.refinement_stage = "complete"
         self.schema_removed = True
         return True, []
 
@@ -295,11 +308,15 @@ class AdaptiveRefinementState:
             "contradiction_reason": self.contradiction_reason, "schema_removed": self.schema_removed,
             "usage_by_phase": self.usage_by_phase, "steps_by_phase": self.steps_by_phase,
             "tools_by_phase": self.tools_by_phase, "patch_seen": self.patch_seen,
-            "fallback_reason": self.fallback_reason,
+            "fallback_reason": self.fallback_reason, "refinement_stage": self.refinement_stage,
+            "closed_call_ids": self.closed_call_ids,
+            "investigation_response_count": self.investigation_response_count,
+            "investigation_tool_count": self.investigation_tool_count,
+            "synthesis_response_count": self.synthesis_response_count,
         }
 
     def restore(self, value: dict[str, Any]) -> None:
-        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen", "fallback_reason"}
+        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen", "fallback_reason", "refinement_stage", "closed_call_ids", "investigation_response_count", "investigation_tool_count", "synthesis_response_count"}
         if set(value) != required or value.get("version") != ROUTER_VERSION or value.get("task") != self.task:
             raise ValueError("resume refused: adaptive refinement identity changed")
         raw_route = value["route"]
@@ -311,8 +328,14 @@ class AdaptiveRefinementState:
         )
         if route != route_task(self.task) or value["phase"] not in {"refining", "coding", "reflection", "accepted"}:
             raise ValueError("resume refused: invalid adaptive phase or route")
-        if value["schema_removed"] and value["phase"] == "refining":
-            raise ValueError("resume refused: refining phase cannot have removed schema")
+        stage = value["refinement_stage"]
+        if stage not in {"investigating", "synthesizing", "complete"}:
+            raise ValueError("resume refused: invalid refinement stage")
+        if value["schema_removed"] and stage != "complete":
+            raise ValueError("resume refused: active refinement cannot have removed schema")
+        closed = list(value["closed_call_ids"])
+        if len(closed) != len(set(closed)) or not all(isinstance(call_id, str) and call_id for call_id in closed):
+            raise ValueError("resume refused: invalid closed call IDs")
         self.route = route
         self.phase = value["phase"]
         self.evidence = dict(value["evidence"])
@@ -329,6 +352,11 @@ class AdaptiveRefinementState:
         self.tools_by_phase = dict(value["tools_by_phase"])
         self.patch_seen = value["patch_seen"] is True
         self.fallback_reason = value["fallback_reason"]
+        self.refinement_stage = stage
+        self.closed_call_ids = closed
+        self.investigation_response_count = int(value["investigation_response_count"])
+        self.investigation_tool_count = int(value["investigation_tool_count"])
+        self.synthesis_response_count = int(value["synthesis_response_count"])
 
     def trace(self) -> dict[str, Any]:
         aggregate_usage: dict[str, int] = {}
@@ -342,6 +370,10 @@ class AdaptiveRefinementState:
             "revision_count": self.revision_count, "reflection_count": self.reflection_count,
             "requires_reflection": self.requires_reflection, "contradiction_reason": self.contradiction_reason,
             "fallback_reason": self.fallback_reason, "selected_skills": list(self.route.selected_skills),
+            "refinement_stage": self.refinement_stage, "closed_call_ids": self.closed_call_ids,
+            "investigation_response_count": self.investigation_response_count,
+            "investigation_tool_count": self.investigation_tool_count,
+            "synthesis_response_count": self.synthesis_response_count,
             "usage_by_phase": self.usage_by_phase, "usage": aggregate_usage,
             "steps_by_phase": self.steps_by_phase, "tools_by_phase": self.tools_by_phase,
         }
