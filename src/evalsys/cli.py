@@ -175,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                 from .persistence import atomic_json
                 atomic_json(destination, report)
                 if iteration == 3:
+                    from .iteration3 import summarize_comparison
                     previous = json.loads((settings.project_root / "audit/iteration2/reports/baseline-v1.json").read_text(encoding="utf-8"))
                     comparison = summarize_comparison(previous, report)
                     atomic_json(settings.project_root / "audit/iteration3/reports/comparison-v1-v2.json", comparison)
