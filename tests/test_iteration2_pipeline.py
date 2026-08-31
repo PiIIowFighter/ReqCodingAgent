@@ -547,7 +547,7 @@ def test_formal_report_counts_pairs_categories_and_usage():
     for index, category in enumerate(categories):
         for variant in ("full", "fuzzy"):
             rows.append({
-                "instance_id": f"case-{index}", "variant": variant, "ambiguity_type": category,
+                "instance_id": f"case-{index}", "variant": variant, "ambiguity_type": None if variant == "full" else category,
                 "status": "resolved" if variant == "full" or index == 0 else "unresolved",
                 "run_id": f"run-{index}-{variant}", "steps": 2, "tool_calls": 3,
                 "usage": {"input_tokens": 10, "output_tokens": 4}, "wall_time_seconds": 5,
@@ -559,7 +559,15 @@ def test_formal_report_counts_pairs_categories_and_usage():
     assert report["E2_resolved"] == {"count": 1, "total": 12}
     assert report["absolute_drop"] == 11
     assert report["paired_outcomes"] == {"both": 1, "full_only": 11, "fuzzy_only": 0, "neither": 0}
+    assert report["categories"]["full"]["E1"] == {"count": 12, "total": 12}
     assert report["categories"]["omission"]["E2"] == {"count": 1, "total": 4}
+    assert sum(values[experiment]["total"] for values in report["categories"].values() for experiment in ("E1", "E2")) == 24
+    assert all(isinstance(key, str) for key in report for _ in (0,))
+    json.dumps(report, sort_keys=True)
+    invalid_category = [dict(row) for row in rows]
+    invalid_category[1]["ambiguity_type"] = None
+    with pytest.raises(EvalError, match="ambiguity type"):
+        summarize_formal_results(invalid_category)
     assert report["classifications"] == {"unavailable": 24}
     assert report["stop_reasons"] == {"submitted": 24}
     assert report["usage"] == {"input_tokens": 240, "output_tokens": 96, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}

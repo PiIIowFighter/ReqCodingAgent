@@ -1347,10 +1347,18 @@ def summarize_formal_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if row["variant"] in variants:
             raise EvalError("formal report contains a duplicate paired cell", category="invalid")
         variants[row["variant"]] = row
-        category = categories.setdefault(row["ambiguity_type"], {
+        variant = row.get("variant")
+        ambiguity_type = row.get("ambiguity_type")
+        if variant == "full" and ambiguity_type is None:
+            category_key = "full"
+        elif variant == "fuzzy" and isinstance(ambiguity_type, str) and ambiguity_type:
+            category_key = ambiguity_type
+        else:
+            raise EvalError("formal report contains an invalid ambiguity type", category="invalid")
+        category = categories.setdefault(category_key, {
             "E1": {"count": 0, "total": 0}, "E2": {"count": 0, "total": 0},
         })
-        experiment = "E1" if row["variant"] == "full" else "E2"
+        experiment = "E1" if variant == "full" else "E2"
         category[experiment]["total"] += 1
         category[experiment]["count"] += int(row["status"] == "resolved")
     if len(grouped) != 12 or any(set(variants) != {"full", "fuzzy"} for variants in grouped.values()):
