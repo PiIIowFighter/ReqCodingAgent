@@ -1,0 +1,20 @@
+{
+  "behavior_tree_sha256": "6907ca6d2684f2d675f1ec9c229a3c5ddbd2b76aa957518fe7d852f0e418f4ed",
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_reqagent_adaptive_controller.py tests/test_reqagent_adaptive.py tests/test_reqagent_refinement.py tests/test_reqagent_recovery_handoff.py tests/test_iteration3_revised_infra.py tests/test_iteration3_pipeline.py tests/test_iteration2_pipeline.py::test_execute_cleans_normal_temporary_clone tests/test_iteration2_pipeline.py::test_isolation_proof_uses_one_hardened_workspace_mount -q",
+  "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+  "counts": {
+    "deselected": 0,
+    "passed": 36,
+    "skipped": 0
+  },
+  "exit_code": 0,
+  "profile": "iteration3_targeted",
+  "protocol_prompt_hash": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
+  "reflection_gate_sha256": "81b37c0ba048bf0cfc2430a59f51f24e99f714f261df57ba4c3fc666806b5818",
+  "requirement_ontology_sha256": "de063a5b1b6be99145120f1eb2728eb30f98c085b0ee6c6823dcfa01837dd2bf",
+  "schema_version": "1.0",
+  "skill_catalog_sha256": "1cdf3e42fd98ffee9b17499fcdb182260e6ac5cda8bd8087d7847e984d76b8a3",
+  "status": "passed",
+  "system_prompt_hash": "059db471dca6e20946bd0ee9748b964db3812153892e182f8f1ba0d04bf1aac4",
+  "tool_schema_hash": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc"
+}
