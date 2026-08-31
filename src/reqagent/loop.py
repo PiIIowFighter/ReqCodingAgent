@@ -105,6 +105,7 @@ class AgentLoop:
                 for call in self.pending_tool_calls
             ],
             "next_tool_index": self.next_tool_index,
+            "requirement_refinement": self.registry.refinement.to_checkpoint() if self.registry.refinement is not None else None,
         })
 
     def restore(self, checkpoint: dict[str, Any]) -> None:
@@ -121,6 +122,11 @@ class AgentLoop:
         self.next_state = checkpoint["next_state"]
         self.pending_tool_calls = tuple(NormalizedToolCall(**call) for call in checkpoint["pending_tool_calls"])
         self.next_tool_index = checkpoint["next_tool_index"]
+        refinement = checkpoint["requirement_refinement"]
+        if (self.registry.refinement is None) != (refinement is None):
+            raise ValueError("resume refused: requirement refinement mode changed")
+        if self.registry.refinement is not None:
+            self.registry.refinement.restore(refinement)
 
     def _interrupt(self, point: str) -> None:
         if self.interrupt_after == point:
@@ -217,6 +223,15 @@ class AgentLoop:
                         self._repeat_fingerprint = repeat
                         self._repeat_count = 0
                     self.context.add(ModelMessage("tool", tool_results=({"call_id": call.call_id, **result.to_dict()},)))
+                    refinement = self.registry.refinement
+                    if (
+                        call.name == "record_requirement_baseline"
+                        and result.ok
+                        and refinement is not None
+                        and not refinement.context_injected
+                    ):
+                        self.context.add(ModelMessage("system", refinement.context_message()))
+                        refinement.context_injected = True
                     self.run_store.event("tool_result", sequence=self.tool_calls, call_id=call.call_id, result=result.to_dict())
                     self.context.compact_if_needed(self.registry.history, after)
                     self.next_tool_index += 1
@@ -270,6 +285,11 @@ class AgentLoop:
             "agent.patch", "events.jsonl", "prompt.snapshot.txt", "result.json",
             "tool-schemas.json", "workspace-after.json", "workspace-before.json",
         ]
+        refinement = self.registry.refinement
+        if refinement is not None:
+            atomic_json(self.run_store.path / "requirement-baseline.json", refinement.baseline or {})
+            atomic_json(self.run_store.path / "refinement-trace.json", refinement.trace())
+            names.extend(("requirement-baseline.json", "refinement-trace.json"))
         lines = [f"{hashlib.sha256((self.run_store.path / name).read_bytes()).hexdigest()}  {name}" for name in names]
         atomic_text(self.run_store.path / "checksums.sha256", "\n".join(lines) + "\n")
         atomic_text(self.run_store.path / "COMPLETE", "complete\n")

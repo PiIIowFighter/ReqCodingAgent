@@ -82,7 +82,14 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
         model, executor = build_live_runtime(config, run_id=run_store.run_id)
     else:
         model, executor = ScriptedModel(config.script, position=position), None
-    registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=run_store.path / "commands")
+    registry = build_registry(
+        workspace,
+        config.raw,
+        command_executor=executor,
+        artifact_dir=run_store.path / "commands",
+        requirement_refinement=True,
+        task=task,
+    )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
     manifest_path = run_store.path / "run-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
@@ -119,7 +126,14 @@ def _resume_execute(config: AgentConfig, store: RunStore, *, finalize: bool = Tr
         model, executor = build_live_runtime(config, run_id=store.run_id)
     else:
         model, executor = ScriptedModel(config.script, position=checkpoint["adapter_position"] or 0), None
-    registry = build_registry(workspace, config.raw, command_executor=executor, artifact_dir=store.path / "commands")
+    registry = build_registry(
+        workspace,
+        config.raw,
+        command_executor=executor,
+        artifact_dir=store.path / "commands",
+        requirement_refinement=True,
+        task=manifest["task"],
+    )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
     expected = _resume_identity(store, config, workspace, manifest["task"], registry)
     validate_resume_payload(checkpoint, expected, config.budgets)

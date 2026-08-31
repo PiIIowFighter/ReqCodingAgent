@@ -30,10 +30,11 @@ Handler = Callable[[dict[str, Any]], ToolEnvelope]
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, refinement=None) -> None:
         self._tools: dict[str, tuple[ToolDefinition, Handler]] = {}
         self.history: list[dict[str, Any]] = []
         self.adapter_identity: dict[str, Any] = {"provider": "scripted"}
+        self.refinement = refinement
 
     def register(self, definition: ToolDefinition, handler: Handler) -> None:
         if definition.name in self._tools:
@@ -47,7 +48,17 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: dict[str, Any]) -> ToolEnvelope:
         started = time.monotonic()
-        if name not in self._tools:
+        blocked = {"apply_patch", "run_command", "submit"}
+        if self.refinement is not None and not self.refinement.approved and name in blocked:
+            result = ToolEnvelope(
+                False,
+                name,
+                {},
+                {"kind": "requirement_gate", "message": "record a valid RequirementBaseline before mutation, execution, or submit"},
+                False,
+                {},
+            )
+        elif name not in self._tools:
             result = ToolEnvelope(False, name, {}, {"kind": "unknown_tool", "message": "unknown tool"}, False, {})
         else:
             definition, handler = self._tools[name]

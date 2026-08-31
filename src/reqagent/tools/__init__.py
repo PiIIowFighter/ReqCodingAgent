@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from ..requirements import RequirementRefinementState
 from ..workspace import GitWorkspace
 from .base import ToolRegistry
 from .command import CommandExecutor, UnavailableCommandExecutor, definition as command_definition, run_command
 from .files import list_definition, list_files, read_definition, read_file
 from .patch import apply_patch, definition as patch_definition
+from .requirements import definition as requirement_definition, record_requirement_baseline
 from .search import definition as search_definition, search_text
 from .submit import definition as submit_definition, submit
 
@@ -15,15 +17,20 @@ def build_registry(
     *,
     command_executor: CommandExecutor | None = None,
     artifact_dir=None,
+    requirement_refinement: bool = False,
+    task: str = "",
 ) -> ToolRegistry:
     protected = tuple(config["workspace"]["protected_paths"])
     policy = workspace.policy(protected)
-    registry = ToolRegistry()
+    refinement = RequirementRefinementState(task) if requirement_refinement else None
+    registry = ToolRegistry(refinement=refinement)
     executor = command_executor or UnavailableCommandExecutor()
     command_artifacts = artifact_dir or workspace.root.parent / "commands"
     registry.register(list_definition(), lambda args: list_files(policy, args))
     registry.register(read_definition(), lambda args: read_file(policy, args))
     registry.register(search_definition(), lambda args: search_text(policy, args))
+    if refinement is not None:
+        registry.register(requirement_definition(), lambda args: record_requirement_baseline(refinement, args))
     registry.register(patch_definition(), lambda args: apply_patch(workspace, protected, config["workspace"], args))
     registry.register(command_definition(), lambda args: run_command(workspace, protected, config["budgets"]["command_timeout_seconds"], executor, command_artifacts, len(registry.history) + 1, args))
     registry.register(submit_definition(), lambda args: submit(registry.history, args))
