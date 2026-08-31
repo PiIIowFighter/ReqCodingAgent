@@ -155,11 +155,16 @@ def verify_formal_gate_resume(
     provenance = manifest.get("formal_gate_provenance")
     if not isinstance(provenance, dict) or provenance.get("drift_mode") != "formal_gate_hotfix":
         raise EvalError("formal drift resume provenance is missing", category="invalid")
-    if provenance.get("reporter_commit") != reporter_commit:
-        raise EvalError("formal drift resume requires identical reporter commit", category="invalid")
+    manifest_reporter_commit = provenance.get("reporter_commit")
+    ancestry = subprocess.run(
+        ["git", "-C", str(project_root), "merge-base", "--is-ancestor", str(manifest_reporter_commit), reporter_commit],
+        capture_output=True, check=False,
+    )
+    if ancestry.returncode:
+        raise EvalError("formal drift resume reporter commit is not an ancestor", category="invalid")
     expected = resolve_formal_gate_provenance(
         project_root, baseline=baseline, frozen_plan=frozen_plan, records=records,
-        reporter_commit=reporter_commit, allow_formal_gate_hotfix=True,
+        reporter_commit=str(manifest_reporter_commit), allow_formal_gate_hotfix=True,
     )
     if provenance != expected:
         raise EvalError("formal drift resume reporter provenance mismatch", category="invalid")
