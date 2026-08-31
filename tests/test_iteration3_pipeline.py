@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from evalsys.baseline import build_formal_plan
-from evalsys.cli import build_parser
+from evalsys.cli import build_parser, validate_freeze_only_hotfix_options
 from evalsys.errors import EvalError
 from evalsys.harness_environment import harness_receipt_path
 from evalsys.iteration2 import freeze_baseline
@@ -17,9 +17,11 @@ from evalsys.iteration3 import (
     development_smoke_cell,
     iteration_roots,
     requirement_snapshot_payloads,
+    resolve_freeze_behavior_provenance,
     single_cell_waves,
     summarize_audited_iteration3_results,
     summarize_comparison,
+    verify_freeze_behavior_provenance,
     write_test_receipt,
 )
 
@@ -45,6 +47,30 @@ def test_cli_iteration_defaults_to_two_and_accepts_three():
     assert parser.parse_args(["report", "--name", "baseline-v2", "--iteration", "3"]).iteration == 3
 
 
+def test_freeze_only_hotfix_cli_is_explicit_and_iteration3_only():
+    parser = build_parser()
+    default = parser.parse_args([
+        "freeze-baseline", "--name", "baseline-v3", "--dev-version", "v008",
+        "--config", "agent.json", "--iteration", "3", "--confirm",
+    ])
+    assert default.allow_freeze_only_hotfix is False
+    validate_freeze_only_hotfix_options(default)
+
+    opted_in = parser.parse_args([
+        "freeze-baseline", "--name", "baseline-v3", "--dev-version", "v008",
+        "--config", "agent.json", "--iteration", "3", "--confirm",
+        "--allow-freeze-only-hotfix",
+    ])
+    validate_freeze_only_hotfix_options(opted_in)
+
+    for argv, message in (
+        (["freeze-baseline", "--name", "baseline-v3", "--dev-version", "v008", "--config", "agent.json", "--iteration", "3", "--allow-freeze-only-hotfix"], "--confirm"),
+        (["freeze-baseline", "--name", "baseline-v2", "--dev-version", "v001", "--config", "agent.json", "--iteration", "2", "--confirm", "--allow-freeze-only-hotfix"], "iteration 3"),
+    ):
+        with pytest.raises(EvalError, match=message):
+            validate_freeze_only_hotfix_options(parser.parse_args(argv))
+
+
 def test_single_cell_smoke_scheduler_does_not_require_a_pair():
     cell = {"case_id": "D-S1-fuzzy", "instance_id": "scikit-learn__scikit-learn-14983", "sequence": 1}
     assert single_cell_waves([cell]) == [[cell]]
@@ -65,6 +91,103 @@ def test_iteration3_uses_independent_roots_and_refined_smoke_cell(tmp_path: Path
     decision = route_task(cell["prompt"])
     assert decision.mode == "refine"
     assert decision.selected_skills
+
+
+def test_freeze_behavior_provenance_defaults_to_strict_hash_equality(tmp_path: Path):
+    with pytest.raises(EvalError, match="code_hash"):
+        resolve_freeze_behavior_provenance(
+            tmp_path,
+            development={"code_commit": "a" * 40, "code_hash": "b" * 64},
+            freeze_commit="c" * 40,
+            current_behavior_hash="d" * 64,
+            allow_freeze_only_hotfix=False,
+            iteration=3,
+        )
+
+
+def _init_agent_history(project: Path) -> tuple[str, str]:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.name", "Test"], check=True)
+    agent = project / "src/reqagent/agent.py"
+    evalsys = project / "src/evalsys/gate.py"
+    agent.parent.mkdir(parents=True)
+    evalsys.parent.mkdir(parents=True)
+    agent.write_text("AGENT = 1\n", encoding="utf-8")
+    evalsys.write_text("GATE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "-qm", "development"], check=True)
+    development_commit = subprocess.run(
+        ["git", "-C", str(project), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    evalsys.write_text("GATE = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "commit", "-qam", "freeze reporter"], check=True)
+    freeze_commit = subprocess.run(
+        ["git", "-C", str(project), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return development_commit, freeze_commit
+
+
+def test_freeze_only_hotfix_accepts_unchanged_agent_package_and_audits_drift(tmp_path: Path):
+    development_commit, freeze_commit = _init_agent_history(tmp_path)
+    provenance = resolve_freeze_behavior_provenance(
+        tmp_path,
+        development={"code_commit": development_commit, "code_hash": "b" * 64},
+        freeze_commit=freeze_commit,
+        current_behavior_hash="d" * 64,
+        allow_freeze_only_hotfix=True,
+        iteration=3,
+    )
+    assert provenance == {
+        "drift_mode": "freeze_only_hotfix",
+        "frozen_development_behavior_tree_sha256": "b" * 64,
+        "agent_code_commit": development_commit,
+        "freeze_reporter_commit": freeze_commit,
+        "current_behavior_tree_sha256": "d" * 64,
+        "agent_package_sha256": provenance["agent_package_sha256"],
+    }
+    assert len(provenance["agent_package_sha256"]) == 64
+
+
+def test_freeze_only_hotfix_rejects_agent_package_drift(tmp_path: Path):
+    development_commit, freeze_commit = _init_agent_history(tmp_path)
+    (tmp_path / "src/reqagent/agent.py").write_text("AGENT = 2\n", encoding="utf-8")
+    import subprocess
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "agent drift"], check=True)
+    freeze_commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    with pytest.raises(EvalError, match="Agent package"):
+        resolve_freeze_behavior_provenance(
+            tmp_path,
+            development={"code_commit": development_commit, "code_hash": "b" * 64},
+            freeze_commit=freeze_commit,
+            current_behavior_hash="d" * 64,
+            allow_freeze_only_hotfix=True,
+            iteration=3,
+        )
+
+
+def test_verify_freeze_behavior_provenance_binds_current_head(tmp_path: Path):
+    development_commit, freeze_commit = _init_agent_history(tmp_path)
+    provenance = resolve_freeze_behavior_provenance(
+        tmp_path,
+        development={"code_commit": development_commit, "code_hash": "b" * 64},
+        freeze_commit=freeze_commit,
+        current_behavior_hash="d" * 64,
+        allow_freeze_only_hotfix=True,
+        iteration=3,
+    )
+    verify_freeze_behavior_provenance(
+        tmp_path, provenance=provenance, current_behavior_hash="d" * 64,
+    )
+    with pytest.raises(EvalError, match="current HEAD"):
+        verify_freeze_behavior_provenance(
+            tmp_path, provenance={**provenance, "freeze_reporter_commit": "a" * 40},
+            current_behavior_hash="d" * 64,
+        )
 
 
 def test_iteration3_freeze_uses_selected_development_smoke_cell_identity(tmp_path: Path, monkeypatch):
