@@ -514,6 +514,46 @@
       "status": "resolved",
       "supersedes": [],
       "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T215229844789Z_formal_cell_5170b28724",
+      "config_hash": "5170b28724",
+      "raw_path": "artifacts/runs/iteration3/20260831T215229844789Z_formal_cell_5170b28724",
+      "run_id": "20260831T215229844789Z_formal_cell_5170b28724",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T215229786977Z_formal_cell_94c8460a79",
+      "config_hash": "94c8460a79",
+      "raw_path": "artifacts/runs/iteration3/20260831T215229786977Z_formal_cell_94c8460a79",
+      "run_id": "20260831T215229786977Z_formal_cell_94c8460a79",
+      "run_type": "formal_cell",
+      "status": "unresolved",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T215921346141Z_formal_cell_dadfcd8258",
+      "config_hash": "dadfcd8258",
+      "raw_path": "artifacts/runs/iteration3/20260831T215921346141Z_formal_cell_dadfcd8258",
+      "run_id": "20260831T215921346141Z_formal_cell_dadfcd8258",
+      "run_type": "formal_cell",
+      "status": "resolved",
+      "supersedes": [],
+      "validity": "active"
+    },
+    {
+      "audit_path": "audit/iteration3/runs/20260831T215921363072Z_formal_cell_b5e3dd76f2",
+      "config_hash": "b5e3dd76f2",
+      "raw_path": "artifacts/runs/iteration3/20260831T215921363072Z_formal_cell_b5e3dd76f2",
+      "run_id": "20260831T215921363072Z_formal_cell_b5e3dd76f2",
+      "run_type": "formal_cell",
+      "status": "unresolved",
+      "supersedes": [],
+      "validity": "active"
     }
   ],
   "schema_version": "1.0",
