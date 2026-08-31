@@ -1,0 +1,29 @@
+{
+  "canonical_lock_sha256": "66ada0bfcc5177def68d5307e0c6fdaf5b91b5659258faa1fb2cc4862809d39e",
+  "checkout_clean": true,
+  "checkout_head": "7a21e05772954cc81471ae19d56f436cecf43c54",
+  "distribution": "Ubuntu",
+  "docker_ping": true,
+  "environment": {
+    "PYTHONHOME": "unset",
+    "PYTHONPATH": "unset",
+    "VIRTUAL_ENV": "unset",
+    "WSLENV": "set"
+  },
+  "imports": true,
+  "interpreter": ".venv/bin/python",
+  "no_site": 0,
+  "python": "3.11.16",
+  "schema_version": "1.0",
+  "status": "passed",
+  "versions": {
+    "GitPython": "3.1.59",
+    "datasets": "5.0.1",
+    "docker": "7.2.0",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "swebench": "5.0.2",
+    "tqdm": "4.70.0",
+    "unidiff": "1.0.0"
+  }
+}

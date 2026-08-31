@@ -23,6 +23,12 @@ def iteration_roots(project_root: Path) -> dict[str, Path]:
     }
 
 
+def single_cell_waves(cells: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    if len(cells) != 1:
+        raise EvalError("single-cell scheduler requires exactly one cell", category="invalid")
+    return [[cells[0]]]
+
+
 def development_smoke_cell(records: list[dict[str, Any]]) -> dict[str, Any]:
     matches = [
         row for row in records

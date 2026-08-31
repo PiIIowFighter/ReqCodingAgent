@@ -13,6 +13,7 @@ from evalsys.iteration3 import (
     development_smoke_cell,
     iteration_roots,
     requirement_snapshot_payloads,
+    single_cell_waves,
     summarize_comparison,
     write_test_receipt,
 )
@@ -37,6 +38,11 @@ def test_cli_iteration_defaults_to_two_and_accepts_three():
     assert parser.parse_args(["freeze-baseline", "--name", "baseline-v2", "--dev-version", "v001", "--config", "agent.json", "--iteration", "3", "--confirm"]).iteration == 3
     assert parser.parse_args(["run-formal", "--name", "baseline-v2", "--iteration", "3", "--confirm"]).iteration == 3
     assert parser.parse_args(["report", "--name", "baseline-v2", "--iteration", "3"]).iteration == 3
+
+
+def test_single_cell_smoke_scheduler_does_not_require_a_pair():
+    cell = {"case_id": "D-S1-fuzzy", "instance_id": "scikit-learn__scikit-learn-14983", "sequence": 1}
+    assert single_cell_waves([cell]) == [[cell]]
 
 
 def test_iteration3_uses_independent_roots_and_specificity_smoke_cell(tmp_path: Path):

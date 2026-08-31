@@ -1194,9 +1194,15 @@ def run_development(
 
     remaining_budget = max_new_cells
     new_cells = 0
-    waves = deterministic_waves(cells, parallel_cells=parallel_cells)
-    for wave_index in range(0, len(waves), 2):
-        pair_waves = waves[wave_index:wave_index + 2]
+    if development_scope == "single_cell_smoke":
+        from .iteration3 import single_cell_waves
+        waves = single_cell_waves(cells)
+        wave_group_size = 1
+    else:
+        waves = deterministic_waves(cells, parallel_cells=parallel_cells)
+        wave_group_size = 2
+    for wave_index in range(0, len(waves), wave_group_size):
+        pair_waves = waves[wave_index:wave_index + wave_group_size]
         pair_new = sum(cell["case_id"] not in results_by_case for wave in pair_waves for cell in wave)
         if pair_new and remaining_budget is not None and pair_new > remaining_budget:
             break
