@@ -1,0 +1,211 @@
+{
+  "after": {
+    "median_steps": null,
+    "resolved": 1,
+    "stop_reasons": {},
+    "total_tokens": "[REDACTED]",
+    "wall_time_seconds": 1216.1719999999914
+  },
+  "before": {
+    "median_steps": null,
+    "resolved": null,
+    "stop_reasons": {},
+    "total_tokens": "[REDACTED]",
+    "wall_time_seconds": null
+  },
+  "cells": [
+    {
+      "actual_model": "gpt-5.6-sol",
+      "agent_tests": [
+        "Attempted targeted HttpResponse tests; command did not run tests because the supplied unittest label was invalid (ModuleNotFoundError)."
+      ],
+      "ambiguity_type": "omission",
+      "case_id": "D-O1-fuzzy",
+      "checksum": "92af55ad6a89d36fafbfc518b407d8c8b49a3acaab48f48458b148d97078a992",
+      "evaluation": {
+        "base_commit": "879cc3da6249e920b8d54518a0ae06de835d7373",
+        "case_id": "D-O1-fuzzy",
+        "classification": "resolved",
+        "cleanup": {
+          "message": null,
+          "status": "passed"
+        },
+        "data_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+        "docker_image": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+        "ended_at": "2026-08-31T14:01:08.252446Z",
+        "error": null,
+        "fail_to_pass": {
+          "test_memoryview_content (httpwrappers.tests.HttpResponseTests)": "PASSED"
+        },
+        "harness_revision": "7a21e05772954cc81471ae19d56f436cecf43c54",
+        "instance_id": "django__django-11133",
+        "logs": {
+          "harness": "harness",
+          "stderr": "stderr.log",
+          "stdout": "stdout.log"
+        },
+        "mode": "agent",
+        "pass_to_pass": {
+          "#13572 - QueryDict with a non-default encoding": "PASSED",
+          "A copy of a QueryDict is mutable.": "PASSED",
+          "Make sure HttpResponseRedirect works with lazy strings.": "PASSED",
+          "Regression test for #8278: QueryDict.update(QueryDict)": "PASSED",
+          "Semicolons and commas are decoded.": "PASSED",
+          "Semicolons and commas are encoded.": "PASSED",
+          "Test QueryDict with one key/value pair": "[REDACTED]",
+          "Test QueryDict with two key/value pairs with same keys.": "[REDACTED]",
+          "test_basic_mutable_operations (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_cookie_edgecases (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_create_with_no_args (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_dict_behavior (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_duplicates_in_fromkeys_iterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_file_interface (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_fromkeys_empty_iterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_fromkeys_is_immutable_by_default (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_fromkeys_mutable_override (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_fromkeys_noniterable (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_fromkeys_with_nondefault_encoding (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_fromkeys_with_nonempty_value (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_headers_type (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_httponly_after_load (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_immutability (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_immutable_basic_operations (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_immutable_get_with_default (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_invalid_cookies (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_invalid_redirect_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_iter_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_iterator_isnt_rewound (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_json_response_custom_encoder (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_list (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_non_ascii (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_passing_arguments_to_json_dumps (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_raises_type_error_with_default_setting (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_text (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_json_response_uuid (httpwrappers.tests.JsonResponseTests)": "PASSED",
+          "test_lazy_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_load_dict (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_long_line (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_missing_key (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_mutable_delete (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_newlines_in_headers (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_non_string_content (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_nonstandard_keys (httpwrappers.tests.CookieTests)": "[REDACTED]",
+          "test_not_allowed (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_not_allowed_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_not_allowed_repr_no_content_type (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_not_modified (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_not_modified_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_pickle (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_pickle (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_python_cookies (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_querydict_fromkeys (httpwrappers.tests.QueryDictTests)": "[REDACTED]",
+          "test_redirect (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_redirect_repr (httpwrappers.tests.HttpResponseSubclassesTests)": "PASSED",
+          "test_repeated_nonstandard_keys (httpwrappers.tests.CookieTests)": "[REDACTED]",
+          "test_response (httpwrappers.tests.FileCloseTests)": "PASSED",
+          "test_samesite (httpwrappers.tests.CookieTests)": "PASSED",
+          "test_stream_interface (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_streaming_response (httpwrappers.tests.FileCloseTests)": "PASSED",
+          "test_streaming_response (httpwrappers.tests.StreamingHttpResponseTests)": "PASSED",
+          "test_unsafe_redirect (httpwrappers.tests.HttpResponseTests)": "PASSED",
+          "test_urlencode (httpwrappers.tests.QueryDictTests)": "PASSED",
+          "test_urlencode_int (httpwrappers.tests.QueryDictTests)": "PASSED"
+        },
+        "repo": "django/django",
+        "run_id": "20260831T134052216864Z_dev_cell_5040d6b3d1",
+        "schema_version": "1.0",
+        "split": "dev",
+        "stages": {
+          "environment": "passed",
+          "patch": "passed",
+          "tests": "passed"
+        },
+        "started_at": "2026-08-31T14:00:07.057671Z",
+        "status": "resolved",
+        "tests_executed": true,
+        "wall_time_s": 61.187000000005355
+      },
+      "evaluator_recorded": true,
+      "image": {
+        "image_id": "sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+        "pinned": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf",
+        "repo_digests": [
+          "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+        ],
+        "requested": "swebench/sweb.eval.x86_64.django_1776_django-11133@sha256:914093363dbe12def92c5d36e9bdc5270cce5ed0aa6f3daad8bc4ef0389c29bf"
+      },
+      "instance_id": "django__django-11133",
+      "patch": {
+        "additions": 11,
+        "bytes": 1869,
+        "deletions": 2,
+        "files": 2
+      },
+      "run_id": "20260831T134052216864Z_dev_cell_5040d6b3d1",
+      "status": "resolved",
+      "steps": 23,
+      "stop_reason": "submitted",
+      "tool_calls": 34,
+      "usage": {
+        "cache_creation_input_tokens": "[REDACTED]",
+        "cache_read_input_tokens": "[REDACTED]",
+        "input_tokens": "[REDACTED]",
+        "output_tokens": "[REDACTED]"
+      },
+      "variant": "fuzzy",
+      "wall_time_seconds": 1216.1719999999914
+    }
+  ],
+  "code_commit": "b4d87d8b0c9087973092378882ea4c7bfc1ac969",
+  "code_hash": "12968fdc5001002c66077491118e633fe29063005639dc5e36a7b077f727fc06",
+  "config_hash": "4df0fe234c26237dfca18578aa649538ccc446f6f0e50fbc547e219c88e64ac8",
+  "created_at": "2026-08-31T14:01:18.252867Z",
+  "decision": "accepted",
+  "exact_change": "Initial candidate",
+  "expected_effect": "Establish benchmark baseline",
+  "harness_environment": {
+    "path": "audit/iteration3/harness-environment-receipt.json",
+    "sha256": "56f5697b0dda67b32e15c9557ba3e681c7e524681e94732ec1ed87bc81bcca5e"
+  },
+  "hypothesis": "ReqRefine live integration smoke",
+  "isolation_proof": {
+    "path": "audit/iteration3/adaptive-isolation-proof.json",
+    "sha256": "9c3d3244bcdfe1de28856952d2fdc2d05f24d100b82075422c82fa2b11b02660"
+  },
+  "observed_issue": "",
+  "pair_order_source": "frozen_plan",
+  "parallel_cells": 1,
+  "parent": null,
+  "protocol_prompt_hash": "574c81891f31b95f40a1d50b228b2438f5aa12364b60136fefa27f9c440df88b",
+  "provider_identity": {
+    "actual_model": "gpt-5.6-sol",
+    "api_key_env": "[REDACTED]",
+    "base_url_env": "ANTHROPIC_BASE_URL",
+    "capability_evidence": "audit/iteration2/runs/20260829T130000000000Z-live-capability/summary.json",
+    "configured_model": "gpt-5.6-sol",
+    "context_window_tokens": "[REDACTED]",
+    "endpoint_sha256": "a7c8c47d433a79da91a6f36e5c7eb02669b79c5e7bd2ac098788a4ca67765416",
+    "max_output_tokens": "[REDACTED]",
+    "protocol": "anthropic_messages",
+    "provider": "local_reverse_proxy",
+    "seed": "unsupported",
+    "temperature": "unsupported"
+  },
+  "rationale": "The authorized single smoke cell produced a verified non-infrastructure Agent/evaluator record.",
+  "result_order": "frozen_plan_sequence",
+  "rollback_risk": "none",
+  "scheduler": "deterministic_wave_v1",
+  "scope": "single_cell_smoke",
+  "source_run_ids": [
+    "20260831T134052216864Z_dev_cell_5040d6b3d1"
+  ],
+  "successor": null,
+  "system_prompt_hash": "059db471dca6e20946bd0ee9748b964db3812153892e182f8f1ba0d04bf1aac4",
+  "test_receipt": {
+    "path": "audit/iteration3/adaptive-test-receipt.json",
+    "sha256": "2db5c0427b64d83c01ac98ee1b8bd902ab1310bbce30e83fe1e59a1b039b5d40"
+  },
+  "tool_schema_hash": "7783d3046d61c3a0ecb7edddafd6d66e080a4b5020ce805f02377b49bcee24bc",
+  "validation_plan": "Complete only D-O1-fuzzy as the authorized smoke cell",
+  "version": "v004"
+}
