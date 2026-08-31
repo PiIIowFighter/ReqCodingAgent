@@ -176,6 +176,7 @@ class AdaptiveRefinementState:
     investigation_response_count: int = 0
     investigation_tool_count: int = 0
     synthesis_response_count: int = 0
+    synthesis_tool_count: int = 0
 
     def __post_init__(self) -> None:
         self.route = route_task(self.task)
@@ -313,10 +314,11 @@ class AdaptiveRefinementState:
             "investigation_response_count": self.investigation_response_count,
             "investigation_tool_count": self.investigation_tool_count,
             "synthesis_response_count": self.synthesis_response_count,
+            "synthesis_tool_count": self.synthesis_tool_count,
         }
 
     def restore(self, value: dict[str, Any]) -> None:
-        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen", "fallback_reason", "refinement_stage", "closed_call_ids", "investigation_response_count", "investigation_tool_count", "synthesis_response_count"}
+        required = {"version", "task", "route", "phase", "evidence", "brief", "ranked_candidates", "revision_count", "reflection_count", "reflection", "requires_reflection", "contradiction_reason", "schema_removed", "usage_by_phase", "steps_by_phase", "tools_by_phase", "patch_seen", "fallback_reason", "refinement_stage", "closed_call_ids", "investigation_response_count", "investigation_tool_count", "synthesis_response_count", "synthesis_tool_count"}
         if set(value) != required or value.get("version") != ROUTER_VERSION or value.get("task") != self.task:
             raise ValueError("resume refused: adaptive refinement identity changed")
         raw_route = value["route"]
@@ -357,6 +359,7 @@ class AdaptiveRefinementState:
         self.investigation_response_count = int(value["investigation_response_count"])
         self.investigation_tool_count = int(value["investigation_tool_count"])
         self.synthesis_response_count = int(value["synthesis_response_count"])
+        self.synthesis_tool_count = int(value["synthesis_tool_count"])
 
     def trace(self) -> dict[str, Any]:
         aggregate_usage: dict[str, int] = {}
@@ -374,6 +377,7 @@ class AdaptiveRefinementState:
             "investigation_response_count": self.investigation_response_count,
             "investigation_tool_count": self.investigation_tool_count,
             "synthesis_response_count": self.synthesis_response_count,
+            "synthesis_tool_count": self.synthesis_tool_count,
             "usage_by_phase": self.usage_by_phase, "usage": aggregate_usage,
             "steps_by_phase": self.steps_by_phase, "tools_by_phase": self.tools_by_phase,
         }

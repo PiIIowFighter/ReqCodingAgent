@@ -360,7 +360,7 @@ class AgentLoop:
                     adaptive = getattr(self.registry, "adaptive", None)
                     pending_phase = self.pending_phase or "main"
                     pending_stage = self.pending_refinement_stage
-                    phase_tool_calls = adaptive.investigation_tool_count if adaptive is not None and pending_stage == "investigating" else adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
+                    phase_tool_calls = adaptive.investigation_tool_count if adaptive is not None and pending_stage == "investigating" else adaptive.synthesis_tool_count if adaptive is not None and pending_stage == "synthesizing" else adaptive.tools_by_phase[pending_phase] if adaptive is not None else self.tool_calls
                     phase_tool_limit = 6 if pending_stage == "investigating" else 1 if pending_stage == "synthesizing" else 2 if pending_phase == "reflection" else self.config.budgets["max_tool_calls"]
                     if phase_tool_calls >= phase_tool_limit:
                         self._close_remaining("phase_budget_exhausted", f"{pending_phase} tool budget exhausted")
@@ -419,6 +419,8 @@ class AgentLoop:
                         adaptive.tools_by_phase[tool_phase] += 1
                         if pending_stage == "investigating" and call.name in {"list_files", "read_file", "search_text"}:
                             adaptive.investigation_tool_count += 1
+                        elif pending_stage == "synthesizing":
+                            adaptive.synthesis_tool_count += 1
                         adaptive.observe_tool(call.name, result.ok, result.error, after != before)
                     if call.name == "record_requirement_brief" and result.ok and adaptive is not None:
                         brief_message = adaptive.brief_message()
