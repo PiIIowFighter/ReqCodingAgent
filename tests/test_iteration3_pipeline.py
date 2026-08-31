@@ -9,7 +9,12 @@ from evalsys.baseline import build_formal_plan
 from evalsys.cli import build_parser, validate_freeze_only_hotfix_options
 from evalsys.errors import EvalError
 from evalsys.harness_environment import harness_receipt_path
-from evalsys.iteration2 import freeze_baseline
+from evalsys.iteration2 import (
+    behavior_tree_hash,
+    current_tool_schema_bytes,
+    freeze_baseline,
+    verify_frozen_baseline,
+)
 from evalsys.iteration3 import (
     ITERATION,
     baseline_snapshots,
@@ -226,6 +231,68 @@ def test_iteration3_freeze_uses_selected_development_smoke_cell_identity(tmp_pat
             tmp_path, "baseline-v3", {}, records(), development=development,
             image_identities={}, authorized=True, git_commit="a" * 40, iteration=3,
         )
+
+
+def test_iteration3_verifier_uses_iteration3_plan_generator_identity(tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    for directory in ("src/evalsys", "src/reqagent", "scripts", "benchmark/manifests", "benchmark", "prompts/baseline"):
+        (project / directory).mkdir(parents=True, exist_ok=True)
+    files = {
+        "src/evalsys/baseline.py": "iteration 2 generator\n",
+        "src/evalsys/iteration3.py": "iteration 3 generator\n",
+        "src/reqagent/core.py": "code\n",
+        "scripts/official_harness_adapter.py": "adapter\n",
+        "benchmark/manifests/paired-cases.jsonl": "manifest\n",
+        "benchmark/source-lock.json": "{}\n",
+        "uv.lock": "lock\n",
+        "prompts/baseline/system.txt": "system\n",
+        "prompts/baseline/protocol.txt": "protocol\n",
+    }
+    for name, content in files.items():
+        (project / name).write_text(content, encoding="utf-8")
+    monkeypatch.setattr("evalsys.iteration2._tool_schemas", lambda root, config: [])
+    tool_schema = current_tool_schema_bytes(project, {})
+    snapshot_bytes = {
+        name: json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        for name, payload in requirement_snapshot_payloads().items()
+    }
+    sha256 = lambda value: __import__("hashlib").sha256(value).hexdigest()
+    manifest = {
+        "iteration": 3,
+        "public_manifest_sha256": sha256((project / "benchmark/manifests/paired-cases.jsonl").read_bytes()),
+        "source_lock_sha256": sha256((project / "benchmark/source-lock.json").read_bytes()),
+        "dependency_lock_sha256": sha256((project / "uv.lock").read_bytes()),
+        "plan_generator_sha256": sha256((project / "src/evalsys/iteration3.py").read_bytes()),
+        "behavior_tree_sha256": behavior_tree_hash(project),
+        "system_prompt_sha256": sha256((project / "prompts/baseline/system.txt").read_bytes()),
+        "protocol_prompt_sha256": sha256((project / "prompts/baseline/protocol.txt").read_bytes()),
+        "tool_schema_sha256": sha256(tool_schema),
+        "config": {},
+        "config_sha256": sha256(b"{}"),
+        "scheduler": "deterministic_wave_v1", "parallel_cells": 2,
+        "pair_order_source": "frozen_plan", "result_order": "frozen_plan_sequence",
+        "requirement_ontology_sha256": sha256(snapshot_bytes["requirement-ontology.json"]),
+        "skill_catalog_sha256": sha256(snapshot_bytes["skill-catalog.json"]),
+        "reflection_gate_sha256": sha256(snapshot_bytes["reflection-gate.json"]),
+    }
+    frozen = tmp_path / "frozen"
+    frozen.mkdir()
+    contents = {
+        "baseline.json": (json.dumps(manifest) + "\n").encode(),
+        "plan.json": b"[]\n",
+        "system.txt": (project / "prompts/baseline/system.txt").read_bytes(),
+        "protocol.txt": (project / "prompts/baseline/protocol.txt").read_bytes(),
+        "tool-schemas.json": tool_schema,
+        **snapshot_bytes,
+    }
+    for name, content in contents.items():
+        (frozen / name).write_bytes(content)
+    hashes = {name: sha256(content) for name, content in contents.items()}
+    (frozen / "checksums.sha256").write_text(
+        "".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8",
+    )
+
+    verify_frozen_baseline(frozen, project_root=project)
 
 
 def test_iteration3_plan_preserves_frozen_cells_and_relables_experiments():
