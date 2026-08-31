@@ -133,10 +133,11 @@ def main(argv: list[str] | None = None) -> int:
                     if any(verify_active_audit_runs(settings.project_root, iteration=2).values()) or verify_audit_index_metadata(settings.project_root, iteration=2):
                         raise EvalError("report-only hotfix requires valid audit evidence", category="invalid")
                     identities = audited_formal_cell_identities(settings.project_root, settings.artifact_root / "runs/iteration2", rows, frozen["baseline"], manifest)
+                    audit_index = json.loads((settings.project_root / "audit/iteration2/index.json").read_text(encoding="utf-8"))
                     report = summarize_audited_formal_results(
                         rows, baseline=frozen["baseline"], manifest=manifest, cell_identities=identities,
                         reporter_behavior_tree_sha256=behavior_tree_hash(settings.project_root), reporter_commit=reporter_commit,
-                        allow_report_only_hotfix=True, confirmed=True,
+                        allow_report_only_hotfix=True, confirmed=True, audit_runs=audit_index["runs"],
                     )
                 else:
                     frozen = verify_frozen_baseline(baseline_root, project_root=settings.project_root)

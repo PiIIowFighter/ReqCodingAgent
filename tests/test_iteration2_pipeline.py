@@ -554,6 +554,7 @@ def test_formal_report_counts_pairs_categories_and_usage():
                 "usage": {"input_tokens": 10, "output_tokens": 4}, "wall_time_seconds": 5,
                 "patch": {"files": 1, "additions": 1, "deletions": 0, "bytes": 20},
                 "stop_reason": "submitted", "agent_tests": [], "evaluator_recorded": True,
+                "evaluation": {"classification": "resolved" if variant == "full" else "tests_failed"},
             })
     report = summarize_formal_results(rows)
     assert report["E1_resolved"] == {"count": 12, "total": 12}
@@ -569,7 +570,7 @@ def test_formal_report_counts_pairs_categories_and_usage():
     invalid_category[1]["ambiguity_type"] = None
     with pytest.raises(EvalError, match="ambiguity type"):
         summarize_formal_results(invalid_category)
-    assert report["classifications"] == {"unavailable": 24}
+    assert report["classifications"] == {"resolved": 12, "tests_failed": 12}
     assert report["stop_reasons"] == {"submitted": 24}
     assert report["usage"] == {"input_tokens": 240, "output_tokens": 96, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
     assert report["totals"]["steps"] == 48 and report["totals"]["tool_calls"] == 72
@@ -604,7 +605,17 @@ def test_formal_report_counts_pairs_categories_and_usage():
     drifted[rows[0]["run_id"]]["baseline"] = "other"
     with pytest.raises(EvalError, match="cell identity"):
         summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=drifted, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
-    audited = summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=identities, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
+    audit_runs = [
+        {"run_id": row["run_id"], "run_type": "formal_cell", "status": row["status"], "validity": "active", "supersedes": []}
+        for row in rows
+    ]
+    for index in range(3):
+        old_id = f"infra-{index}"
+        audit_runs.append({"run_id": old_id, "run_type": "formal_cell", "status": "eval_infra_failed", "validity": "active", "supersedes": []})
+        active_index = index * 2
+        audit_runs[active_index] = {**audit_runs[active_index], "supersedes": [old_id]}
+    audit_runs.append({"run_id": "dev-run", "run_type": "dev_cell", "status": "resolved", "validity": "active", "supersedes": []})
+    audited = summarize_audited_formal_results(rows, baseline=baseline, manifest=manifest, cell_identities=identities, audit_runs=audit_runs, reporter_behavior_tree_sha256="r" * 64, reporter_commit="a" * 40, allow_report_only_hotfix=True, confirmed=True)
     assert audited["frozen_behavior_tree_sha256"] == "f" * 64
     assert audited["reporter_behavior_tree_sha256"] == "r" * 64
     assert audited["report_only_hotfix"] is True and audited["report_hotfix_commit"] == "e1e8d9a8440d724029f409159f949a8f2457be22"
@@ -612,6 +623,14 @@ def test_formal_report_counts_pairs_categories_and_usage():
     assert audited["E1_resolved"] == report["E1_resolved"] and audited["E2_resolved"] == report["E2_resolved"]
     assert audited["paired_outcomes"] == report["paired_outcomes"]
     assert sum(audited["paired_outcomes"].values()) == 12
+    assert audited["infrastructure"] == {
+        "infra_failures": 0, "formal_attempts": 27, "active_runs": 24,
+        "superseded_runs": 3, "superseded_infra_attempts": 3,
+        "supersession_edges": [
+            {"run_id": f"run-{index}-full", "supersedes": f"infra-{index}"}
+            for index in range(3)
+        ],
+    }
     assert json.loads(json.dumps(audited, sort_keys=True))["reporter_commit"] == "a" * 40
 
     incomplete = [dict(row) for row in rows]

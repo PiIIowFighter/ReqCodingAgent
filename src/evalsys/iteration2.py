@@ -1374,6 +1374,7 @@ def summarize_audited_formal_results(
     rows: list[dict[str, Any]], *, baseline: dict[str, Any], manifest: dict[str, Any],
     cell_identities: dict[str, dict[str, Any]], reporter_behavior_tree_sha256: str,
     reporter_commit: str, allow_report_only_hotfix: bool, confirmed: bool,
+    audit_runs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not allow_report_only_hotfix or not confirmed:
         raise EvalError("report-only hotfix requires explicit confirmation", category="invalid")
@@ -1392,6 +1393,30 @@ def summarize_audited_formal_results(
     if set(cell_identities) != {row.get("run_id") for row in rows} or any(identity != expected for identity in cell_identities.values()):
         raise EvalError("formal active cell identity differs from frozen baseline", category="invalid")
     report = summarize_formal_results(rows)
+    if audit_runs is not None:
+        from .evidence import select_current_runs
+
+        formal_runs = [run for run in audit_runs if run.get("run_type") == "formal_cell"]
+        active = select_current_runs(formal_runs)
+        active_ids = {run["run_id"] for run in active}
+        report_ids = {row["run_id"] for row in rows}
+        if active_ids != report_ids:
+            raise EvalError("formal audit active leaves differ from report cells", category="invalid")
+        edges = [
+            {"run_id": run["run_id"], "supersedes": prior}
+            for run in formal_runs for prior in run.get("supersedes", [])
+        ]
+        superseded_ids = {edge["supersedes"] for edge in edges}
+        by_id = {run["run_id"]: run for run in formal_runs}
+        if any(run_id not in by_id for run_id in superseded_ids):
+            raise EvalError("formal audit supersession history is incomplete", category="invalid")
+        report["infrastructure"] = {
+            "infra_failures": sum(row.get("status") == "eval_infra_failed" for row in rows),
+            "formal_attempts": len(formal_runs), "active_runs": len(active),
+            "superseded_runs": len(superseded_ids),
+            "superseded_infra_attempts": sum(by_id[run_id].get("status") == "eval_infra_failed" for run_id in superseded_ids),
+            "supersession_edges": edges,
+        }
     return {
         **report,
         "frozen_behavior_tree_sha256": baseline["behavior_tree_sha256"],
@@ -1448,6 +1473,12 @@ def summarize_formal_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
             value = str(row.get(field, default))
             result[value] = result.get(value, 0) + 1
         return result
+    classifications: dict[str, int] = {}
+    for row in rows:
+        value = row.get("evaluation", {}).get("classification")
+        if not isinstance(value, str) or not value:
+            raise EvalError("formal report contains an invalid evaluator classification", category="invalid")
+        classifications[value] = classifications.get(value, 0) + 1
     usage_keys = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
     usage = {key: sum(int(row.get("usage", {}).get(key, 0)) for row in rows) for key in usage_keys}
     patch = {key: sum(int(row.get("patch", {}).get(key, 0)) for row in rows) for key in ("files", "additions", "deletions", "bytes")}
@@ -1458,7 +1489,7 @@ def summarize_formal_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "absolute_drop": e1_count - e2_count,
         "categories": categories,
         "paired_outcomes": paired,
-        "classifications": counts("classification", "unavailable"),
+        "classifications": classifications,
         "stop_reasons": counts("stop_reason", "unavailable"),
         "usage": usage,
         "totals": {
