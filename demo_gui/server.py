@@ -3,10 +3,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GUI_ROOT = Path(__file__).resolve().parent
@@ -14,13 +24,22 @@ STATIC_ROOT = GUI_ROOT / "static"
 ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
 BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")
 ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
+DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/live-local-proxy.json"
+DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts/runs/demo-gui"
+MAX_TASK_BYTES = 16_384
+MAX_PATCH_BYTES = 524_288
+TERMINAL_STATES = frozenset({"completed", "failed"})
 
 
 class FrozenDataError(RuntimeError):
-    """Raised when the read-only presentation data is malformed."""
+    pass
 
 
-def _read_json(path: Path) -> dict:
+class WorkspaceError(RuntimeError):
+    pass
+
+
+def _read_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -32,49 +51,32 @@ def _read_json(path: Path) -> dict:
 
 def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
     ontology_path = project_root / ONTOLOGY_SOURCE
-    baseline_path = project_root / BASELINE_SOURCE
     try:
         ontology_bytes = ontology_path.read_bytes()
-    except OSError as error:
-        raise FrozenDataError("Unable to read requirement-ontology.json") from error
-    try:
         ontology = json.loads(ontology_bytes)
-    except (UnicodeError, json.JSONDecodeError) as error:
-        raise FrozenDataError("Invalid requirement-ontology.json") from error
-    baseline = _read_json(baseline_path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise FrozenDataError("Unable to read requirement-ontology.json") from error
+    baseline = _read_json(project_root / BASELINE_SOURCE)
     expected = baseline.get("requirement_ontology_sha256")
     actual = hashlib.sha256(ontology_bytes).hexdigest()
     verified = isinstance(expected, str) and actual == expected
-
     response: dict[str, object] = {
-        "baseline": baseline.get("name", "baseline-v3"),
-        "version": ontology.get("version") if isinstance(ontology, dict) else None,
-        "source": ONTOLOGY_SOURCE.as_posix(),
-        "expected_sha256": expected,
-        "actual_sha256": actual,
-        "verified": verified,
-        "category_count": 0,
-        "slot_count": 0,
-        "tree": None,
-        "annotations": None,
+        "baseline": baseline.get("name", "baseline-v3"), "version": ontology.get("version"),
+        "source": ONTOLOGY_SOURCE.as_posix(), "expected_sha256": expected,
+        "actual_sha256": actual, "verified": verified, "category_count": 0,
+        "slot_count": 0, "tree": None, "annotations": None,
     }
     if not verified:
         response["integrity_error"] = "Frozen ontology integrity verification failed. Tree content is unavailable."
         return response
-
-    source_tree = ontology.get("ontology") if isinstance(ontology, dict) else None
-    version = ontology.get("version") if isinstance(ontology, dict) else None
-    if not isinstance(source_tree, dict) or not isinstance(version, str):
+    source_tree = ontology.get("ontology")
+    if not isinstance(source_tree, dict) or not isinstance(ontology.get("version"), str):
         raise FrozenDataError("Frozen ontology structure is invalid")
-
     annotations = _read_json(ANNOTATION_SOURCE)
-    category_notes = annotations.get("categories")
-    slot_notes = annotations.get("slots")
+    category_notes, slot_notes = annotations.get("categories"), annotations.get("slots")
     if not isinstance(category_notes, dict) or not isinstance(slot_notes, dict):
         raise FrozenDataError("Ontology annotations are invalid")
-
-    normalized = []
-    expected_slots: set[str] = set()
+    normalized, expected_slots = [], set()
     for category_id, slots in source_tree.items():
         if not isinstance(category_id, str) or not isinstance(slots, list) or not all(isinstance(slot, str) for slot in slots):
             raise FrozenDataError("Frozen ontology structure is invalid")
@@ -89,45 +91,239 @@ def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
         normalized.append({"id": category_id, "type": "category", "children": children})
     if set(category_notes) != set(source_tree) or set(slot_notes) != expected_slots:
         raise FrozenDataError("Ontology annotations do not correspond exactly to the frozen tree")
-
-    response.update({
-        "category_count": len(normalized),
-        "slot_count": len(expected_slots),
-        "tree": {
-            "id": "coding-requirement-ontology",
-            "type": "root",
-            "children": normalized,
-        },
-        "annotations": annotations,
-    })
+    response.update({"category_count": len(normalized), "slot_count": len(expected_slots),
+                     "tree": {"id": "coding-requirement-ontology", "type": "root", "children": normalized},
+                     "annotations": annotations})
     return response
 
 
-class DemoServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
+def validate_workspace(path: Path) -> Path:
+    workspace = path.expanduser().resolve()
+    if not workspace.is_dir():
+        raise WorkspaceError("Workspace does not exist or is not a directory.")
+    try:
+        inside = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, timeout=10)
+        status = subprocess.run(["git", "-C", str(workspace), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise WorkspaceError("Workspace Git validation could not be completed.") from error
+    if inside.returncode or inside.stdout.strip() != "true":
+        raise WorkspaceError("Workspace is not a Git repository.")
+    if status.returncode:
+        raise WorkspaceError("Workspace Git status could not be read.")
+    if status.stdout.strip():
+        raise WorkspaceError("Workspace must be clean before Agent execution.")
+    return workspace
 
-    def __init__(self, address: tuple[str, int], ontology: dict[str, object]):
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _safe_text(value: object, limit: int = 480) -> str:
+    text = " ".join(str(value or "").split())
+    text = re.sub(r"(?i)(?:[a-z]:[\\/]|/)(?:[^\s]+[\\/])+[^\s]+", "[path]", text)
+    text = re.sub(r"(?i)\b(api[_-]?key|auth(?:entication)?[_-]?token|password|secret)\b\s*[:=]\s*\S+", r"\1=[redacted]", text)
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+@dataclass
+class TaskRecord:
+    id: str
+    task: str
+    status: str = "queued"
+    created_at: str = field(default_factory=_now)
+    started_at: str | None = None
+    finished_at: str | None = None
+    run_id: str | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    process: subprocess.Popen[str] | None = field(default=None, repr=False)
+
+
+class TaskManager:
+    def __init__(self, workspace: Path, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable):
+        self.workspace = validate_workspace(workspace)
+        self.config = config.expanduser().resolve()
+        try:
+            config_data = json.loads(self.config.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise WorkspaceError("Agent configuration is missing or invalid.") from error
+        self.mode = str(config_data.get("mode", "unknown"))
+        model = config_data.get("model", {})
+        self.model = str(model.get("model", "unknown")) if isinstance(model, dict) else "unknown"
+        self.artifact_root, self.project_root, self.python = artifact_root.expanduser().resolve(), project_root.resolve(), python
+        self.tasks: dict[str, TaskRecord] = {}
+        self.lock, self.active_id = threading.RLock(), None
+
+    def runtime(self) -> dict[str, object]:
+        with self.lock:
+            active = bool(self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES)
+        return {"workspace": self.workspace.name, "mode": self.mode, "model": self.model,
+                "config": self.config.name, "ready": True, "active": active}
+
+    def start(self, task: str) -> TaskRecord:
+        validate_workspace(self.workspace)
+        with self.lock:
+            if self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES:
+                raise RuntimeError("An Agent task is already running.")
+            record = TaskRecord(uuid.uuid4().hex, task)
+            self.tasks[record.id], self.active_id = record, record.id
+        threading.Thread(target=self._run, args=(record,), daemon=True).start()
+        return record
+
+    def get(self, task_id: str) -> TaskRecord | None:
+        with self.lock:
+            return self.tasks.get(task_id)
+
+    def _run(self, record: TaskRecord) -> None:
+        with self.lock:
+            record.status, record.started_at = "running", _now()
+        self.artifact_root.mkdir(parents=True, exist_ok=True)
+        before = {p.name for p in self.artifact_root.iterdir() if p.is_dir()}
+        argv = [self.python, "-m", "reqagent.cli", "run", "--workspace", str(self.workspace),
+                "--task", record.task, "--config", str(self.config), "--artifact-root", str(self.artifact_root)]
+        try:
+            environment = os.environ.copy()
+            source_root = str(self.project_root / "src")
+            environment["PYTHONPATH"] = source_root + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
+            process = subprocess.Popen(argv, cwd=self.project_root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, encoding="utf-8", errors="replace")
+            with self.lock:
+                record.process = process
+            while process.poll() is None:
+                if record.run_id is None:
+                    created = sorted((p for p in self.artifact_root.iterdir() if p.is_dir() and p.name not in before), key=lambda p: p.stat().st_mtime)
+                    if created:
+                        with self.lock:
+                            record.run_id = created[-1].name
+                time.sleep(0.05)
+            stdout, _ = process.communicate()
+            try:
+                payload = json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else None
+            except (json.JSONDecodeError, IndexError):
+                payload = None
+            run_id = payload.get("run_id") if isinstance(payload, dict) else record.run_id
+            if not isinstance(run_id, str):
+                created = sorted((p for p in self.artifact_root.iterdir() if p.is_dir() and p.name not in before), key=lambda p: p.stat().st_mtime)
+                run_id = created[-1].name if created else None
+            with self.lock:
+                record.run_id = run_id
+                if process.returncode == 0 and isinstance(payload, dict):
+                    record.result, record.status = payload, "completed"
+                else:
+                    record.status, record.error = "failed", f"Agent process exited with code {process.returncode}."
+        except (OSError, subprocess.SubprocessError):
+            with self.lock:
+                record.status, record.error = "failed", "Agent process could not be started or completed."
+        finally:
+            with self.lock:
+                record.process, record.finished_at = None, _now()
+                if self.active_id == record.id:
+                    self.active_id = None
+
+    def public_task(self, record: TaskRecord) -> dict[str, object]:
+        result = record.result or {}
+        submitted = result.get("submitted") if isinstance(result.get("submitted"), dict) else {}
+        patch = result.get("patch") if isinstance(result.get("patch"), dict) else {}
+        return {"id": record.id, "task": record.task, "status": record.status, "created_at": record.created_at,
+                "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": result.get("stop_reason"),
+                "summary": _safe_text(submitted.get("summary"), 1200) if submitted else None,
+                "limitations": _safe_text(submitted.get("limitations"), 600) if submitted else None,
+                "patch": {key: patch.get(key, 0) for key in ("files", "additions", "deletions", "bytes")}, "error": record.error}
+
+    def _run_dir(self, record: TaskRecord) -> Path | None:
+        if not record.run_id or not re.fullmatch(r"[A-Za-z0-9._-]+", record.run_id):
+            return None
+        path = (self.artifact_root / record.run_id).resolve()
+        return path if path.parent == self.artifact_root and path.is_dir() else None
+
+    def events(self, record: TaskRecord, after: int) -> tuple[list[dict[str, object]], int, bool]:
+        run_dir = self._run_dir(record)
+        path = run_dir / "events.jsonl" if run_dir else None
+        if path is None or not path.is_file():
+            return [], after, record.status in TERMINAL_STATES
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return [], after, record.status in TERMINAL_STATES
+        events = [event for offset, line in enumerate(lines[after:], after)
+                  if (event := self._sanitize_event(line, offset)) is not None]
+        return events, len(lines), record.status in TERMINAL_STATES
+
+    @staticmethod
+    def _sanitize_event(line: str, offset: int) -> dict[str, object] | None:
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        phase = _safe_text(raw.get("phase") or "main", 32)
+        if raw.get("kind") == "model_response":
+            response = raw.get("response") if isinstance(raw.get("response"), dict) else {}
+            calls = response.get("tool_calls") if isinstance(response.get("tool_calls"), list) else []
+            tools = [_safe_text(c.get("name"), 64) for c in calls if isinstance(c, dict) and c.get("name")]
+            return {"offset": offset, "kind": "model_response", "phase": phase, "sequence": raw.get("sequence"),
+                    "text": _safe_text(response.get("text"), 700), "tools": tools,
+                    "finish_reason": _safe_text(response.get("finish_reason"), 40)}
+        if raw.get("kind") == "tool_result":
+            result = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+            error = result.get("error") if isinstance(result.get("error"), dict) else {}
+            ok = result.get("ok") is True
+            summary = "Completed successfully."
+            if not ok:
+                summary = f"Failed: {_safe_text(error.get('kind') or 'tool_error', 80)}."
+            elif result.get("truncated"):
+                summary = "Completed successfully; output was truncated."
+            return {"offset": offset, "kind": "tool_result", "phase": phase, "sequence": raw.get("sequence"),
+                    "tool": _safe_text(result.get("tool") or "tool", 64), "ok": ok, "summary": summary}
+        return None
+
+    def patch(self, record: TaskRecord) -> tuple[str, dict[str, object]]:
+        run_dir = self._run_dir(record)
+        path = run_dir / "agent.patch" if run_dir else None
+        if path is None or not path.is_file():
+            return "", {"files": 0, "additions": 0, "deletions": 0, "bytes": 0}
+        data = path.read_bytes()
+        if len(data) > MAX_PATCH_BYTES:
+            raise ValueError("Patch is too large to preview.")
+        patch = (record.result or {}).get("patch")
+        stats = patch if isinstance(patch, dict) else {}
+        return data.decode("utf-8", errors="replace"), {key: stats.get(key, 0) for key in ("files", "additions", "deletions", "bytes")}
+
+    def shutdown_active(self) -> None:
+        with self.lock:
+            process = self.tasks[self.active_id].process if self.active_id and self.active_id in self.tasks else None
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+
+class DemoServer(ThreadingHTTPServer):
+    daemon_threads, allow_reuse_address = True, True
+
+    def __init__(self, address: tuple[str, int], ontology: dict[str, object], tasks: TaskManager):
         super().__init__(address, DemoHandler)
-        self.ontology = ontology
+        self.ontology, self.tasks = ontology, tasks
+
+    def server_close(self) -> None:
+        self.tasks.shutdown_active()
+        super().server_close()
 
 
 class DemoHandler(BaseHTTPRequestHandler):
-    server_version = "ReqCodingAgentDemo"
-    sys_version = ""
-    static_files = {
-        "/": ("index.html", "text/html; charset=utf-8"),
-        "/settings": ("index.html", "text/html; charset=utf-8"),
-        "/settings/general": ("index.html", "text/html; charset=utf-8"),
-        "/settings/agent": ("index.html", "text/html; charset=utf-8"),
-        "/settings/runtime": ("index.html", "text/html; charset=utf-8"),
-        "/settings/ontology": ("index.html", "text/html; charset=utf-8"),
-        "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
-        "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    }
+    server_version, sys_version = "ReqCodingAgentDemo", ""
+    static_files = {path: ("index.html", "text/html; charset=utf-8") for path in
+                    ("/", "/settings", "/settings/general", "/settings/agent", "/settings/runtime", "/settings/ontology")}
+    static_files.update({"/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                         "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
+                         "/static/task.css": ("task.css", "text/css; charset=utf-8")})
 
     def log_message(self, format: str, *args: object) -> None:
-        return
+        pass
 
     def end_headers(self) -> None:
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -137,69 +333,127 @@ class DemoHandler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self) -> None:
-        parsed = urlsplit(self.path)
-        path = unquote(parsed.path)
-        if parsed.query or ".." in Path(path).parts:
-            self._not_found()
-            return
-        if path == "/api/health":
+        parsed, path = urlsplit(self.path), unquote(urlsplit(self.path).path)
+        if ".." in Path(path).parts:
+            self._not_found(); return
+        if path == "/api/health" and not parsed.query:
             verified = bool(self.server.ontology.get("verified"))
-            self._json({"status": "ok" if verified else "integrity_failure", "read_only": True, "ontology_verified": verified}, HTTPStatus.OK if verified else HTTPStatus.CONFLICT)
-        elif path == "/api/ontology":
-            status = HTTPStatus.OK if self.server.ontology.get("verified") else HTTPStatus.CONFLICT
-            self._json(self.server.ontology, status)
-        elif path in self.static_files:
+            self._json({"status": "ok" if verified else "integrity_failure", "read_only": False, "ontology_verified": verified}, 200 if verified else 409)
+        elif path == "/api/ontology" and not parsed.query:
+            self._json(self.server.ontology, 200 if self.server.ontology.get("verified") else 409)
+        elif path == "/api/runtime" and not parsed.query:
+            self._json(self.server.tasks.runtime())
+        elif match := re.fullmatch(r"/api/tasks/([a-f0-9]{32})(?:/(events|patch|patch/download))?", path):
+            self._task_get(match.group(1), match.group(2), parsed.query)
+        elif not parsed.query and path in self.static_files:
             filename, content_type = self.static_files[path]
             self._bytes((STATIC_ROOT / filename).read_bytes(), content_type)
         else:
             self._not_found()
 
+    def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path != "/api/tasks" or parsed.query:
+            self._method_not_allowed(); return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json({"error": "content type must be application/json"}, 415); return
+        origin, host = self.headers.get("Origin"), self.headers.get("Host")
+        if origin and origin.rstrip("/") != f"http://{host}":
+            self._json({"error": "origin not allowed"}, 403); return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if length <= 0 or length > MAX_TASK_BYTES:
+            self._json({"error": "invalid request size"}, 400); return
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except (UnicodeError, json.JSONDecodeError):
+            self._json({"error": "invalid JSON"}, 400); return
+        if not isinstance(payload, dict) or set(payload) != {"task"} or not isinstance(payload["task"], str):
+            self._json({"error": "body must contain only a task string"}, 400); return
+        task = payload["task"].strip()
+        if not task or len(task.encode("utf-8")) > MAX_TASK_BYTES:
+            self._json({"error": "task must be non-empty and within the size limit"}, 400); return
+        try:
+            record = self.server.tasks.start(task)
+        except (RuntimeError, WorkspaceError) as error:
+            self._json({"error": str(error)}, 409); return
+        self._json(self.server.tasks.public_task(record), 202)
+
     def do_HEAD(self) -> None:
         self._method_not_allowed()
 
-    do_POST = do_HEAD
     do_PUT = do_HEAD
     do_PATCH = do_HEAD
     do_DELETE = do_HEAD
 
-    def _json(self, payload: object, status: int = HTTPStatus.OK) -> None:
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self._bytes(body, "application/json; charset=utf-8", status)
+    def _task_get(self, task_id: str, resource: str | None, query: str) -> None:
+        record = self.server.tasks.get(task_id)
+        if record is None:
+            self._not_found(); return
+        if resource is None and not query:
+            self._json(self.server.tasks.public_task(record)); return
+        if resource == "events":
+            values = parse_qs(query, keep_blank_values=True)
+            try:
+                if set(values) - {"after"}: raise ValueError
+                after = int(values.get("after", ["0"])[0])
+                if after < 0: raise ValueError
+            except ValueError:
+                self._json({"error": "after must be a non-negative integer"}, 400); return
+            events, next_offset, complete = self.server.tasks.events(record, after)
+            self._json({"events": events, "next_offset": next_offset, "complete": complete}); return
+        if resource in {"patch", "patch/download"} and not query:
+            try:
+                patch, stats = self.server.tasks.patch(record)
+            except ValueError as error:
+                self._json({"error": str(error)}, 413); return
+            if resource == "patch":
+                self._json({"patch": patch, "stats": stats})
+            else:
+                self._bytes(patch.encode(), "text/x-diff; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="reqagent-{task_id[:8]}.patch"'})
+            return
+        self._not_found()
 
-    def _bytes(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    def _json(self, payload: object, status: int = 200) -> None:
+        self._bytes(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(), "application/json; charset=utf-8", status)
+
+    def _bytes(self, body: bytes, content_type: str, status: int = 200, *, headers: dict[str, str] | None = None) -> None:
+        self.send_response(status); self.send_header("Content-Type", content_type); self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items(): self.send_header(name, value)
+        self.end_headers(); self.wfile.write(body)
 
     def _not_found(self) -> None:
-        self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        self._json({"error": "not found"}, 404)
 
     def _method_not_allowed(self) -> None:
-        self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
-        self.send_header("Allow", "GET")
-        body = b'{"error":"method not allowed"}'
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_response(405); self.send_header("Allow", "GET, POST")
+        body = b'{"error":"method not allowed"}'; self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT) -> DemoServer:
-    return DemoServer((host, port), load_ontology(project_root))
+def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT, *,
+                  workspace: Path | None = None, config: Path | None = None,
+                  artifact_root: Path | None = None, python: str = sys.executable) -> DemoServer:
+    root = project_root.resolve()
+    tasks = TaskManager(workspace or root, config or root / "configs/agent/live-local-proxy.json",
+                        artifact_root or root / "artifacts/runs/demo-gui", project_root=root, python=python)
+    return DemoServer((host, port), load_ontology(root), tasks)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Serve the ReqCodingAgent read-only demo GUI")
+    parser = argparse.ArgumentParser(description="Serve the ReqCodingAgent local demo GUI")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1",))
     parser.add_argument("--port", default=8765, type=int)
+    parser.add_argument("--workspace", required=True, type=Path)
+    parser.add_argument("--config", default=DEFAULT_CONFIG, type=Path)
+    parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, type=Path)
     args = parser.parse_args(argv)
     try:
-        server = create_server(args.host, args.port)
-    except FrozenDataError as error:
-        print(f"Cannot start: {error}")
-        return 1
+        server = create_server(args.host, args.port, workspace=args.workspace, config=args.config, artifact_root=args.artifact_root)
+    except (FrozenDataError, WorkspaceError) as error:
+        print(f"Cannot start: {error}"); return 1
     print(f"ReqCodingAgent demo available at http://{args.host}:{args.port}/")
     try:
         server.serve_forever()
