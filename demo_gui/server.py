@@ -142,7 +142,7 @@ class TaskRecord:
 
 
 class TaskManager:
-    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True):
+    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True, interview_adapter_factory=None):
         self.workspace = validate_workspace(workspace) if workspace is not None else None
         self.config = config.expanduser().resolve()
         self.in_place = in_place
@@ -156,6 +156,7 @@ class TaskManager:
         self.artifact_root, self.project_root, self.python = artifact_root.expanduser().resolve(), project_root.resolve(), python
         self.tasks: dict[str, TaskRecord] = {}
         self.lock, self.active_id = threading.RLock(), None
+        self.interview_adapter_factory = interview_adapter_factory
 
     def runtime(self) -> dict[str, object]:
         with self.lock:
@@ -202,16 +203,19 @@ class TaskManager:
         """Start an interactive requirement interview."""
         from demo_gui.interview import InterviewSession
         from reqagent.config import AgentConfig
-        from reqagent.openai_responses import OpenAIResponsesAdapter
 
         with self.lock:
             record.status = "interviewing"
             record.started_at = _now()
 
         try:
-            # Load config and create adapter
-            cfg = AgentConfig.load(self.config)
-            adapter = OpenAIResponsesAdapter(cfg)
+            # Create adapter using factory or default
+            if self.interview_adapter_factory:
+                adapter = self.interview_adapter_factory()
+            else:
+                from reqagent.openai_responses import OpenAIResponsesAdapter
+                cfg = AgentConfig.load(self.config)
+                adapter = OpenAIResponsesAdapter(cfg)
 
             # Load ontology version
             ontology_path = PROJECT_ROOT / ONTOLOGY_SOURCE
