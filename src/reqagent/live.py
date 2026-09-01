@@ -187,7 +187,16 @@ def build_live_runtime(config: AgentConfig, *, run_id: str, client: Any | None =
         if inspected.returncode:
             raise ValueError("configured container image is not available locally")
     converter = _wsl_path if sys.platform == "win32" else None
+    protocol = config.model["protocol"]
+    if protocol == "anthropic_messages":
+        adapter = AnthropicMessagesAdapter(config, client=client)
+    elif protocol == "openai_responses":
+        from .openai_responses import OpenAIResponsesAdapter
+
+        adapter = OpenAIResponsesAdapter(config, client=client)
+    else:
+        raise ValueError("unsupported live protocol")
     return (
-        AnthropicMessagesAdapter(config, client=client),
+        adapter,
         ContainerCommandExecutor(command_prefix=prefix, image=image, run_id=run_id, path_converter=converter),
     )

@@ -93,8 +93,10 @@ class AgentConfig:
             isinstance(self.model[key], str) and self.model[key].startswith(_PLACEHOLDER)
             for key in ("provider", "protocol", "native_tool_calling")
         ):
-            if self.model["provider"] != "local_reverse_proxy" or self.model["protocol"] != "anthropic_messages":
-                raise ValueError("live mode supports only local_reverse_proxy with anthropic_messages")
+            if self.model["provider"] != "local_reverse_proxy":
+                raise ValueError("live mode supports only local_reverse_proxy")
+            if self.model["protocol"] not in {"anthropic_messages", "openai_responses"}:
+                raise ValueError("live mode supports only anthropic_messages or openai_responses")
             if self.model["native_tool_calling"] is not True:
                 raise ValueError("live mode requires native tool calling")
         integer_fields = [key for key in _BUDGET_KEYS if key not in {"context_trigger_ratio"}]
