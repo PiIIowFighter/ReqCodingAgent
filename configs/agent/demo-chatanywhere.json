@@ -18,16 +18,16 @@
     "wall_clock_seconds": 1800,
     "model_timeout_seconds": 300,
     "command_timeout_seconds": 300,
-    "max_consecutive_invalid_outputs": 3,
-    "max_total_invalid_outputs": 6,
+    "max_consecutive_invalid_outputs": 6,
+    "max_total_invalid_outputs": 12,
     "max_retries": 3,
     "context_trigger_ratio": 0.8,
     "keep_recent_rounds": 2
   },
   "workspace": {
-    "max_patch_files": 5,
-    "max_patch_lines": 500,
-    "max_patch_bytes": 131072,
+    "max_patch_files": 20,
+    "max_patch_lines": 2000,
+    "max_patch_bytes": 524288,
     "protected_paths": [],
     "container_image": "ubuntu@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d"
   },

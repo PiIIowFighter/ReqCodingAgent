@@ -84,6 +84,54 @@ def test_workspace_rejects_absolute_traversal_git_and_symlink(tmp_path: Path):
         policy.resolve("link/file.txt")
 
 
+def test_workspace_accepts_local_directory_without_git(tmp_path: Path):
+    source = tmp_path / "local-app"
+    source.mkdir()
+    (source / "hello.py").write_text("VALUE = 1\n", encoding="utf-8")
+    workspace = GitWorkspace.create(source)
+    try:
+        assert (workspace.root / "hello.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+        assert workspace.diff().strip() == ""
+    finally:
+        workspace.cleanup()
+
+
+def test_workspace_accepts_empty_local_directory(tmp_path: Path):
+    source = tmp_path / "empty-app"
+    source.mkdir()
+    workspace = GitWorkspace.create(source)
+    try:
+        assert workspace.diff().strip() == ""
+        assert workspace.base_commit
+    finally:
+        workspace.cleanup()
+
+
+def test_list_files_treats_empty_path_as_root(tmp_path: Path):
+    from reqagent.tools.files import list_files
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "hello.py").write_text("x\n", encoding="utf-8")
+    policy = WorkspacePolicy(root)
+    result = list_files(policy, {"path": "", "depth": 2})
+    assert result.ok
+    assert result.data["entries"] == [{"path": "hello.py", "type": "file"}]
+
+
+def test_workspace_in_place_modifies_source_directory(tmp_path: Path):
+    source = tmp_path / "local-app"
+    source.mkdir()
+    (source / "hello.py").write_text("VALUE = 1\n", encoding="utf-8")
+    workspace = GitWorkspace.create(source, in_place=True)
+    try:
+        assert workspace.root == source.resolve()
+        assert (source / "hello.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+        assert workspace.temporary_root is None
+    finally:
+        workspace.cleanup()
+
+
 def test_apply_patch_accepts_apply_patch_marker_format(tmp_path: Path):
     workspace = GitWorkspace.create(repository(tmp_path))
     patch = "*** Begin Patch\n*** Update File: hello.py\n@@\n-VALUE = 1\n+VALUE = 2\n*** End Patch"

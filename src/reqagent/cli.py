@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument("--task-file", type=Path)
     run.add_argument("--config", required=True, type=Path)
     run.add_argument("--artifact-root", type=Path, default=project_root() / "artifacts/runs/iteration2/offline")
+    run.add_argument("--in-place", action="store_true", help="modify the workspace directory directly instead of an isolated copy")
     resume = sub.add_parser("resume", help="resume an incomplete scripted run from its latest checkpoint")
     resume.add_argument("--run-id", required=True)
     resume.add_argument("--artifact-root", type=Path, default=project_root() / "artifacts/runs/iteration2/offline")
@@ -72,8 +73,8 @@ def _resume_identity(store: RunStore, config: AgentConfig, workspace: GitWorkspa
     }
 
 
-def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, *, destination: Path | None = None, position: int = 0, messages: list[dict] | None = None, finalize: bool = True):
-    workspace = GitWorkspace.create(source, destination=destination)
+def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, *, destination: Path | None = None, in_place: bool = False, position: int = 0, messages: list[dict] | None = None, finalize: bool = True):
+    workspace = GitWorkspace.create(source, destination=destination, in_place=in_place)
     system, protocol = _prompts()
     ledger = ContextLedger(system + "\n" + protocol, task, context_window=int(config.model["context_window_tokens"]), trigger_ratio=config.budgets["context_trigger_ratio"], keep_recent_rounds=config.budgets["keep_recent_rounds"])
     if messages is not None:
@@ -87,7 +88,7 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
         config.raw,
         command_executor=executor,
         artifact_dir=run_store.path / "commands",
-        requirement_refinement="auto",
+        requirement_refinement=False if in_place else "auto",
         task=task,
     )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})
@@ -171,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             task = args.task if args.task is not None else args.task_file.read_text(encoding="utf-8")
             store = RunStore.create(args.artifact_root, kind=run_kind(config.mode))
-            result = _execute(args.workspace, task, config, store)
+            result = _execute(args.workspace, task, config, store, in_place=args.in_place)
         else:
             store = RunStore.open(args.artifact_root / args.run_id)
             result = _resume_execute(config, store)

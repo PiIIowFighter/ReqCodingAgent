@@ -70,30 +70,26 @@ class OpenAIResponsesAdapter:
         self._instructions: str | None = None
         self._wire_input: list[Any] = []
         self._initial_user_added = False
-        self._processed_tool_results = 0
+        self._processed_call_ids: set[str] = set()
 
     def _sync_wire_input(self, request: ModelRequest) -> None:
-        if self._instructions is None:
-            system_parts = [message.text for message in request.messages if message.role == "system" and message.text]
-            self._instructions = "\n".join(system_parts)
-        tool_result_count = 0
+        system_parts = [message.text for message in request.messages if message.role == "system" and message.text]
+        self._instructions = "\n".join(system_parts)
         for message in request.messages:
-            if message.role == "system":
-                continue
             if message.role == "user" and not self._initial_user_added:
                 self._wire_input.append({"role": "user", "content": message.text})
                 self._initial_user_added = True
             elif message.role == "tool":
                 for result in message.tool_results:
-                    tool_result_count += 1
-                    if tool_result_count <= self._processed_tool_results:
+                    call_id = str(result.get("call_id", "")).strip()
+                    if not call_id or call_id in self._processed_call_ids:
                         continue
                     self._wire_input.append({
                         "type": "function_call_output",
-                        "call_id": result["call_id"],
+                        "call_id": call_id,
                         "output": json.dumps(_tool_result_content(result), ensure_ascii=False, sort_keys=True),
                     })
-                    self._processed_tool_results = tool_result_count
+                    self._processed_call_ids.add(call_id)
 
     def _build_tools(self, request: ModelRequest) -> list[dict[str, Any]]:
         return [
@@ -200,6 +196,7 @@ class OpenAIResponsesAdapter:
             "input": list(self._wire_input),
             "instructions": self._instructions or "",
             "tools": self._build_tools(request),
+            "tool_choice": "required",
             "max_output_tokens": request.max_output_tokens,
             "store": False,
         }

@@ -5,6 +5,7 @@
   const root = document.documentElement;
   let ontology = null, selectedId = "coding-requirement-ontology";
   let activeTask = null, eventOffset = 0, pollTimer = null;
+  let workspacePath = null, workspaceReady = false, workspaceDialogReason = "new-task";
   const escapeText = value => { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; };
 
   function toast(message) {
@@ -19,22 +20,19 @@
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
     event.currentTarget.textContent = collapsed ? "›" : "‹";
   });
-  $('[data-action="evaluation"]').addEventListener("click", () => toast("Evaluation results stay outside this focused demo."));
 
   function settingFromPath(path) {
-    const part = path.split("/")[2];
-    return ["general", "agent", "runtime", "ontology"].includes(part) ? part : "ontology";
+    return path.startsWith("/settings") ? "ontology" : null;
   }
   function showRoute(path, push = false) {
     const isSettings = path.startsWith("/settings");
     $("#home-view").hidden = isSettings; $("#settings-view").hidden = !isSettings;
     $$("[data-nav]").forEach(item => item.classList.toggle("active", item.dataset.nav === (isSettings ? "settings" : "home")));
     if (isSettings) {
-      const page = settingFromPath(path);
-      $$("[data-setting]").forEach(item => { item.classList.toggle("active", item.dataset.setting === page); item.toggleAttribute("aria-current", item.dataset.setting === page); });
-      $$("[data-settings-page]").forEach(item => item.hidden = item.dataset.settingsPage !== page);
+      $$("[data-setting]").forEach(item => { item.classList.toggle("active", item.dataset.setting === "ontology"); item.toggleAttribute("aria-current", item.dataset.setting === "ontology"); });
+      $$("[data-settings-page]").forEach(item => item.hidden = item.dataset.settingsPage !== "ontology");
     }
-    if (push) history.pushState({}, "", path);
+    if (push) history.pushState({}, "", isSettings ? "/settings/ontology" : path);
   }
   $$('a[href^="/"]').forEach(link => link.addEventListener("click", event => {
     if (link.id === "download-patch") return;
@@ -49,28 +47,97 @@
     if (!response.ok) throw new Error(data.error || "Request failed.");
     return data;
   }
+
+  function renderWorkspaceLabel() {
+    const label = $("#workspace-label");
+    label.textContent = workspacePath || "未选择";
+    label.classList.toggle("unset", !workspacePath);
+  }
+
+  function updateComposerState() {
+    const enabled = workspaceReady && !activeTask;
+    $("#task-input").disabled = !enabled;
+    $("#send-task").disabled = !enabled;
+    $("#empty-state-hint").textContent = workspaceReady
+      ? "Agent 会直接在工作目录中创建或修改文件。"
+      : "请先选择本地工作目录，再描述任务。Agent 会直接在该目录中创建或修改文件。";
+  }
+
+  function applyRuntime(runtime) {
+    workspacePath = runtime.workspace_path || null;
+    workspaceReady = Boolean(runtime.ready);
+    renderWorkspaceLabel();
+    updateComposerState();
+  }
+
   api("/api/runtime").then(runtime => {
-    $("#workspace-label").textContent = runtime.workspace;
-    $("#model-label").textContent = runtime.model;
-    $("#runtime-status").innerHTML = "<i></i>" + escapeText(runtime.mode);
-    $("#runtime-workspace").textContent = runtime.workspace;
-    $("#runtime-mode").textContent = runtime.mode;
-    $("#runtime-model").textContent = runtime.model;
-    $("#runtime-config").textContent = runtime.config;
+    applyRuntime(runtime);
+    if (!runtime.ready) openWorkspaceDialog("startup");
   }).catch(error => {
-    $("#workspace-label").textContent = "Unavailable";
-    $("#runtime-status").classList.add("failed");
-    $("#runtime-status").textContent = "Offline";
+    workspacePath = null; workspaceReady = false;
+    renderWorkspaceLabel(); updateComposerState();
+    openWorkspaceDialog("startup");
     toast(error.message);
+  });
+
+  function openWorkspaceDialog(reason = "edit") {
+    workspaceDialogReason = reason;
+    $("#workspace-input").value = workspacePath || "";
+    $("#workspace-dialog").hidden = false;
+    $("#workspace-input").focus();
+    $("#workspace-input").select();
+  }
+
+  function closeWorkspaceDialog() {
+    $("#workspace-dialog").hidden = true;
+  }
+
+  async function confirmWorkspace() {
+    const path = $("#workspace-input").value.trim();
+    if (!path) { toast("请输入工作目录路径。"); return; }
+    $("#workspace-confirm").disabled = true;
+    try {
+      const runtime = await api("/api/workspace", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path})
+      });
+      applyRuntime(runtime);
+      closeWorkspaceDialog();
+      toast("工作目录已设置。");
+      if (workspaceDialogReason === "new-task") {
+        $("#task-input").focus();
+      }
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      $("#workspace-confirm").disabled = false;
+    }
+  }
+
+  $("#workspace-edit").addEventListener("click", () => openWorkspaceDialog("edit"));
+  $("#workspace-cancel").addEventListener("click", closeWorkspaceDialog);
+  $("#workspace-confirm").addEventListener("click", confirmWorkspace);
+  $("#workspace-input").addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); confirmWorkspace(); }
+    else if (event.key === "Escape") closeWorkspaceDialog();
+  });
+  $("#workspace-dialog").addEventListener("click", event => {
+    if (event.target === $("#workspace-dialog")) closeWorkspaceDialog();
   });
 
   function resetTask() {
     activeTask = null; eventOffset = 0; clearTimeout(pollTimer);
     $("#empty-state").hidden = false; $("#task-view").hidden = true; $("#result-card").hidden = true;
     $("#timeline").replaceChildren(); $("#patch-preview").textContent = "";
-    $("#task-input").disabled = false; $("#send-task").disabled = false; $("#task-input").value = ""; $("#task-input").focus();
+    $("#task-input").value = "";
+    workspaceReady = false;
+    renderWorkspaceLabel();
+    updateComposerState();
+    openWorkspaceDialog("new-task");
   }
   $("#new-task").addEventListener("click", () => { showRoute("/", true); resetTask(); });
+
   function setStatus(status) {
     const badge = $("#task-status"); badge.textContent = status[0].toUpperCase() + status.slice(1);
     badge.className = "task-status " + status;
@@ -92,7 +159,7 @@
       ]);
       setStatus(task.status); feed.events.forEach(addEvent); eventOffset = feed.next_offset;
       if (task.status === "completed" || task.status === "failed") {
-        $("#task-input").disabled = false; $("#send-task").disabled = false;
+        updateComposerState();
         await showResult(task); return;
       }
       pollTimer = setTimeout(refreshTask, 700);
@@ -118,6 +185,7 @@
     card.scrollIntoView({behavior: "smooth", block: "nearest"});
   }
   async function submitTask() {
+    if (!workspaceReady) { openWorkspaceDialog("submit"); return; }
     const task = $("#task-input").value.trim();
     if (!task) { toast("Describe a task first."); return; }
     $("#send-task").disabled = true; $("#task-input").disabled = true;
@@ -128,7 +196,7 @@
       $("#timeline").replaceChildren(); $("#task-title").textContent = task; setStatus(record.status);
       refreshTask();
     } catch (error) {
-      $("#send-task").disabled = false; $("#task-input").disabled = false; toast(error.message);
+      updateComposerState(); toast(error.message);
     }
   }
   $("#send-task").addEventListener("click", submitTask);

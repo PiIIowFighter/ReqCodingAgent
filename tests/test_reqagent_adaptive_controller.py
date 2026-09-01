@@ -70,6 +70,12 @@ def test_router_uses_only_task_and_full_fast_path_has_baseline_tools(tmp_path: P
     assert registry.execute("submit", {"summary": "done", "tests": [], "limitations": ""}).ok
 
 
+def test_router_treats_greenfield_chinese_tasks_as_fast():
+    decision = route_task("生成一个股票搜索网站")
+    assert decision.mode == "fast"
+    assert decision.reasons == ("greenfield_creation",)
+
+
 def test_fast_path_first_request_matches_frozen_baseline_v1_golden(tmp_path: Path):
     task = "In parser.py, update parse(value) so empty strings return None while non-empty values remain unchanged; run test_parser.py."
     workspace = repository(tmp_path)

@@ -65,6 +65,18 @@ def read_schema() -> dict:
     }
 
 
+def tool_result(call_id: str, *, ok: bool = True, tool: str = "read_file", content: str = "x") -> dict:
+    return {
+        "call_id": call_id,
+        "ok": ok,
+        "tool": tool,
+        "data": {"content": content},
+        "error": None,
+        "truncated": False,
+        "meta": {},
+    }
+
+
 def initial_request() -> ModelRequest:
     return ModelRequest(
         messages=(
@@ -85,17 +97,7 @@ def followup_request() -> ModelRequest:
             ModelMessage("assistant", "working", tool_calls=( )),
             ModelMessage(
                 "tool",
-                tool_results=(
-                    {
-                        "call_id": "call-1",
-                        "ok": True,
-                        "tool": "read_file",
-                        "data": {"content": "x"},
-                        "error": None,
-                        "truncated": False,
-                        "meta": {},
-                    },
-                ),
+                tool_results=(tool_result("call-1"),),
             ),
         ),
         tools=(ToolDefinition("read_file", "read", read_schema()),),
@@ -291,3 +293,84 @@ def test_openai_public_dict_redacts_secrets(tmp_path: Path, monkeypatch):
     serialized = json.dumps(cfg.public_dict())
     assert "never-store-this" not in serialized
     assert "secret=hidden" not in serialized
+
+
+def test_openai_adapter_refreshes_instructions_when_system_message_changes(tmp_path: Path):
+    response = SimpleNamespace(
+        id="resp-sys",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        output=[{"type": "function_call", "call_id": "call-1", "name": "read_file", "arguments": '{"path":"a.py"}'}],
+    )
+    fake = FakeResponses(response=response)
+    adapter = OpenAIResponsesAdapter(openai_config(tmp_path), client=FakeOpenAIClient(fake))
+    adapter.complete(initial_request())
+    fake.response = SimpleNamespace(
+        id="resp-sys-2",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        output=[{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}],
+    )
+    updated = ModelRequest(
+        messages=(
+            ModelMessage("system", "updated system"),
+            ModelMessage("user", "inspect"),
+            ModelMessage("assistant", "working", tool_calls=()),
+            ModelMessage("tool", tool_results=(tool_result("call-1"),)),
+        ),
+        tools=(ToolDefinition("read_file", "read", read_schema()),),
+        max_output_tokens=4096,
+        timeout_seconds=300,
+    )
+    adapter.complete(updated)
+    assert fake.calls[0]["instructions"] == "system prompt"
+    assert fake.calls[1]["instructions"] == "updated system"
+
+
+def test_openai_adapter_deduplicates_tool_results_by_call_id_after_context_shrink(tmp_path: Path):
+    first = SimpleNamespace(
+        id="resp-a",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=3, output_tokens=5),
+        output=[
+            {"type": "reasoning", "id": "rs-1", "encrypted_content": "secret-chain", "summary": []},
+            {"type": "function_call", "call_id": "call-1", "name": "read_file", "arguments": '{"path":"a.py"}'},
+        ],
+    )
+    second = SimpleNamespace(
+        id="resp-b",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=4, output_tokens=3),
+        output=[{"type": "function_call", "call_id": "call-2", "name": "read_file", "arguments": '{"path":"b.py"}'}],
+    )
+    fake = FakeResponses(response=first)
+    adapter = OpenAIResponsesAdapter(openai_config(tmp_path), client=FakeOpenAIClient(fake))
+    adapter.complete(initial_request())
+    fake.response = second
+    adapter.complete(followup_request())
+    fake.response = SimpleNamespace(
+        id="resp-c",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+        output=[{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}],
+    )
+    compacted = ModelRequest(
+        messages=(
+            ModelMessage("system", "compressed system"),
+            ModelMessage("user", "inspect"),
+            ModelMessage("tool", tool_results=(tool_result("call-1"), tool_result("call-2", content="y"))),
+        ),
+        tools=(ToolDefinition("read_file", "read", read_schema()),),
+        max_output_tokens=4096,
+        timeout_seconds=300,
+    )
+    adapter.complete(compacted)
+    outputs = [item for item in fake.calls[2]["input"] if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    assert [item["call_id"] for item in outputs] == ["call-1", "call-2"]
+    assert len(outputs) == 2
+    assert fake.calls[2]["instructions"] == "compressed system"

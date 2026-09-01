@@ -53,7 +53,7 @@ class DemoGuiTests(unittest.TestCase):
         cls.config = base / "scripted.json"
         cls.config.write_text(json.dumps(base_config), encoding="utf-8")
         cls.httpd = cls.module.create_server(
-            "127.0.0.1", 0, workspace=cls.workspace, config=cls.config, artifact_root=base / "runs"
+            "127.0.0.1", 0, workspace=cls.workspace, config=cls.config, artifact_root=base / "runs", in_place=False
         )
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.thread.start()
@@ -95,15 +95,46 @@ class DemoGuiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"status": "ok", "read_only": False, "ontology_verified": True})
         runtime = json.loads(self.request("GET", "/api/runtime")[2])
-        self.assertEqual(runtime["workspace"], "workspace")
-        self.assertEqual(runtime["mode"], "scripted")
-        self.assertNotIn(str(self.workspace), json.dumps(runtime))
+        self.assertEqual(runtime["workspace_path"], str(self.workspace.resolve()))
+        self.assertTrue(runtime["ready"])
         source = ROOT / "configs/frozen/baseline-v3/requirement-ontology.json"
         baseline = json.loads((ROOT / "configs/frozen/baseline-v3/baseline.json").read_text(encoding="utf-8"))
         ontology = json.loads(self.request("GET", "/api/ontology")[2])
         self.assertEqual(ontology["expected_sha256"], baseline["requirement_ontology_sha256"])
         self.assertEqual(ontology["actual_sha256"], hashlib.sha256(source.read_bytes()).hexdigest())
         self.assertEqual((ontology["category_count"], ontology["slot_count"]), (4, 11))
+
+    def test_workspace_selection_and_task_without_workspace(self):
+        temp = tempfile.TemporaryDirectory()
+        try:
+            base = Path(temp.name)
+            empty = base / "empty"
+            empty.mkdir()
+            httpd = self.module.create_server("127.0.0.1", 0, workspace=None, config=self.config, artifact_root=base / "runs", in_place=False)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            port = httpd.server_address[1]
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("GET", "/api/runtime")
+            runtime = json.loads(connection.getresponse().read())
+            connection.close()
+            self.assertIsNone(runtime["workspace_path"])
+            self.assertFalse(runtime["ready"])
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("POST", "/api/tasks", json.dumps({"task": "x"}).encode("utf-8"), {"Content-Type": "application/json"})
+            self.assertEqual(connection.getresponse().status, 409)
+            connection.close()
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("POST", "/api/workspace", json.dumps({"path": str(self.workspace)}).encode("utf-8"), {"Content-Type": "application/json"})
+            runtime = json.loads(connection.getresponse().read())
+            connection.close()
+            self.assertEqual(runtime["workspace_path"], str(self.workspace.resolve()))
+            self.assertTrue(runtime["ready"])
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+        finally:
+            temp.cleanup()
 
     def test_scripted_agent_task_events_and_patch_download(self):
         task = "Update hello.py so VALUE becomes 2 when imported, preserve all other behavior, and verify the focused change with a test."
@@ -130,6 +161,7 @@ class DemoGuiTests(unittest.TestCase):
 
     def test_task_input_security_and_methods(self):
         self.assertEqual(self.request("POST", "/api/tasks", {"task": "", "workspace": "x"})[0], 400)
+        self.assertEqual(self.request("POST", "/api/workspace", {"path": ""})[0], 400)
         self.assertEqual(self.request("POST", "/api/tasks", {"task": "x"}, {"Origin": "http://evil.invalid"})[0], 403)
         self.assertEqual(self.request("POST", "/api/tasks", {"task": "x"}, {"Content-Type": "text/plain"})[0], 415)
         self.assertEqual(self.request("PUT", "/api/tasks")[0], 405)
@@ -137,13 +169,15 @@ class DemoGuiTests(unittest.TestCase):
     def test_static_allowlist_shell_and_accessibility(self):
         for path in ("/../configs/frozen/baseline-v3/baseline.json", "/%2e%2e/configs/frozen/baseline-v3/baseline.json", "/server.py"):
             self.assertEqual(self.request("GET", path)[0], 404)
-        for path in ("/", "/settings/ontology", "/settings/general", "/static/app.js", "/static/styles.css", "/static/task.css"):
+        for path in ("/", "/settings/ontology", "/static/app.js", "/static/styles.css", "/static/task.css"):
             self.assertEqual(self.request("GET", path)[0], 200)
         html = self.request("GET", "/settings/ontology")[2].decode("utf-8")
-        for text in ("ReqCodingAgent", "New task", "Back to workspace", "Coding Requirement Ontology", "Download patch"):
+        for text in ("ReqCodingAgent", "New task", "Back to workspace", "Coding Requirement Ontology", "Download patch", "工作目录"):
             self.assertIn(text, html)
+        for text in ("Evaluation", "General", "Model &amp; Runtime"):
+            self.assertNotIn(text, html)
         script = self.request("GET", "/static/app.js")[2].decode("utf-8")
-        for hook in ("localStorage", "history.pushState", "ArrowDown", "aria-expanded", "/api/tasks", "next_offset"):
+        for hook in ("localStorage", "history.pushState", "ArrowDown", "aria-expanded", "/api/tasks", "/api/workspace", "next_offset"):
             self.assertIn(hook, script)
         self.assertIn('role="tree"', html)
         self.assertNotIn("cdn.", html.lower())

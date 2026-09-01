@@ -19,8 +19,15 @@ def read_definition() -> ToolDefinition:
     return ToolDefinition("read_file", "Read a repository text file with line numbers. Call this before changing a file.", object_schema({"path": {"type": "string"}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}}, ["path"]))
 
 
+def _tool_path(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise ValueError("path must be a string")
+    path = raw.strip()
+    return path or "."
+
+
 def list_files(policy: WorkspacePolicy, args: dict[str, Any]) -> ToolEnvelope:
-    root = policy.resolve(args["path"])
+    root = policy.resolve(_tool_path(args["path"]))
     if not root.exists():
         return ToolEnvelope(True, "list_files", {"entries": []}, None, False, {})
     depth = args.get("depth", 3)
@@ -41,7 +48,7 @@ def list_files(policy: WorkspacePolicy, args: dict[str, Any]) -> ToolEnvelope:
 
 
 def read_file(policy: WorkspacePolicy, args: dict[str, Any]) -> ToolEnvelope:
-    path = policy.resolve(args["path"], must_exist=True)
+    path = policy.resolve(_tool_path(args["path"]), must_exist=True)
     if not path.is_file():
         raise ValueError("path is not a file")
     raw = path.read_bytes()

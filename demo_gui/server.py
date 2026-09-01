@@ -26,7 +26,7 @@ STATIC_ROOT = GUI_ROOT / "static"
 ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
 BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")
 ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
-DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/live-local-proxy.json"
+DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/demo-chatanywhere.json"
 DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts/runs/demo-gui"
 MAX_TASK_BYTES = 16_384
 MAX_PATCH_BYTES = 524_288
@@ -103,17 +103,6 @@ def validate_workspace(path: Path) -> Path:
     workspace = path.expanduser().resolve()
     if not workspace.is_dir():
         raise WorkspaceError("Workspace does not exist or is not a directory.")
-    try:
-        inside = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, timeout=10)
-        status = subprocess.run(["git", "-C", str(workspace), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise WorkspaceError("Workspace Git validation could not be completed.") from error
-    if inside.returncode or inside.stdout.strip() != "true":
-        raise WorkspaceError("Workspace is not a Git repository.")
-    if status.returncode:
-        raise WorkspaceError("Workspace Git status could not be read.")
-    if status.stdout.strip():
-        raise WorkspaceError("Workspace must be clean before Agent execution.")
     return workspace
 
 
@@ -143,9 +132,10 @@ class TaskRecord:
 
 
 class TaskManager:
-    def __init__(self, workspace: Path, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable):
-        self.workspace = validate_workspace(workspace)
+    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True):
+        self.workspace = validate_workspace(workspace) if workspace is not None else None
         self.config = config.expanduser().resolve()
+        self.in_place = in_place
         try:
             config_data = json.loads(self.config.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -160,10 +150,19 @@ class TaskManager:
     def runtime(self) -> dict[str, object]:
         with self.lock:
             active = bool(self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES)
-        return {"workspace": self.workspace.name, "mode": self.mode, "model": self.model,
-                "config": self.config.name, "ready": True, "active": active}
+            workspace_path = str(self.workspace) if self.workspace is not None else None
+        return {"workspace_path": workspace_path, "ready": self.workspace is not None, "active": active}
+
+    def set_workspace(self, path: Path) -> Path:
+        with self.lock:
+            if self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES:
+                raise RuntimeError("Cannot change workspace while an Agent task is running.")
+            self.workspace = validate_workspace(path)
+            return self.workspace
 
     def start(self, task: str) -> TaskRecord:
+        if self.workspace is None:
+            raise WorkspaceError("Select a workspace before starting a task.")
         validate_workspace(self.workspace)
         with self.lock:
             if self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES:
@@ -184,6 +183,8 @@ class TaskManager:
         before = {p.name for p in self.artifact_root.iterdir() if p.is_dir()}
         argv = [self.python, "-m", "reqagent.cli", "run", "--workspace", str(self.workspace),
                 "--task", record.task, "--config", str(self.config), "--artifact-root", str(self.artifact_root)]
+        if self.in_place:
+            argv.append("--in-place")
         capture_dir = tempfile.mkdtemp(prefix="reqagent-demo-capture-")
         stdout_path = Path(capture_dir) / "stdout.txt"
         stderr_path = Path(capture_dir) / "stderr.txt"
@@ -328,7 +329,7 @@ class DemoServer(ThreadingHTTPServer):
 class DemoHandler(BaseHTTPRequestHandler):
     server_version, sys_version = "ReqCodingAgentDemo", ""
     static_files = {path: ("index.html", "text/html; charset=utf-8") for path in
-                    ("/", "/settings", "/settings/general", "/settings/agent", "/settings/runtime", "/settings/ontology")}
+                    ("/", "/settings", "/settings/ontology")}
     static_files.update({"/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
                          "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
                          "/static/task.css": ("task.css", "text/css; charset=utf-8")})
@@ -364,7 +365,11 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path != "/api/tasks" or parsed.query:
+        if parsed.query:
+            self._method_not_allowed(); return
+        if parsed.path == "/api/workspace":
+            self._set_workspace(); return
+        if parsed.path != "/api/tasks":
             self._method_not_allowed(); return
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
             self._json({"error": "content type must be application/json"}, 415); return
@@ -398,6 +403,33 @@ class DemoHandler(BaseHTTPRequestHandler):
     do_PUT = do_HEAD
     do_PATCH = do_HEAD
     do_DELETE = do_HEAD
+
+    def _set_workspace(self) -> None:
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json({"error": "content type must be application/json"}, 415); return
+        origin, host = self.headers.get("Origin"), self.headers.get("Host")
+        if origin and origin.rstrip("/") != f"http://{host}":
+            self._json({"error": "origin not allowed"}, 403); return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if length <= 0 or length > MAX_TASK_BYTES:
+            self._json({"error": "invalid request size"}, 400); return
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except (UnicodeError, json.JSONDecodeError):
+            self._json({"error": "invalid JSON"}, 400); return
+        if not isinstance(payload, dict) or set(payload) != {"path"} or not isinstance(payload["path"], str):
+            self._json({"error": "body must contain only a path string"}, 400); return
+        path = payload["path"].strip()
+        if not path or len(path.encode("utf-8")) > MAX_TASK_BYTES:
+            self._json({"error": "path must be non-empty and within the size limit"}, 400); return
+        try:
+            self.server.tasks.set_workspace(Path(path))
+        except (RuntimeError, WorkspaceError) as error:
+            self._json({"error": str(error)}, 409); return
+        self._json(self.server.tasks.runtime())
 
     def _task_get(self, task_id: str, resource: str | None, query: str) -> None:
         record = self.server.tasks.get(task_id)
@@ -446,23 +478,36 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT, *,
                   workspace: Path | None = None, config: Path | None = None,
-                  artifact_root: Path | None = None, python: str = sys.executable) -> DemoServer:
+                  artifact_root: Path | None = None, python: str = sys.executable, in_place: bool = True) -> DemoServer:
     root = project_root.resolve()
-    tasks = TaskManager(workspace or root, config or root / "configs/agent/live-local-proxy.json",
-                        artifact_root or root / "artifacts/runs/demo-gui", project_root=root, python=python)
+    tasks = TaskManager(workspace, config or root / "configs/agent/demo-chatanywhere.json",
+                        artifact_root or root / "artifacts/runs/demo-gui", project_root=root, python=python, in_place=in_place)
     return DemoServer((host, port), load_ontology(root), tasks)
+
+
+def _apply_provider_env(config: Path) -> None:
+    if config.resolve() != (PROJECT_ROOT / "configs/agent/demo-chatanywhere.json").resolve():
+        return
+    key = os.environ.get("CHATANYWHERE_API_KEY")
+    if not key:
+        print("Warning: CHATANYWHERE_API_KEY is not set; live Agent tasks will fail until it is configured.")
+        return
+    os.environ.setdefault("OPENAI_BASE_URL", "https://api.chatanywhere.tech/v1")
+    os.environ.setdefault("OPENAI_API_KEY", key)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the ReqCodingAgent local demo GUI")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1",))
     parser.add_argument("--port", default=8765, type=int)
-    parser.add_argument("--workspace", required=True, type=Path)
+    parser.add_argument("--workspace", default=None, type=Path)
     parser.add_argument("--config", default=DEFAULT_CONFIG, type=Path)
     parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, type=Path)
     args = parser.parse_args(argv)
+    config = args.config.expanduser().resolve()
+    _apply_provider_env(config)
     try:
-        server = create_server(args.host, args.port, workspace=args.workspace, config=args.config, artifact_root=args.artifact_root)
+        server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root)
     except (FrozenDataError, WorkspaceError) as error:
         print(f"Cannot start: {error}"); return 1
     print(f"ReqCodingAgent demo available at http://{args.host}:{args.port}/")

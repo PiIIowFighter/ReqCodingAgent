@@ -39,8 +39,16 @@ def route_task(task: str) -> RouteDecision:
         text = task.strip()
         if not text:
             return _decision("fast", ("router_fail_open_empty_task",))
+        if re.search(
+            r"(?:生成|创建|新建|编写|搭建|开发|做一个).*(?:网站|网页|应用|程序|项目|页面)|"
+            r"\b(create|generate|build|scaffold|make)\b.{0,48}\b(website|webpage|web page|app|application|project|site)\b",
+            text,
+            re.IGNORECASE,
+        ):
+            return _decision("fast", ("greenfield_creation",))
         lower = text.lower()
         words = text.split()
+        text_units = len(words) if re.search(r"[A-Za-z]", text) else max(len(text), len(words))
         weak_language = bool(re.search(r"\b(related|relevant)\b|correctly|improve|better support|handle.*properly", lower))
         abstract_request = bool(re.search(
             r"\b(additional|interactive|consistent|incorrect|standard|appropriate)\b.{0,48}\b(option|behavior|value|interface|handling)\b|\bmishandles?\b",
@@ -51,8 +59,8 @@ def route_task(task: str) -> RouteDecision:
         observable = bool(re.search(r"\b(return|raise|output|emit|preserve|unchanged|accept|reject|equals?|becomes?|should|expected|when|if)\b", lower))
         contrast = bool(re.search(r"\b(currently|instead|but|however|rather than|fails?|error|regression)\b", lower))
         validation = bool(re.search(r"\b(test|tests|testing|check|verify|pytest|compile|validation)\b", lower)) or (observable and contrast)
-        goal = len(words) >= 10 and (observable or contrast or bool(re.search(r"\b(fix|add|update|change|remove|support|implement|ensure|make)\b", lower)))
-        detailed = len(words) >= 60 and target and observable and contrast
+        goal = text_units >= 10 and (observable or contrast or bool(re.search(r"\b(fix|add|update|change|remove|support|implement|ensure|make)\b", lower)))
+        detailed = text_units >= 60 and target and observable and contrast
         missing = tuple(name for name, present in (("goal", goal), ("target", target), ("observable_behavior", observable), ("validation", validation)) if not present)
         if detailed and not abstract_request:
             return _decision("fast", ("detailed_behavior_contract",))
