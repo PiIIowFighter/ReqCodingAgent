@@ -1,0 +1,21 @@
+{
+  "id": "stock-search",
+  "title": "股票搜索示例",
+  "task": "为这个现有的静态前端项目增加股票搜索功能",
+  "min_turns": 3,
+  "max_turns": 3,
+  "overlay_only": true,
+  "slots": {
+    "goal": "为现有静态网站增加股票搜索",
+    "current_behavior_or_symptom": "当前只能浏览股票，无法检索",
+    "expected_behavior": "按代码或名称过滤并显示结果",
+    "target_component": "HTML、样式和前端脚本",
+    "relevant_symbol_or_api": "本地 stocks 数据与 search/render 函数",
+    "affected_consumers": "直接使用网页搜索股票的用户",
+    "compatibility": "原生浏览器、无网络、无新依赖",
+    "boundary_and_error_semantics": "空查询和无匹配结果",
+    "excluded_scope": "真实行情 API、登录、交易功能",
+    "acceptance_criteria": "代码/名称搜索和无结果提示均可观察",
+    "relevant_tests_or_checks": "sh test_site.sh 与页面手工检查"
+  }
+}

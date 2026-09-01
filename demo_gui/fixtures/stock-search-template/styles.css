@@ -1,0 +1,14 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #10151d; color: #edf2f7; }
+body { margin: 0; min-height: 100vh; background: #10151d; }
+.shell { width: min(900px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0; }
+.hero { margin-bottom: 28px; }
+.eyebrow { color: #63d8b1; letter-spacing: .12em; font-size: 12px; }
+h1, h2, p { margin: 0; } h1 { margin-top: 8px; font-size: 36px; } h2 { font-size: 20px; }
+.muted { color: #8b98a9; }
+.panel { border: 1px solid #2b3746; background: #171e28; padding: 22px; }
+.panel-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.stock-list { display: grid; gap: 8px; }
+.stock-row { display: grid; grid-template-columns: 110px 1fr 120px 100px; gap: 12px; align-items: center; padding: 12px; background: #202936; }
+.stock-code { color: #8b98a9; font-family: ui-monospace, monospace; }
+.stock-price { text-align: right; } .up { color: #63d8b1; } .down { color: #ff8d8d; }
+@media (max-width: 620px) { .shell { width: min(100% - 24px, 900px); padding: 30px 0; } .stock-row { grid-template-columns: 1fr 1fr; } .stock-price { text-align: left; } }

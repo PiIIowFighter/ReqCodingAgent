@@ -76,6 +76,10 @@ class LocalTestCommandExecutor:
             candidate = Path(git).with_name("bash.exe")
             if candidate.is_file():
                 bash = str(candidate)
+            else:
+                git_root_bash = Path(git).parent.parent / "bin" / "bash.exe"
+                if git_root_bash.is_file():
+                    bash = str(git_root_bash)
         if not bash:
             raise IsolationUnavailable("test shell is unavailable")
         env = {

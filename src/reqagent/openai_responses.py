@@ -25,6 +25,11 @@ def _sanitize_error(message: str) -> str:
     return cleaned if len(cleaned) <= 240 else cleaned[:239] + "…"
 
 
+def _safe_request_id(value: Any) -> str | None:
+    text = value if isinstance(value, str) else None
+    return text if text and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", text) else None
+
+
 def _item_field(item: Any, name: str, default: Any = None) -> Any:
     if isinstance(item, dict):
         return item.get(name, default)
@@ -72,6 +77,13 @@ class OpenAIResponsesAdapter:
         self._initial_user_added = False
         self._processed_call_ids: set[str] = set()
 
+    def reset_wire_history(self) -> None:
+        """Start a new explicit Responses conversation without changing adapter identity."""
+        self._instructions = None
+        self._wire_input = []
+        self._initial_user_added = False
+        self._processed_call_ids = set()
+
     def _sync_wire_input(self, request: ModelRequest) -> None:
         system_parts = [message.text for message in request.messages if message.role == "system" and message.text]
         self._instructions = "\n".join(system_parts)
@@ -103,27 +115,31 @@ class OpenAIResponsesAdapter:
         ]
 
     def _raise_model_error(self, exc: Exception) -> None:
+        status = getattr(exc, "status_code", None)
+        details = {
+            "status_code": status if isinstance(status, int) else None,
+            "provider_request_id": _safe_request_id(getattr(exc, "request_id", None)),
+        }
         if isinstance(exc, TimeoutError):
-            raise ModelError("timeout", "model request timed out", retryable=True) from exc
+            raise ModelError("timeout", "model request timed out", retryable=True, **details) from exc
         if isinstance(exc, ConnectionError):
-            raise ModelError("connection", "model connection failed", retryable=True) from exc
+            raise ModelError("connection", "model connection failed", retryable=True, **details) from exc
         error_name = type(exc).__name__
         if error_name == "APITimeoutError":
-            raise ModelError("timeout", "model request timed out", retryable=True) from exc
+            raise ModelError("timeout", "model request timed out", retryable=True, **details) from exc
         if error_name == "APIConnectionError":
-            raise ModelError("connection", "model connection failed", retryable=True) from exc
-        status = getattr(exc, "status_code", None)
+            raise ModelError("connection", "model connection failed", retryable=True, **details) from exc
         if status == 429 or error_name == "RateLimitError":
-            raise ModelError("rate_limit", "model rate limit exceeded", retryable=True) from exc
+            raise ModelError("rate_limit", "model rate limit exceeded", retryable=True, **details) from exc
         if isinstance(status, int) and status >= 500:
-            raise ModelError("server", "model server error", retryable=True) from exc
+            raise ModelError("server", "model server error", retryable=True, **details) from exc
         if status in {401, 403} or error_name == "AuthenticationError":
-            raise ModelError("authentication", "model authentication failed") from exc
+            raise ModelError("authentication", "model authentication failed", **details) from exc
         if isinstance(status, int) and status == 404:
-            raise ModelError("request", "model endpoint or resource was not found") from exc
+            raise ModelError("request", "model endpoint or resource was not found", **details) from exc
         if isinstance(status, int) and 400 <= status < 500:
-            raise ModelError("request", "model request was rejected") from exc
-        raise ModelError("protocol", _sanitize_error("model adapter failed")) from exc
+            raise ModelError("request", "model request was rejected", **details) from exc
+        raise ModelError("protocol", _sanitize_error("model adapter failed"), **details) from exc
 
     def _parse_output(self, response: Any, schemas: dict[str, dict[str, Any]]) -> ModelResponse:
         calls: list[NormalizedToolCall] = []

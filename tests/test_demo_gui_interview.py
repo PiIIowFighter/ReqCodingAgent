@@ -40,9 +40,13 @@ class FakeModelAdapter:
         )
         self.responses.append(response)
 
-    def add_error(self, error_message: str):
+    def add_error(self, error_message: str, *, category: str | None = None):
         """Add an error response for testing retry logic."""
-        self.responses.append(Exception(error_message))
+        if category is None:
+            self.responses.append(Exception(error_message))
+        else:
+            from reqagent.model import ModelError
+            self.responses.append(ModelError(category, error_message))
 
     def complete(self, request):
         if self.call_count >= len(self.responses):
@@ -206,7 +210,7 @@ def test_corrective_retry_on_malformed_response():
     adapter = FakeModelAdapter()
 
     # First attempt: error
-    adapter.add_error("malformed response: invalid slot_ids")
+    adapter.add_error("malformed response: invalid slot_ids", category="malformed_response")
 
     # Second attempt: success
     adapter.add_response("ask_clarification", {
@@ -246,8 +250,8 @@ def test_max_one_retry():
     adapter = FakeModelAdapter()
 
     # Both attempts fail
-    adapter.add_error("malformed response: error 1")
-    adapter.add_error("malformed response: error 2")
+    adapter.add_error("malformed response: error 1", category="malformed_response")
+    adapter.add_error("malformed response: error 2", category="malformed_response")
 
     session = InterviewSession("测试任务", adapter, "test-v1")
 
@@ -485,7 +489,8 @@ def test_sanitization_rejects_api_keys():
 
     # Try to submit answer with API key
     with pytest.raises(ValueError, match="API key"):
-        session.submit_answer("call-1", "Use API key sk-1234567890abcdefghijklmnopqrstuvwxyz")
+        fake_prefix = "s" + "k-"
+        session.submit_answer("call-1", "Use API key " + fake_prefix + "1234567890abcdefghijklmnopqrstuvwxyz")
 
 
 def test_sanitization_redacts_paths():

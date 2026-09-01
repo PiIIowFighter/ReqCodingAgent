@@ -62,18 +62,30 @@ def _git_toplevel(path: Path) -> Path | None:
     return Path(completed.stdout.strip()).resolve()
 
 
+def preflight_workspace_source(path: Path) -> Path:
+    """Read-only safety check for a workspace selected for agent use."""
+    root = path.expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError("workspace source must be an existing directory")
+    toplevel = _git_toplevel(root)
+    if toplevel is None:
+        if any(root.iterdir()):
+            raise ValueError("workspace requires an empty non-git directory or a clean git repository root")
+        return root
+    if toplevel != root:
+        raise ValueError("workspace must be the git repository root, not a subdirectory")
+    if _run_git(root, "status", "--porcelain").stdout.strip():
+        raise ValueError("workspace git repository must be clean")
+    return root
+
+
 def _ensure_git_baseline(root: Path) -> str:
-    root = root.resolve()
-    if not root.exists():
-        raise ValueError("working directory does not exist")
+    root = preflight_workspace_source(root)
 
     toplevel = _git_toplevel(root)
 
     # Not a git repo
     if toplevel is None:
-        # Check if directory is empty
-        if any(root.iterdir()):
-            raise ValueError("in-place mode requires an empty non-git directory or a clean git repository root")
         # Initialize git for empty directory
         _run_git(root, "init", "--quiet")
         _run_git(root, "-c", "user.email=reqagent@local", "-c", "user.name=ReqAgent",
@@ -81,14 +93,6 @@ def _ensure_git_baseline(root: Path) -> str:
         return _run_git(root, "rev-parse", "HEAD").stdout.strip()
 
     # Is a git repo
-    # Must be at the root of the repository
-    if toplevel != root:
-        raise ValueError("in-place mode requires working at the git repository root, not a subdirectory")
-
-    # Check if repository is clean
-    if _run_git(root, "status", "--porcelain").stdout.strip():
-        raise ValueError("in-place mode requires a clean git repository with no uncommitted or untracked files")
-
     # Use current HEAD as baseline
     return _run_git(root, "rev-parse", "HEAD").stdout.strip()
 
@@ -102,9 +106,7 @@ class GitWorkspace:
 
     @classmethod
     def create(cls, source: Path, *, destination: Path | None = None, in_place: bool = False) -> "GitWorkspace":
-        source = source.resolve()
-        if not source.is_dir():
-            raise ValueError("workspace source must be an existing directory")
+        source = preflight_workspace_source(source)
         if in_place:
             base = _ensure_git_baseline(source)
             return cls(source, source, base, temporary_root=None)

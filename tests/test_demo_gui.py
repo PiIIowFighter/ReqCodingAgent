@@ -104,6 +104,12 @@ class DemoGuiTests(unittest.TestCase):
         self.assertEqual(ontology["actual_sha256"], hashlib.sha256(source.read_bytes()).hexdigest())
         self.assertEqual((ontology["category_count"], ontology["slot_count"]), (4, 11))
 
+    def test_stop_reason_status_semantics(self):
+        self.assertEqual(self.module.status_for_stop_reason("submitted"), "completed")
+        for reason in ("step_budget", "repeated_action", "tool_budget", "wall_clock_timeout"):
+            self.assertEqual(self.module.status_for_stop_reason(reason), "stopped")
+        self.assertEqual(self.module.status_for_stop_reason("unrecoverable_model_error"), "failed")
+
     def test_workspace_selection_and_task_without_workspace(self):
         temp = tempfile.TemporaryDirectory()
         try:
@@ -130,11 +136,52 @@ class DemoGuiTests(unittest.TestCase):
             connection.close()
             self.assertEqual(runtime["workspace_path"], str(self.workspace.resolve()))
             self.assertTrue(runtime["ready"])
+            (empty / "user.txt").write_text("preserve\n", encoding="utf-8")
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("POST", "/api/workspace", json.dumps({"path": str(empty)}).encode("utf-8"), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 409)
+            response.read()
+            connection.close()
+            self.assertEqual((empty / "user.txt").read_text(encoding="utf-8"), "preserve\n")
+            self.assertFalse((empty / ".git").exists())
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=2)
         finally:
             temp.cleanup()
+
+    def test_workspace_selection_preflight_is_read_only_and_rejects_unsafe_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            empty = base / "empty"
+            empty.mkdir()
+            manager = self.module.TaskManager(empty, self.config, base / "runs", in_place=True)
+            self.assertEqual(manager.workspace, empty.resolve())
+            self.assertFalse((empty / ".git").exists())
+
+            non_git = base / "non-git"
+            non_git.mkdir()
+            (non_git / "user.txt").write_text("preserve\n", encoding="utf-8")
+            with self.assertRaisesRegex(self.module.WorkspaceError, "empty non-git"):
+                manager.set_workspace(non_git)
+            self.assertEqual((non_git / "user.txt").read_text(encoding="utf-8"), "preserve\n")
+            self.assertFalse((non_git / ".git").exists())
+
+            dirty = base / "dirty"
+            dirty.mkdir()
+            subprocess.run(["git", "-C", str(dirty), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(dirty), "config", "user.email", "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(dirty), "config", "user.name", "Test"], check=True)
+            (dirty / "tracked.txt").write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(dirty), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(dirty), "commit", "-qm", "initial"], check=True)
+            (dirty / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+            with self.assertRaisesRegex(self.module.WorkspaceError, "must be clean"):
+                manager.set_workspace(dirty)
+            (dirty / "subdir").mkdir()
+            with self.assertRaisesRegex(self.module.WorkspaceError, "repository root"):
+                manager.set_workspace(dirty / "subdir")
 
     def test_scripted_agent_task_events_and_patch_download(self):
         task = "Update hello.py so VALUE becomes 2 when imported, preserve all other behavior, and verify the focused change with a test."

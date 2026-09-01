@@ -106,7 +106,7 @@ class TestInterviewHTTPWorkflow(TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             workspace_path = Path(workspace)
 
-            config_path = Path.cwd() / "configs/agent/demo-chatanywhere.json"
+            config_path = Path.cwd() / "configs/agent/demo-openai.json"
             if not config_path.exists():
                 self.skipTest("Demo config not found")
 

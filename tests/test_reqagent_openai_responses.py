@@ -43,7 +43,7 @@ class FakeOpenAIClient:
 
 
 def openai_config(tmp_path: Path) -> AgentConfig:
-    raw = json.loads((ROOT / "configs/agent/demo-chatanywhere.json").read_text(encoding="utf-8"))
+    raw = json.loads((ROOT / "configs/agent/demo-openai.json").read_text(encoding="utf-8"))
     path = tmp_path / "openai.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
     return AgentConfig.load(path)
@@ -264,14 +264,14 @@ def test_build_live_runtime_selects_anthropic_or_openai_adapter(tmp_path: Path, 
 
 
 def test_demo_config_and_launch_script_target_openai_responses():
-    config = json.loads((ROOT / "configs/agent/demo-chatanywhere.json").read_text(encoding="utf-8"))
-    script = (ROOT / "demo_gui/start_chatanywhere.ps1").read_text(encoding="utf-8")
+    config = json.loads((ROOT / "configs/agent/demo-openai.json").read_text(encoding="utf-8"))
+    script = (ROOT / "demo_gui/start_openai.ps1").read_text(encoding="utf-8")
     assert config["model"]["protocol"] == "openai_responses"
     assert config["model"]["model"] == "gpt-4o-mini"
     assert config["model"]["base_url_env"] == "OPENAI_BASE_URL"
     assert config["model"]["api_key_env"] == "OPENAI_API_KEY"
-    assert "OPENAI_BASE_URL = 'https://api.chatanywhere.tech/v1'" in script
-    assert "OPENAI_API_KEY = $env:CHATANYWHERE_API_KEY" in script
+    assert "OPENAI_BASE_URL" not in script or "https://" not in script
+    assert "OPENAI_API_KEY" in script
     assert "ANTHROPIC_BASE_URL" not in script
     assert "ANTHROPIC_AUTH_TOKEN" not in script
 
@@ -287,7 +287,7 @@ def test_openai_live_validation_requires_openai_environment(tmp_path: Path, monk
 
 
 def test_openai_public_dict_redacts_secrets(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.chatanywhere.tech/v1?secret=hidden")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1?secret=hidden")
     monkeypatch.setenv("OPENAI_API_KEY", "never-store-this")
     cfg = openai_config(tmp_path)
     serialized = json.dumps(cfg.public_dict())
@@ -374,3 +374,28 @@ def test_openai_adapter_deduplicates_tool_results_by_call_id_after_context_shrin
     assert [item["call_id"] for item in outputs] == ["call-1", "call-2"]
     assert len(outputs) == 2
     assert fake.calls[2]["instructions"] == "compressed system"
+
+
+def test_openai_adapter_explicit_wire_reset_preserves_runtime_identity(tmp_path: Path):
+    response = SimpleNamespace(
+        id="resp-reset",
+        model="gpt-4o-mini",
+        status="completed",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        output=[{"type": "function_call", "call_id": "call-reset", "name": "read_file", "arguments": '{"path":"a.py"}'}],
+    )
+    fake = FakeResponses(response=response)
+    adapter = OpenAIResponsesAdapter(openai_config(tmp_path), client=FakeOpenAIClient(fake))
+    adapter.complete(initial_request())
+    client, config, identity, actual_model = adapter.client, adapter.config, dict(adapter.identity), adapter.actual_model
+
+    adapter.reset_wire_history()
+
+    assert adapter.client is client
+    assert adapter.config is config
+    assert adapter.identity == identity
+    assert adapter.actual_model == actual_model == "gpt-4o-mini"
+    assert adapter._instructions is None
+    assert adapter._wire_input == []
+    assert adapter._initial_user_added is False
+    assert adapter._processed_call_ids == set()

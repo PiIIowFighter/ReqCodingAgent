@@ -84,16 +84,12 @@ def test_workspace_rejects_absolute_traversal_git_and_symlink(tmp_path: Path):
         policy.resolve("link/file.txt")
 
 
-def test_workspace_accepts_local_directory_without_git(tmp_path: Path):
+def test_workspace_rejects_nonempty_local_directory_without_git(tmp_path: Path):
     source = tmp_path / "local-app"
     source.mkdir()
     (source / "hello.py").write_text("VALUE = 1\n", encoding="utf-8")
-    workspace = GitWorkspace.create(source)
-    try:
-        assert (workspace.root / "hello.py").read_text(encoding="utf-8") == "VALUE = 1\n"
-        assert workspace.diff().strip() == ""
-    finally:
-        workspace.cleanup()
+    with pytest.raises(ValueError, match="empty non-git"):
+        GitWorkspace.create(source)
 
 
 def test_workspace_accepts_empty_local_directory(tmp_path: Path):
@@ -123,6 +119,11 @@ def test_workspace_in_place_modifies_source_directory(tmp_path: Path):
     source = tmp_path / "local-app"
     source.mkdir()
     (source / "hello.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "initial"], check=True)
     workspace = GitWorkspace.create(source, in_place=True)
     try:
         assert workspace.root == source.resolve()
@@ -147,6 +148,13 @@ def test_apply_patch_is_atomic_on_failure(tmp_path: Path):
     with pytest.raises(ValueError, match="patch check failed"):
         apply_patch_atomic(workspace, bad)
     assert (workspace.root / "hello.py").read_text(encoding="utf-8") == before
+
+
+def test_apply_patch_recounts_incorrect_unified_hunk_line_counts(tmp_path: Path):
+    workspace = GitWorkspace.create(repository(tmp_path))
+    patch = "--- a/hello.py\n+++ b/hello.py\n@@ -1,99 +1,42 @@\n-VALUE = 1\n+VALUE = 2\n"
+    apply_patch_atomic(workspace, patch)
+    assert (workspace.root / "hello.py").read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
 def test_run_command_success_nonzero_and_timeout(tmp_path: Path):

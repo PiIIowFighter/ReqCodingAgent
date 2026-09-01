@@ -177,7 +177,7 @@ class RequirementBaseline:
 class InterviewSession:
     """Manages an interactive requirement interview session."""
 
-    def __init__(self, original_request: str, adapter: ModelAdapter, ontology_version: str):
+    def __init__(self, original_request: str, adapter: ModelAdapter, ontology_version: str, *, scenario: str | None = None):
         """
         Initialize an interview session.
 
@@ -189,17 +189,27 @@ class InterviewSession:
         self.original_request = _sanitize_text(original_request)
         self.adapter = adapter
         self.ontology_version = ontology_version
+        self.scenario = scenario
         self.ontology = _load_ontology()
         self.valid_slots = _get_all_slots(self.ontology)
         self.turns: list[InterviewTurn] = []
         self.baseline: RequirementBaseline | None = None
         self.max_turns = 3
         self.min_turns = 2
+        if scenario == "stock-search":
+            self.min_turns = self.max_turns = 3
         self.actual_models: list[str] = []
         self.used_call_ids: set[str] = set()
 
         # Build messages for ModelRequest
         system_content = _system_prompt() + "\n\n" + _build_ontology_context(self.ontology)
+        if scenario == "stock-search":
+            system_content += (
+                "\n\n# Demo scenario: stock-search\n"
+                "Use exactly three clarification turns for the static stock-search fixture. "
+                "Preserve the user's acceptance evidence: edits use apply_patch; run_command is for investigation or verification; "
+                "before completion run `sh test_site.sh`, and only a successful command may be listed as a submitted test."
+            )
 
         from reqagent.model import ModelMessage
         self.messages: list[ModelMessage] = [
@@ -313,7 +323,7 @@ class InterviewSession:
             timeout_seconds=300
         )
 
-        # Try once, with optional corrective retry
+        # Try once, with optional corrective retry on malformed_response
         response = None
         last_error = None
 
@@ -323,33 +333,33 @@ class InterviewSession:
                 break  # Success
             except Exception as exc:
                 last_error = exc
-                error_str = str(exc).lower()
 
-                # Only retry on malformed_response errors
-                if attempt == 0 and ("malformed" in error_str or "invalid" in error_str or "schema" in error_str):
-                    # Add corrective instruction
-                    from reqagent.model import ModelMessage
-                    corrective_msg = (
-                        f"Your previous response had an error. Please:\n"
+                # Only retry on ModelError with category == "malformed_response"
+                from reqagent.model import ModelError
+                if attempt == 0 and isinstance(exc, ModelError) and exc.category == "malformed_response":
+                    # Build corrective instruction as temporary system message
+                    corrective_instruction = (
+                        f"Your previous response had a schema error. Important:\n"
                         f"1. Use only the tools provided in this turn\n"
                         f"2. Category names (Change Intent, Code Scope, Constraints, Validation) are NOT slot IDs\n"
                         f"3. Valid slot IDs are: {', '.join(sorted(self.valid_slots))}\n"
                         f"4. After {self.max_turns} turns, you MUST call finish_interview\n"
                         f"5. Do not invent slot IDs - only use the exact IDs listed above"
                     )
-                    self.messages.append(ModelMessage(role="user", text=corrective_msg))
 
-                    # Rebuild request with corrective instruction
-                    request = ModelRequest(
-                        messages=tuple(self.messages),
+                    # Create new request with corrective system message (temporary, not added to self.messages)
+                    from reqagent.model import ModelMessage
+                    corrective_request = ModelRequest(
+                        messages=tuple(self.messages) + (ModelMessage(role="system", text=corrective_instruction),),
                         tools=self._tool_schemas(),
                         max_output_tokens=4000,
                         timeout_seconds=300
                     )
+                    request = corrective_request
                     # Retry
                     continue
                 else:
-                    # Don't retry on other errors or second failure
+                    # Don't retry on non-malformed errors or second failure
                     break
 
         if response is None:
@@ -357,24 +367,25 @@ class InterviewSession:
             safe_error = _sanitize_text(str(last_error), 200) if last_error else "Unknown error"
             raise ValueError(f"Interview processing failed: {safe_error}")
 
-        # Record actual model
-        if response.actual_model:
-            self.actual_models.append(response.actual_model)
-
-        # Verify exactly one tool call
+        # Validate response completely before modifying Session state
+        # 1. Verify exactly one tool call
         if len(response.tool_calls) != 1:
             raise ValueError(f"Expected exactly 1 tool call, got {len(response.tool_calls)}")
 
         tool_call = response.tool_calls[0]
 
-        # Check for duplicate call_id
+        # 2. Check for duplicate call_id
         if tool_call.call_id in self.used_call_ids:
             raise ValueError(f"Duplicate call_id: {tool_call.call_id}")
 
-        # Validate tool name against current state
+        # 3. Validate tool name against current state
         allowed_tools = self._allowed_tool_names()
         if tool_call.name not in allowed_tools:
             raise ValueError(f"Tool {tool_call.name} not allowed in current state. Allowed: {allowed_tools}")
+
+        # All validations passed - now safe to modify state
+        if response.actual_model:
+            self.actual_models.append(response.actual_model)
 
         # Mark call_id as used
         self.used_call_ids.add(tool_call.call_id)
@@ -505,6 +516,7 @@ class InterviewSession:
         """Export interview transcript for artifact storage."""
         return {
             "original_request": _sanitize_text(self.original_request),
+            "scenario": self.scenario,
             "ontology_version": self.ontology_version,
             "turns": [
                 {

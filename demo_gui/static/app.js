@@ -4,7 +4,7 @@
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
   const root = document.documentElement;
   let ontology = null, selectedId = "coding-requirement-ontology";
-  let activeTask = null, eventOffset = 0, pollTimer = null;
+  let activeTask = null, eventOffset = 0, pollTimer = null, seenPhases = new Set();
   let workspacePath = null, workspaceReady = false, workspaceDialogReason = "new-task";
   const escapeText = value => { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; };
 
@@ -127,7 +127,7 @@
   });
 
   function resetTask() {
-    activeTask = null; eventOffset = 0; clearTimeout(pollTimer);
+    activeTask = null; eventOffset = 0; seenPhases = new Set(); clearTimeout(pollTimer);
     $("#empty-state").hidden = false; $("#task-view").hidden = true; $("#result-card").hidden = true;
     $("#timeline").replaceChildren(); $("#patch-preview").textContent = "";
     $("#task-input").value = "";
@@ -148,9 +148,24 @@
       "running": "Running",
       "completed": "Completed",
       "failed": "Failed"
+      ,"stopped": "已停止"
     };
     badge.textContent = statusMap[status] || status[0].toUpperCase() + status.slice(1);
     badge.className = "task-status " + status;
+  }
+  const PHASES = [["需求识别", "intake"], ["主动澄清", "refinement"], ["需求基线", "baseline"], ["仓库调查", "investigation"], ["代码修改", "implementation"], ["验证", "verification"], ["完成", "complete"]];
+  function renderPhases(task, events) {
+    events.forEach(event => { if (event.phase) seenPhases.add(event.phase); });
+    const seen = seenPhases;
+    const done = task.status === "completed" || task.stop_reason === "submitted";
+    $("#phase-nav").innerHTML = PHASES.map(([label, key]) => {
+      const active = seen.has(key) || (key === "refinement" && ["interviewing", "awaiting_user", "awaiting_confirmation"].includes(task.status));
+      return `<li class="phase ${active ? "active" : ""} ${done && key === "complete" ? "active" : ""}"><span>${escapeText(label)}</span></li>`;
+    }).join("");
+  }
+  function renderCoverage(target, coverage) {
+    if (!coverage) { target.innerHTML = ""; return; }
+    target.innerHTML = `<div class="coverage-heading"><strong>需求维度覆盖</strong><span>${coverage.covered} / ${coverage.total}</span></div><div class="coverage-grid">${coverage.categories.map(category => `<section><h4>${escapeText(category.name_zh)} <small>${category.slots.length}</small></h4>${category.slots.map(slot => `<div class="coverage-slot ${slot.status}"><span>${escapeText(slot.name_zh)}</span><code>${escapeText(slot.id)}</code><em>${escapeText(slot.status)}</em>${slot.selection_reason ? `<p>${escapeText(slot.selection_reason)}</p>` : ""}</div>`).join("")}</section>`).join("")}</div><p class="coverage-note">${escapeText(coverage.note)}</p>`;
   }
   function addEvent(event) {
     const item = document.createElement("li");
@@ -182,6 +197,8 @@
         api(`/api/tasks/${activeTask}/events?after=${eventOffset}`)
       ]);
       setStatus(task.status); feed.events.forEach(addEvent); eventOffset = feed.next_offset;
+      renderPhases(task, feed.events);
+      if (task.requirement_coverage) { renderCoverage($("#coverage-panel"), task.requirement_coverage); renderCoverage($("#baseline-coverage"), task.requirement_coverage); }
 
       // Handle interview states
       if (task.status === "awaiting_user") {
@@ -190,7 +207,7 @@
       } else if (task.status === "awaiting_confirmation") {
         showBaselineConfirmation(task);
         return;
-      } else if (task.status === "completed" || task.status === "failed") {
+      } else if (["completed", "failed", "stopped"].includes(task.status)) {
         updateComposerState();
         await showResult(task); return;
       }
@@ -212,7 +229,7 @@
 
     $("#interview-turn").textContent = `问题 ${q.turn_number} / 最多 ${q.max_turns} 轮`;
     $("#interview-question").textContent = q.question;
-    $("#interview-slots").innerHTML = q.slot_ids.map(id => `<span class="slot-chip">${escapeText(id)}</span>`).join("");
+    $("#interview-slots").innerHTML = q.slot_ids.map(id => `<span class="slot-chip">${escapeText(id)}</span>`).join("") + (q.selection_reason ? `<p class="selection-reason">${escapeText(q.selection_reason)}</p>` : "");
 
     // Show history
     const history = task.interview_history || [];
@@ -302,6 +319,7 @@
     $("#stop-reason").textContent = task.stop_reason || task.status;
     $("#result-summary").textContent = task.summary || task.error || "No final summary was produced.";
     $("#result-limitations").textContent = task.limitations || "";
+    $("#result-evidence").innerHTML = `<div><dt>Steps / tool calls</dt><dd>${task.steps || 0} / ${task.tool_calls || 0}</dd></div><div><dt>已执行验证</dt><dd>${(task.submitted_tests || []).length ? task.submitted_tests.map(escapeText).join("; ") : "无"}</dd></div>${task.unverified_test_claims ? '<div><dt>Warning</dt><dd class="warning-text">存在未核验的测试声明</dd></div>' : ""}`;
     const stats = task.patch || {};
     $("#patch-meta").textContent = `${stats.files || 0} files · +${stats.additions || 0} · −${stats.deletions || 0}`;
     $("#download-patch").href = `/api/tasks/${task.id}/patch/download`;
@@ -320,7 +338,7 @@
     $("#send-task").disabled = true; $("#task-input").disabled = true;
     try {
       const record = await api("/api/tasks", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({task})});
-      activeTask = record.id; eventOffset = 0;
+      activeTask = record.id; eventOffset = 0; seenPhases = new Set();
       $("#empty-state").hidden = true; $("#task-view").hidden = false; $("#result-card").hidden = true;
       $("#timeline").replaceChildren(); $("#task-title").textContent = task; setStatus(record.status);
       refreshTask();

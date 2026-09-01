@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,11 @@ _STOP_REASONS = {
     "max_tokens": "length",
     "refusal": "refusal",
 }
+
+
+def _safe_request_id(value: Any) -> str | None:
+    text = value if isinstance(value, str) else None
+    return text if text and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", text) else None
 
 
 def _redacted_endpoint(value: str) -> str:
@@ -115,20 +121,24 @@ class AnthropicMessagesAdapter:
             raise ModelError("connection", "model connection failed", retryable=True) from exc
         except Exception as exc:
             status = getattr(exc, "status_code", None)
+            details = {
+                "status_code": status if isinstance(status, int) else None,
+                "provider_request_id": _safe_request_id(getattr(exc, "request_id", None)),
+            }
             error_name = type(exc).__name__
             if error_name == "APITimeoutError":
-                raise ModelError("timeout", "model request timed out", retryable=True) from exc
+                raise ModelError("timeout", "model request timed out", retryable=True, **details) from exc
             if error_name == "APIConnectionError":
-                raise ModelError("connection", "model connection failed", retryable=True) from exc
+                raise ModelError("connection", "model connection failed", retryable=True, **details) from exc
             if status == 429:
-                raise ModelError("rate_limit", "model rate limit exceeded", retryable=True) from exc
+                raise ModelError("rate_limit", "model rate limit exceeded", retryable=True, **details) from exc
             if isinstance(status, int) and status >= 500:
-                raise ModelError("server", "model server error", retryable=True) from exc
+                raise ModelError("server", "model server error", retryable=True, **details) from exc
             if status in {401, 403}:
-                raise ModelError("authentication", "model authentication failed") from exc
+                raise ModelError("authentication", "model authentication failed", **details) from exc
             if isinstance(status, int) and 400 <= status < 500:
-                raise ModelError("request", "model request was rejected") from exc
-            raise ModelError("protocol", "model adapter failed") from exc
+                raise ModelError("request", "model request was rejected", **details) from exc
+            raise ModelError("protocol", "model adapter failed", **details) from exc
         try:
             calls: list[NormalizedToolCall] = []
             text: list[str] = []

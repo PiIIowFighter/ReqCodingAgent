@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "baseline": "baseline-v3",
+  "frozen_plan_sha256": "94e28d8b55913b4ce20e921414ff3ecae9974d3fb413cb9cc274bb8fa9cee6a8",
+  "ontology_sha256": "de063a5b1b6be99145120f1eb2728eb30f98c085b0ee6c6823dcfa01837dd2bf",
+  "report_sha256": "1d4e7ecc613468c7f94923a1fc4cf41e4cad7cbbbbfbf5d9cff4e0ae078b4b05",
+  "active_cells": 24,
+  "results": {"full": {"resolved": 10, "total": 12}, "fuzzy": {"resolved": 10, "total": 12}},
+  "canonical_baseline_v1": {"full": {"resolved": 9, "total": 12}, "fuzzy": {"resolved": 8, "total": 12}},
+  "unresolved_cases": {"full": ["T-R2-full", "T-S4-full"], "fuzzy": ["T-R2-fuzzy", "T-S4-fuzzy"]},
+  "source_run_ids": ["20260831T203846678290Z_formal_cell_6e7ff7fed0", "20260831T192245643504Z_formal_cell_a84d51e0fd", "20260831T191718911553Z_formal_cell_b61be1c828", "20260831T192245632210Z_formal_cell_0231bd33fe", "20260831T210140515320Z_formal_cell_aeaadce07d", "20260831T205329149929Z_formal_cell_d6c7deb8e7", "20260831T204742316558Z_formal_cell_ff589aaa14", "20260831T205329151930Z_formal_cell_95e5de0dfc", "20260831T210658372311Z_formal_cell_d6992df43b", "20260831T213121852548Z_formal_cell_052481b2d0", "20260831T210658347749Z_formal_cell_166bb6b303", "20260831T213121863253Z_formal_cell_0c45119465", "20260831T215229844789Z_formal_cell_5170b28724", "20260831T215921346141Z_formal_cell_dadfcd8258", "20260831T215229786977Z_formal_cell_94c8460a79", "20260831T215921363072Z_formal_cell_b5e3dd76f2", "20260831T220633668191Z_formal_cell_8cf1a62dea", "20260831T223028679993Z_formal_cell_366472fa77", "20260831T220633665178Z_formal_cell_b48bc42b34", "20260831T223028672993Z_formal_cell_37c241bcc8", "20260831T225844370360Z_formal_cell_178cf17646", "20260831T231601739869Z_formal_cell_fd1189d02e", "20260831T225844362846Z_formal_cell_c429fa28a5", "20260831T231601729233Z_formal_cell_a6b1e9bb8a"],
+  "experiment_labels": {"specification": {"E3": "fuzzy", "E4": "full"}, "executed_frozen_plan": {"E3": "full", "E4": "fuzzy"}},
+  "reporter_commit": "711fa989b8269c23d70b758aac10befc3b80e4c5",
+  "actual_model": {"gpt-5.6-sol": 24},
+  "evidence": ["audit/iteration3/reports/baseline-v3.json", "audit/iteration3/reports/comparison-v1-v3.json", "audit/iteration3/index.json"]
+}

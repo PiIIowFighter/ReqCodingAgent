@@ -125,10 +125,20 @@ class ModelResponse:
 
 
 class ModelError(RuntimeError):
-    def __init__(self, category: str, message: str, *, retryable: bool = False):
+    def __init__(
+        self,
+        category: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+        provider_request_id: str | None = None,
+    ):
         super().__init__(message)
         self.category = category
         self.retryable = retryable
+        self.status_code = status_code if isinstance(status_code, int) else None
+        self.provider_request_id = provider_request_id
 
 
 class ModelAdapter(Protocol):

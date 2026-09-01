@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -226,6 +227,9 @@ class AgentLoop:
         self.context.messages = list(base)
         if note:
             self.context.add(ModelMessage("system", note))
+        reset_wire_history = getattr(self.adapter, "reset_wire_history", None)
+        if callable(reset_wire_history):
+            reset_wire_history()
 
     def _enter_synthesis(self) -> None:
         adaptive = self.registry.adaptive
@@ -242,7 +246,7 @@ class AgentLoop:
         self.run_store.event("refinement_fail_open", reason=reason)
         self._checkpoint("call_model")
 
-    def _call_model(self) -> ModelResponse:
+    def _call_model(self, phase: str) -> ModelResponse:
         validate_tool_protocol(self.context.messages)
         request = ModelRequest(tuple(self.context.messages), self.registry.definitions, int(self.config.model["max_output_tokens"]), self.config.budgets["model_timeout_seconds"])
         attempts = 0
@@ -252,6 +256,29 @@ class AgentLoop:
             except Exception as exc:
                 retryable = bool(getattr(exc, "retryable", False))
                 if not retryable or attempts >= self.config.budgets["max_retries"]:
+                    category = getattr(exc, "category", "unknown")
+                    if not isinstance(category, str) or not re.fullmatch(r"[a-z0-9_]{1,64}", category):
+                        category = "unknown"
+                    configured_model = str(self.config.model["model"])
+                    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", configured_model):
+                        configured_model = "unknown"
+                    event = {
+                        "phase": phase,
+                        "category": category,
+                        "retryable": retryable,
+                        "attempt_count": attempts + 1,
+                        "configured_model": configured_model,
+                    }
+                    status_code = getattr(exc, "status_code", None)
+                    if isinstance(status_code, int):
+                        event["status_code"] = status_code
+                    provider_request_id = getattr(exc, "provider_request_id", None)
+                    if isinstance(provider_request_id, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", provider_request_id):
+                        event["provider_request_id"] = provider_request_id
+                    actual_model = getattr(self.adapter, "actual_model", None)
+                    if isinstance(actual_model, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", actual_model):
+                        event["actual_model"] = actual_model
+                    self.run_store.event("model_error", **event)
                     raise
                 attempts += 1
                 self.run_store.event("model_retry", attempt=attempts, category=getattr(exc, "category", "unknown"))
@@ -307,7 +334,7 @@ class AgentLoop:
                             else:
                                 adaptive.synthesis_response_count += 1
                     try:
-                        response = self._call_model()
+                        response = self._call_model(phase)
                     except Exception as exc:
                         if adaptive is not None and phase in {"refinement", "reflection"}:
                             if phase == "reflection":

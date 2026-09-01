@@ -26,16 +26,22 @@ STATIC_ROOT = GUI_ROOT / "static"
 ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
 BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")
 ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
-DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/demo-chatanywhere.json"
+SCENARIO_ROOT = GUI_ROOT / "ontology_scenarios"
+DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/demo-openai.json"
 DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts/runs/demo-gui"
 MAX_TASK_BYTES = 16_384
 MAX_ANSWER_BYTES = 8_192
 MAX_PATCH_BYTES = 524_288
-TERMINAL_STATES = frozenset({"completed", "failed"})
+TERMINAL_STATES = frozenset({"completed", "failed", "stopped"})
+STOPPED_REASONS = frozenset({
+    "step_budget", "tool_budget", "repeated_action", "invalid_output_limit",
+    "wall_clock_timeout", "model_refusal", "patch_limit", "max_steps_exceeded",
+})
 
 # Import adaptive routing
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from reqagent.adaptive import route_task  # noqa: E402
+from reqagent.workspace import preflight_workspace_source  # noqa: E402
 
 
 class FrozenDataError(RuntimeError):
@@ -56,7 +62,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
+def load_ontology(project_root: Path = PROJECT_ROOT, scenario: str | None = None) -> dict[str, object]:
     ontology_path = project_root / ONTOLOGY_SOURCE
     try:
         ontology_bytes = ontology_path.read_bytes()
@@ -101,18 +107,35 @@ def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
     response.update({"category_count": len(normalized), "slot_count": len(expected_slots),
                      "tree": {"id": "coding-requirement-ontology", "type": "root", "children": normalized},
                      "annotations": annotations})
+    if scenario:
+        scenario_path = SCENARIO_ROOT / f"{scenario}.json"
+        scenario_data = _read_json(scenario_path)
+        overlay = scenario_data.get("slots")
+        if not isinstance(overlay, dict) or not set(overlay).issubset(expected_slots):
+            raise FrozenDataError("Ontology scenario must reference frozen slots only")
+        response["scenario"] = {key: value for key, value in scenario_data.items() if key != "slots"}
+        response["scenario"]["slots"] = overlay
+        response["scenario"]["slot_ids"] = sorted(overlay)
     return response
 
 
 def validate_workspace(path: Path) -> Path:
-    workspace = path.expanduser().resolve()
-    if not workspace.is_dir():
-        raise WorkspaceError("Workspace does not exist or is not a directory.")
-    return workspace
+    try:
+        return preflight_workspace_source(path)
+    except (OSError, ValueError) as error:
+        raise WorkspaceError(str(error)) from error
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def status_for_stop_reason(stop_reason: object) -> str:
+    if stop_reason == "submitted":
+        return "completed"
+    if stop_reason in STOPPED_REASONS:
+        return "stopped"
+    return "failed"
 
 
 def _safe_text(value: object, limit: int = 480) -> str:
@@ -142,7 +165,7 @@ class TaskRecord:
 
 
 class TaskManager:
-    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True, interview_adapter_factory=None):
+    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True, interview_adapter_factory=None, scenario: str | None = None):
         self.workspace = validate_workspace(workspace) if workspace is not None else None
         self.config = config.expanduser().resolve()
         self.in_place = in_place
@@ -157,6 +180,7 @@ class TaskManager:
         self.tasks: dict[str, TaskRecord] = {}
         self.lock, self.active_id = threading.RLock(), None
         self.interview_adapter_factory = interview_adapter_factory
+        self.scenario = scenario
 
     def runtime(self) -> dict[str, object]:
         with self.lock:
@@ -222,7 +246,7 @@ class TaskManager:
             ontology_version = hashlib.sha256(ontology_path.read_bytes()).hexdigest()
 
             # Create interview session
-            session = InterviewSession(record.task, adapter, ontology_version)
+            session = InterviewSession(record.task, adapter, ontology_version, scenario=self.scenario)
 
             with self.lock:
                 record.interview_session = session
@@ -385,7 +409,8 @@ class TaskManager:
             with self.lock:
                 record.run_id = run_id
                 if returncode == 0 and isinstance(payload, dict):
-                    record.result, record.status = payload, "completed"
+                    record.status = status_for_stop_reason(payload.get("stop_reason"))
+                    record.result = payload
                 else:
                     detail = _safe_text((stderr_path.read_text(encoding="utf-8", errors="replace").splitlines() or [""])[-1], 160)
                     record.status = "failed"
@@ -404,15 +429,46 @@ class TaskManager:
         result = record.result or {}
         submitted = result.get("submitted") if isinstance(result.get("submitted"), dict) else {}
         patch = result.get("patch") if isinstance(result.get("patch"), dict) else {}
+        verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
         response = {
             "id": record.id, "task": record.task, "status": record.status, "created_at": record.created_at,
             "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": result.get("stop_reason"),
             "summary": _safe_text(submitted.get("summary"), 1200) if submitted else None,
             "limitations": _safe_text(submitted.get("limitations"), 600) if submitted else None,
             "patch": {key: patch.get(key, 0) for key in ("files", "additions", "deletions", "bytes")},
+            "steps": result.get("steps", 0),
+            "tool_calls": result.get("tool_calls", 0),
+            "submitted_tests": [_safe_text(item, 320) for item in (submitted.get("tests", []) if isinstance(submitted.get("tests"), list) else [])],
+            "unverified_test_claims": bool(submitted and submitted.get("tests") and verification.get("all_passed") is not True),
             "error": record.error,
             "route_mode": record.route_mode
         }
+
+        if self.scenario:
+            response["scenario"] = self.scenario
+
+        session = record.interview_session
+        if session:
+            selected = {slot_id for turn in session.turns for slot_id in turn.selected_slot_ids}
+            answered = {slot_id for turn in session.turns if turn.answer is not None for slot_id in turn.selected_slot_ids}
+            final_states = record.baseline.slot_states if record.baseline else {}
+            categories = []
+            ontology = load_ontology(self.project_root)
+            for category in (ontology.get("tree") or {}).get("children", []):
+                slots = []
+                for node in category.get("children", []):
+                    slot_id = node["id"]
+                    state = final_states.get(slot_id, {}) if isinstance(final_states, dict) else {}
+                    status = state.get("state") if isinstance(state, dict) else None
+                    if not status:
+                        status = "confirmed" if slot_id in answered else ("unresolved" if slot_id in selected else "unexplored")
+                    reasons = [t.selection_reason for t in session.turns if slot_id in t.selected_slot_ids]
+                    slots.append({"id": slot_id, "name_zh": ontology["annotations"]["slots"][slot_id]["name_zh"], "status": status,
+                                  "selected": slot_id in selected, "selection_reason": _safe_text("; ".join(reasons), 220)})
+                categories.append({"id": category["id"], "name_zh": ontology["annotations"]["categories"][category["id"]]["name_zh"], "slots": slots})
+            response["requirement_coverage"] = {"covered": sum(1 for c in categories for s in c["slots"] if s["status"] in {"confirmed", "rejected"}),
+                                                  "total": sum(len(c["slots"]) for c in categories), "categories": categories,
+                                                  "note": "并非每个任务都必须强行填满所有槽位"}
 
         # Add interview state
         if record.status in {"awaiting_user", "interviewing"}:
@@ -421,6 +477,7 @@ class TaskManager:
                     "turn_id": record.current_turn.turn_id,
                     "question": record.current_turn.question,
                     "slot_ids": record.current_turn.selected_slot_ids,
+                    "selection_reason": _safe_text(record.current_turn.selection_reason, 220),
                     "turn_number": len(record.interview_session.turns) if record.interview_session else 0,
                     "max_turns": record.interview_session.max_turns if record.interview_session else 3
                 }
@@ -431,6 +488,7 @@ class TaskManager:
                         "question": t.question,
                         "answer": t.answer,
                         "slot_ids": t.selected_slot_ids
+                        ,"selection_reason": _safe_text(t.selection_reason, 220)
                     }
                     for t in record.interview_session.turns if t.answer is not None
                 ]
@@ -444,7 +502,8 @@ class TaskManager:
                     "constraints": record.baseline.constraints,
                     "excluded_scope": record.baseline.excluded_scope,
                     "assumptions": record.baseline.assumptions,
-                    "unresolved_items": record.baseline.unresolved_items
+                    "unresolved_items": record.baseline.unresolved_items,
+                    "slot_states": record.baseline.slot_states,
                 }
 
         return response
@@ -481,7 +540,7 @@ class TaskManager:
             mode = _safe_text(raw.get("mode"), 32)
             reasons = raw.get("reasons") if isinstance(raw.get("reasons"), list) else []
             selected_skills = raw.get("selected_skills") if isinstance(raw.get("selected_skills"), list) else []
-            return {"offset": offset, "kind": "route_decision", "mode": mode,
+            return {"offset": offset, "kind": "route_decision", "phase": phase, "mode": mode,
                     "reasons": [_safe_text(r, 80) for r in reasons],
                     "selected_skills": [_safe_text(s, 80) for s in selected_skills]}
         if raw.get("kind") == "requirement_brief_recorded":
@@ -740,22 +799,23 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT, *,
                   workspace: Path | None = None, config: Path | None = None,
-                  artifact_root: Path | None = None, python: str = sys.executable, in_place: bool = True) -> DemoServer:
+                  artifact_root: Path | None = None, python: str = sys.executable, in_place: bool = True,
+                  scenario: str | None = None) -> DemoServer:
     root = project_root.resolve()
-    tasks = TaskManager(workspace, config or root / "configs/agent/demo-chatanywhere.json",
-                        artifact_root or root / "artifacts/runs/demo-gui", project_root=root, python=python, in_place=in_place)
-    return DemoServer((host, port), load_ontology(root), tasks)
+    task_kwargs = {"project_root": root, "python": python, "in_place": in_place}
+    if scenario is not None:
+        task_kwargs["scenario"] = scenario
+    tasks = TaskManager(workspace, config or root / "configs/agent/demo-openai.json",
+                        artifact_root or root / "artifacts/runs/demo-gui", **task_kwargs)
+    return DemoServer((host, port), load_ontology(root, scenario), tasks)
 
 
 def _apply_provider_env(config: Path) -> None:
-    if config.resolve() != (PROJECT_ROOT / "configs/agent/demo-chatanywhere.json").resolve():
+    if config.resolve() != (PROJECT_ROOT / "configs/agent/demo-openai.json").resolve():
         return
-    key = os.environ.get("CHATANYWHERE_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY")
     if not key:
-        print("Warning: CHATANYWHERE_API_KEY is not set; live Agent tasks will fail until it is configured.")
-        return
-    os.environ.setdefault("OPENAI_BASE_URL", "https://api.chatanywhere.tech/v1")
-    os.environ.setdefault("OPENAI_API_KEY", key)
+        print("Warning: OPENAI_API_KEY is not set; live Agent tasks will fail until it is configured.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -765,11 +825,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default=None, type=Path)
     parser.add_argument("--config", default=DEFAULT_CONFIG, type=Path)
     parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, type=Path)
+    parser.add_argument("--demo-scenario", choices=("stock-search",), default=None,
+                        help="Enable an explicit deterministic presentation scenario.")
     args = parser.parse_args(argv)
     config = args.config.expanduser().resolve()
     _apply_provider_env(config)
     try:
-        server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root)
+        server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root,
+                               scenario=args.demo_scenario)
     except (FrozenDataError, WorkspaceError) as error:
         print(f"Cannot start: {error}"); return 1
     print(f"ReqCodingAgent demo available at http://{args.host}:{args.port}/")
