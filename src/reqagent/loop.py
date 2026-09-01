@@ -262,6 +262,8 @@ class AgentLoop:
         atomic_json(self.run_store.path / "tool-schemas.json", [definition.__dict__ for definition in self.registry.schema_definitions])
         atomic_json(self.run_store.path / "workspace-before.json", {"base_commit": self.workspace.base_commit, "diff_sha256": hashlib.sha256(b"").hexdigest()})
         adaptive = getattr(self.registry, "adaptive", None)
+        if adaptive is not None:
+            self.run_store.event("route_decision", mode=adaptive.route.mode, reasons=list(adaptive.route.reasons), selected_skills=list(adaptive.route.selected_skills))
         if adaptive is not None and adaptive.route.mode == "refine" and not any(message.text.startswith("Adaptive refinement phase:") for message in self.context.messages):
             self.context.add(ModelMessage("system", adaptive.refinement_instruction()))
 
@@ -449,6 +451,7 @@ class AgentLoop:
                         adaptive.observe_tool(call.name, result.ok, result.error, after != before)
                     if call.name == "record_requirement_brief" and result.ok and adaptive is not None:
                         brief_message = adaptive.brief_message()
+                        self.run_store.event("requirement_brief_recorded", phase=tool_phase if adaptive is not None else "main")
                     self.run_store.event("tool_result", sequence=self.tool_calls, phase=tool_phase if adaptive is not None else "main", call_id=call.call_id, result=result.to_dict())
                     self.next_tool_index += 1
                     if call.name == "submit" and result.ok:

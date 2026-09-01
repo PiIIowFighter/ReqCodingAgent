@@ -70,10 +70,26 @@ def test_router_uses_only_task_and_full_fast_path_has_baseline_tools(tmp_path: P
     assert registry.execute("submit", {"summary": "done", "tests": [], "limitations": ""}).ok
 
 
-def test_router_treats_greenfield_chinese_tasks_as_fast():
+def test_router_treats_vague_greenfield_chinese_tasks_as_refine():
     decision = route_task("生成一个股票搜索网站")
+    assert decision.mode == "refine"
+    # Should trigger refinement due to missing concrete targets, validation, etc.
+    assert "goal" in decision.reasons or "target" in decision.reasons or "observable_behavior" in decision.reasons or "validation" in decision.reasons
+
+
+def test_router_treats_vague_greenfield_english_tasks_as_refine():
+    decision = route_task("Build a stock search website")
+    assert decision.mode == "refine"
+    # Should trigger refinement due to missing concrete targets, validation, etc.
+    assert "goal" in decision.reasons or "target" in decision.reasons or "observable_behavior" in decision.reasons or "validation" in decision.reasons
+
+
+def test_router_treats_detailed_greenfield_tasks_as_fast():
+    # A detailed task with targets, behavior, validation should still go fast
+    task = "Create index.html with a search form containing an input#symbol and button#search. On click, fetch /api/stock?symbol=VALUE and display result in #output. Include error handling for 404. Test with manual browser verification."
+    decision = route_task(task)
     assert decision.mode == "fast"
-    assert decision.reasons == ("greenfield_creation",)
+    assert decision.reasons == ("detailed_behavior_contract",)
 
 
 def test_fast_path_first_request_matches_frozen_baseline_v1_golden(tmp_path: Path):

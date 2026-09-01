@@ -271,6 +271,15 @@ class TaskManager:
         if not isinstance(raw, dict):
             return None
         phase = _safe_text(raw.get("phase") or "main", 32)
+        if raw.get("kind") == "route_decision":
+            mode = _safe_text(raw.get("mode"), 32)
+            reasons = raw.get("reasons") if isinstance(raw.get("reasons"), list) else []
+            selected_skills = raw.get("selected_skills") if isinstance(raw.get("selected_skills"), list) else []
+            return {"offset": offset, "kind": "route_decision", "mode": mode,
+                    "reasons": [_safe_text(r, 80) for r in reasons],
+                    "selected_skills": [_safe_text(s, 80) for s in selected_skills]}
+        if raw.get("kind") == "requirement_brief_recorded":
+            return {"offset": offset, "kind": "requirement_brief_recorded", "phase": phase}
         if raw.get("kind") == "model_response":
             response = raw.get("response") if isinstance(raw.get("response"), dict) else {}
             calls = response.get("tool_calls") if isinstance(response.get("tool_calls"), list) else []

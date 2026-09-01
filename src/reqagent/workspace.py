@@ -64,16 +64,32 @@ def _git_toplevel(path: Path) -> Path | None:
 
 def _ensure_git_baseline(root: Path) -> str:
     root = root.resolve()
-    if not (root / ".git").exists():
+    if not root.exists():
+        raise ValueError("working directory does not exist")
+
+    toplevel = _git_toplevel(root)
+
+    # Not a git repo
+    if toplevel is None:
+        # Check if directory is empty
+        if any(root.iterdir()):
+            raise ValueError("in-place mode requires an empty non-git directory or a clean git repository root")
+        # Initialize git for empty directory
         _run_git(root, "init", "--quiet")
-    if _run_git(root, "rev-parse", "HEAD", check=False).returncode:
-        _run_git(root, "add", "-A")
         _run_git(root, "-c", "user.email=reqagent@local", "-c", "user.name=ReqAgent",
                  "commit", "--quiet", "--allow-empty", "-m", "reqagent-baseline")
-    elif _run_git(root, "status", "--porcelain").stdout.strip():
-        _run_git(root, "add", "-A")
-        _run_git(root, "-c", "user.email=reqagent@local", "-c", "user.name=ReqAgent",
-                 "commit", "--quiet", "-m", "reqagent-baseline")
+        return _run_git(root, "rev-parse", "HEAD").stdout.strip()
+
+    # Is a git repo
+    # Must be at the root of the repository
+    if toplevel != root:
+        raise ValueError("in-place mode requires working at the git repository root, not a subdirectory")
+
+    # Check if repository is clean
+    if _run_git(root, "status", "--porcelain").stdout.strip():
+        raise ValueError("in-place mode requires a clean git repository with no uncommitted or untracked files")
+
+    # Use current HEAD as baseline
     return _run_git(root, "rev-parse", "HEAD").stdout.strip()
 
 

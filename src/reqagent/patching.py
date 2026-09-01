@@ -198,13 +198,13 @@ def apply_patch_atomic(
         if not _apply_marker_patch(workspace, patch, protected_paths):
             patch_file.write_text(patch.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
             check = subprocess.run(
-                ["git", "-C", str(workspace.root), "apply", "--check", "--whitespace=nowarn", str(patch_file)],
+                ["git", "-C", str(workspace.root), "apply", "--check", "--recount", "--whitespace=nowarn", str(patch_file)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
             )
             if check.returncode:
                 raise ValueError(f"patch check failed: {check.stderr.strip()}")
             applied = subprocess.run(
-                ["git", "-C", str(workspace.root), "apply", "--whitespace=nowarn", str(patch_file)],
+                ["git", "-C", str(workspace.root), "apply", "--recount", "--whitespace=nowarn", str(patch_file)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
             )
             if applied.returncode:

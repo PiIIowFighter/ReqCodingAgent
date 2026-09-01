@@ -144,10 +144,24 @@
   }
   function addEvent(event) {
     const item = document.createElement("li");
-    const label = event.kind === "tool_result" ? event.tool : "Model response";
-    const detail = event.kind === "tool_result" ? event.summary : (event.text || (event.tools.length ? "Requested " + event.tools.join(", ") : "Response completed."));
+    let label, detail;
+    if (event.kind === "route_decision") {
+      label = event.mode === "refine" ? "需求细化已启动" : "快速执行模式";
+      const reasonsText = event.reasons.length ? event.reasons.join(", ") : "无";
+      const skillsText = event.selected_skills.length ? event.selected_skills.join(", ") : "无";
+      detail = `模式: ${event.mode}; 原因: ${reasonsText}; 选择技能: ${skillsText}`;
+    } else if (event.kind === "requirement_brief_recorded") {
+      label = "需求基线已形成";
+      detail = "需求细化完成，进入代码实现阶段";
+    } else if (event.kind === "tool_result") {
+      label = event.tool;
+      detail = event.summary;
+    } else {
+      label = "Model response";
+      detail = event.text || (event.tools.length ? "Requested " + event.tools.join(", ") : "Response completed.");
+    }
     item.className = "timeline-item " + (event.ok === false ? "failed" : "");
-    item.innerHTML = `<span class="timeline-dot"></span><div><div class="timeline-meta"><strong>${escapeText(label)}</strong><span>${escapeText(event.phase)}</span></div><p>${escapeText(detail)}</p></div>`;
+    item.innerHTML = `<span class="timeline-dot"></span><div><div class="timeline-meta"><strong>${escapeText(label)}</strong><span>${escapeText(event.phase || "")}</span></div><p>${escapeText(detail)}</p></div>`;
     $("#timeline").append(item);
   }
   async function refreshTask() {
@@ -169,7 +183,8 @@
   }
   async function showResult(task) {
     const card = $("#result-card"); card.hidden = false;
-    $("#result-title").textContent = task.status === "completed" ? "Agent finished" : "Agent failed";
+    const isSubmitted = task.stop_reason === "submitted";
+    $("#result-title").textContent = isSubmitted ? "Agent finished" : (task.status === "completed" ? "Agent stopped" : "Agent failed");
     $("#stop-reason").textContent = task.stop_reason || task.status;
     $("#result-summary").textContent = task.summary || task.error || "No final summary was produced.";
     $("#result-limitations").textContent = task.limitations || "";

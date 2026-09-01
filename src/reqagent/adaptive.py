@@ -39,13 +39,6 @@ def route_task(task: str) -> RouteDecision:
         text = task.strip()
         if not text:
             return _decision("fast", ("router_fail_open_empty_task",))
-        if re.search(
-            r"(?:生成|创建|新建|编写|搭建|开发|做一个).*(?:网站|网页|应用|程序|项目|页面)|"
-            r"\b(create|generate|build|scaffold|make)\b.{0,48}\b(website|webpage|web page|app|application|project|site)\b",
-            text,
-            re.IGNORECASE,
-        ):
-            return _decision("fast", ("greenfield_creation",))
         lower = text.lower()
         words = text.split()
         text_units = len(words) if re.search(r"[A-Za-z]", text) else max(len(text), len(words))

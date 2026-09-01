@@ -88,7 +88,7 @@ def _execute(source: Path, task: str, config: AgentConfig, run_store: RunStore, 
         config.raw,
         command_executor=executor,
         artifact_dir=run_store.path / "commands",
-        requirement_refinement=False if in_place else "auto",
+        requirement_refinement="auto",
         task=task,
     )
     registry.adapter_identity = getattr(model, "identity", {"provider": "scripted"})

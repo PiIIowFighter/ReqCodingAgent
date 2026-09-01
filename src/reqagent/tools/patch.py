@@ -9,7 +9,11 @@ from .base import ToolEnvelope, object_schema
 
 
 def definition() -> ToolDefinition:
-    return ToolDefinition("apply_patch", "Apply one atomic unified diff. Call this only after reading the affected files.", object_schema({"patch": {"type": "string"}}, ["patch"]))
+    return ToolDefinition(
+        "apply_patch",
+        "Apply one atomic unified diff. Call this only after reading the affected files. Standard unified diff format is recommended. Marker format is also supported: *** Begin Patch / *** Add File: path / *** Update File: path / *** End Patch. If a patch fails, generate a different corrected patch - do not retry the exact same patch.",
+        object_schema({"patch": {"type": "string"}}, ["patch"])
+    )
 
 
 def apply_patch(workspace: GitWorkspace, protected_paths: tuple[str, ...], limits: dict[str, int], args: dict[str, Any]) -> ToolEnvelope:
