@@ -29,8 +29,13 @@ ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
 DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/demo-chatanywhere.json"
 DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts/runs/demo-gui"
 MAX_TASK_BYTES = 16_384
+MAX_ANSWER_BYTES = 8_192
 MAX_PATCH_BYTES = 524_288
 TERMINAL_STATES = frozenset({"completed", "failed"})
+
+# Import adaptive routing
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from reqagent.adaptive import route_task  # noqa: E402
 
 
 class FrozenDataError(RuntimeError):
@@ -129,6 +134,11 @@ class TaskRecord:
     result: dict[str, Any] | None = None
     error: str | None = None
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
+    # Interview fields
+    interview_session: Any | None = field(default=None, repr=False)  # InterviewSession instance
+    current_turn: Any | None = field(default=None, repr=False)  # InterviewTurn instance
+    baseline: Any | None = field(default=None, repr=False)  # RequirementBaseline instance
+    route_mode: str | None = None  # "fast" or "refine"
 
 
 class TaskManager:
@@ -167,16 +177,163 @@ class TaskManager:
         with self.lock:
             if self.active_id and self.tasks[self.active_id].status not in TERMINAL_STATES:
                 raise RuntimeError("An Agent task is already running.")
-            record = TaskRecord(uuid.uuid4().hex, task)
+
+            # Route the task
+            from reqagent.adaptive import route_task
+            decision = route_task(task)
+
+            record = TaskRecord(uuid.uuid4().hex, task, route_mode=decision.mode)
             self.tasks[record.id], self.active_id = record, record.id
-        threading.Thread(target=self._run, args=(record,), daemon=True).start()
+
+            # Fast path: start coding immediately
+            if decision.mode == "fast":
+                threading.Thread(target=self._run_coding_agent, args=(record,), daemon=True).start()
+            else:
+                # Refine path: start interview
+                threading.Thread(target=self._start_interview, args=(record,), daemon=True).start()
+
         return record
 
     def get(self, task_id: str) -> TaskRecord | None:
         with self.lock:
             return self.tasks.get(task_id)
 
-    def _run(self, record: TaskRecord) -> None:
+    def _start_interview(self, record: TaskRecord) -> None:
+        """Start an interactive requirement interview."""
+        from demo_gui.interview import InterviewSession
+        from openai import OpenAI
+
+        with self.lock:
+            record.status = "interviewing"
+            record.started_at = _now()
+
+        try:
+            # Load config to get model and credentials
+            config_data = json.loads(self.config.read_text(encoding="utf-8"))
+            model_cfg = config_data.get("model", {})
+            base_url_env = model_cfg.get("base_url_env", "OPENAI_BASE_URL")
+            api_key_env = model_cfg.get("api_key_env", "OPENAI_API_KEY")
+            model_name = model_cfg.get("model", "gpt-4o-mini")
+
+            base_url = os.environ.get(base_url_env)
+            api_key = os.environ.get(api_key_env)
+            if not base_url or not api_key:
+                raise ValueError(f"Missing environment variables: {base_url_env}, {api_key_env}")
+
+            # Create OpenAI client
+            client = OpenAI(base_url=base_url, api_key=api_key, timeout=300.0, max_retries=0)
+
+            # Load ontology version
+            ontology_path = PROJECT_ROOT / ONTOLOGY_SOURCE
+            ontology_data = json.loads(ontology_path.read_text(encoding="utf-8"))
+            ontology_version = hashlib.sha256(ontology_path.read_bytes()).hexdigest()
+
+            # Create interview session
+            session = InterviewSession(record.task, client, model_name, ontology_version)
+
+            with self.lock:
+                record.interview_session = session
+
+            # Generate first question
+            turn = session.generate_next_question()
+
+            with self.lock:
+                record.current_turn = turn
+                record.status = "awaiting_user"
+
+        except Exception as exc:
+            with self.lock:
+                record.status = "failed"
+                record.error = f"Interview failed to start: {_safe_text(str(exc), 200)}"
+                record.finished_at = _now()
+                if self.active_id == record.id:
+                    self.active_id = None
+
+    def submit_answer(self, task_id: str, turn_id: str, answer: str) -> dict[str, Any]:
+        """Submit user answer to the current interview question."""
+        if not answer or len(answer.encode("utf-8")) > MAX_ANSWER_BYTES:
+            raise ValueError("Answer is empty or too large")
+
+        with self.lock:
+            record = self.tasks.get(task_id)
+            if not record:
+                raise ValueError("Unknown task")
+            if record.status != "awaiting_user":
+                raise ValueError(f"Task is not awaiting user input (status: {record.status})")
+            if not record.current_turn or record.current_turn.turn_id != turn_id:
+                raise ValueError("Invalid or stale turn_id")
+
+            record.status = "interviewing"
+
+        # Run in background thread
+        threading.Thread(target=self._process_answer, args=(record, turn_id, answer), daemon=True).start()
+
+        return {"status": "interviewing"}
+
+    def _process_answer(self, record: TaskRecord, turn_id: str, answer: str) -> None:
+        """Process user answer and generate next question or baseline."""
+        try:
+            session = record.interview_session
+            next_turn = session.submit_answer(turn_id, answer)
+
+            if next_turn is None:
+                # Interview complete, baseline formed
+                with self.lock:
+                    record.baseline = session.baseline
+                    record.status = "awaiting_confirmation"
+            else:
+                # Next question ready
+                with self.lock:
+                    record.current_turn = next_turn
+                    record.status = "awaiting_user"
+
+        except Exception as exc:
+            with self.lock:
+                record.status = "failed"
+                record.error = f"Interview processing failed: {_safe_text(str(exc), 200)}"
+                record.finished_at = _now()
+                if self.active_id == record.id:
+                    self.active_id = None
+
+    def confirm_baseline(self, task_id: str) -> dict[str, Any]:
+        """Confirm requirement baseline and start coding agent."""
+        with self.lock:
+            record = self.tasks.get(task_id)
+            if not record:
+                raise ValueError("Unknown task")
+            if record.status != "awaiting_confirmation":
+                raise ValueError(f"Task is not awaiting confirmation (status: {record.status})")
+            if not record.baseline:
+                raise ValueError("No baseline to confirm")
+
+            # Save interview artifacts
+            self.artifact_root.mkdir(parents=True, exist_ok=True)
+            interview_dir = self.artifact_root / f"interview-{record.id}"
+            interview_dir.mkdir(exist_ok=True)
+
+            # Save transcript
+            transcript_path = interview_dir / "interview-transcript.json"
+            transcript = record.interview_session.to_transcript()
+            transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # Save baseline
+            baseline_path = interview_dir / "confirmed-requirement-baseline.json"
+            baseline_data = record.baseline.to_dict()
+            baseline_data["ontology_version"] = record.interview_session.ontology_version
+            baseline_data["configured_model"] = record.interview_session.model
+            baseline_data["actual_model"] = record.interview_session.actual_model
+            baseline_path.write_text(json.dumps(baseline_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # Create task file
+            task_file = interview_dir / "final-task.txt"
+            task_file.write_text(record.baseline.to_task_description(), encoding="utf-8")
+
+            record.status = "queued"
+
+        # Start coding agent with the confirmed baseline
+        threading.Thread(target=self._run_coding_agent, args=(record, task_file), daemon=True).start()
+
+        return {"status": "running"}
         with self.lock:
             record.status, record.started_at = "running", _now()
         self.artifact_root.mkdir(parents=True, exist_ok=True)
@@ -237,11 +394,50 @@ class TaskManager:
         result = record.result or {}
         submitted = result.get("submitted") if isinstance(result.get("submitted"), dict) else {}
         patch = result.get("patch") if isinstance(result.get("patch"), dict) else {}
-        return {"id": record.id, "task": record.task, "status": record.status, "created_at": record.created_at,
-                "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": result.get("stop_reason"),
-                "summary": _safe_text(submitted.get("summary"), 1200) if submitted else None,
-                "limitations": _safe_text(submitted.get("limitations"), 600) if submitted else None,
-                "patch": {key: patch.get(key, 0) for key in ("files", "additions", "deletions", "bytes")}, "error": record.error}
+        response = {
+            "id": record.id, "task": record.task, "status": record.status, "created_at": record.created_at,
+            "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": result.get("stop_reason"),
+            "summary": _safe_text(submitted.get("summary"), 1200) if submitted else None,
+            "limitations": _safe_text(submitted.get("limitations"), 600) if submitted else None,
+            "patch": {key: patch.get(key, 0) for key in ("files", "additions", "deletions", "bytes")},
+            "error": record.error,
+            "route_mode": record.route_mode
+        }
+
+        # Add interview state
+        if record.status in {"awaiting_user", "interviewing"}:
+            if record.current_turn:
+                response["current_question"] = {
+                    "turn_id": record.current_turn.turn_id,
+                    "question": record.current_turn.question,
+                    "slot_ids": record.current_turn.selected_slot_ids,
+                    "turn_number": len(record.interview_session.turns) if record.interview_session else 0,
+                    "max_turns": record.interview_session.max_turns if record.interview_session else 3
+                }
+
+            if record.interview_session:
+                response["interview_history"] = [
+                    {
+                        "question": t.question,
+                        "answer": t.answer,
+                        "slot_ids": t.selected_slot_ids
+                    }
+                    for t in record.interview_session.turns if t.answer is not None
+                ]
+
+        elif record.status == "awaiting_confirmation":
+            if record.baseline:
+                response["baseline"] = {
+                    "refined_summary": record.baseline.refined_summary,
+                    "requirements": record.baseline.requirements,
+                    "acceptance_criteria": record.baseline.acceptance_criteria,
+                    "constraints": record.baseline.constraints,
+                    "excluded_scope": record.baseline.excluded_scope,
+                    "assumptions": record.baseline.assumptions,
+                    "unresolved_items": record.baseline.unresolved_items
+                }
+
+        return response
 
     def _run_dir(self, record: TaskRecord) -> Path | None:
         if not record.run_id or not re.fullmatch(r"[A-Za-z0-9._-]+", record.run_id):
@@ -378,6 +574,11 @@ class DemoHandler(BaseHTTPRequestHandler):
             self._method_not_allowed(); return
         if parsed.path == "/api/workspace":
             self._set_workspace(); return
+
+        # Check for interview endpoints
+        if match := re.fullmatch(r"/api/tasks/([a-f0-9]{32})/(answer|confirm)", parsed.path):
+            self._interview_action(match.group(1), match.group(2)); return
+
         if parsed.path != "/api/tasks":
             self._method_not_allowed(); return
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -439,6 +640,48 @@ class DemoHandler(BaseHTTPRequestHandler):
         except (RuntimeError, WorkspaceError) as error:
             self._json({"error": str(error)}, 409); return
         self._json(self.server.tasks.runtime())
+
+    def _interview_action(self, task_id: str, action: str) -> None:
+        """Handle interview answer or confirm actions."""
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json({"error": "content type must be application/json"}, 415); return
+        origin, host = self.headers.get("Origin"), self.headers.get("Host")
+        if origin and origin.rstrip("/") != f"http://{host}":
+            self._json({"error": "origin not allowed"}, 403); return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+
+        max_size = MAX_ANSWER_BYTES if action == "answer" else 1024
+        if length < 0 or length > max_size:
+            self._json({"error": "invalid request size"}, 400); return
+
+        try:
+            payload = json.loads(self.rfile.read(length)) if length > 0 else {}
+        except (UnicodeError, json.JSONDecodeError):
+            self._json({"error": "invalid JSON"}, 400); return
+
+        if not isinstance(payload, dict):
+            self._json({"error": "body must be an object"}, 400); return
+
+        try:
+            if action == "answer":
+                if set(payload) != {"turn_id", "answer"}:
+                    self._json({"error": "body must contain turn_id and answer"}, 400); return
+                if not isinstance(payload["turn_id"], str) or not isinstance(payload["answer"], str):
+                    self._json({"error": "turn_id and answer must be strings"}, 400); return
+                result = self.server.tasks.submit_answer(task_id, payload["turn_id"], payload["answer"])
+                self._json(result, 202)
+            elif action == "confirm":
+                if payload:  # Confirm should have empty body
+                    self._json({"error": "body must be empty for confirm"}, 400); return
+                result = self.server.tasks.confirm_baseline(task_id)
+                self._json(result, 202)
+        except ValueError as error:
+            self._json({"error": str(error)}, 400); return
+        except RuntimeError as error:
+            self._json({"error": str(error)}, 409); return
 
     def _task_get(self, task_id: str, resource: str | None, query: str) -> None:
         record = self.server.tasks.get(task_id)

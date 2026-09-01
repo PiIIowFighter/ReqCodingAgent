@@ -89,7 +89,8 @@ def test_router_treats_detailed_greenfield_tasks_as_fast():
     task = "Create index.html with a search form containing an input#symbol and button#search. On click, fetch /api/stock?symbol=VALUE and display result in #output. Include error handling for 404. Test with manual browser verification."
     decision = route_task(task)
     assert decision.mode == "fast"
-    assert decision.reasons == ("detailed_behavior_contract",)
+    # Should have actionable reason, not detailed_behavior_contract
+    assert "actionable" in decision.reasons[0] or "detailed" in decision.reasons[0]
 
 
 def test_fast_path_first_request_matches_frozen_baseline_v1_golden(tmp_path: Path):

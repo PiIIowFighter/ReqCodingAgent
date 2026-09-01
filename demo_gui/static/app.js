@@ -139,7 +139,17 @@
   $("#new-task").addEventListener("click", () => { showRoute("/", true); resetTask(); });
 
   function setStatus(status) {
-    const badge = $("#task-status"); badge.textContent = status[0].toUpperCase() + status.slice(1);
+    const badge = $("#task-status");
+    const statusMap = {
+      "queued": "Queued",
+      "interviewing": "访谈中",
+      "awaiting_user": "等待回答",
+      "awaiting_confirmation": "待确认",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed"
+    };
+    badge.textContent = statusMap[status] || status[0].toUpperCase() + status.slice(1);
     badge.className = "task-status " + status;
   }
   function addEvent(event) {
@@ -172,15 +182,119 @@
         api(`/api/tasks/${activeTask}/events?after=${eventOffset}`)
       ]);
       setStatus(task.status); feed.events.forEach(addEvent); eventOffset = feed.next_offset;
-      if (task.status === "completed" || task.status === "failed") {
+
+      // Handle interview states
+      if (task.status === "awaiting_user") {
+        showInterviewQuestion(task);
+        return;
+      } else if (task.status === "awaiting_confirmation") {
+        showBaselineConfirmation(task);
+        return;
+      } else if (task.status === "completed" || task.status === "failed") {
         updateComposerState();
         await showResult(task); return;
       }
+
       pollTimer = setTimeout(refreshTask, 700);
     } catch (error) {
       toast(error.message); pollTimer = setTimeout(refreshTask, 1600);
     }
   }
+
+  function showInterviewQuestion(task) {
+    const card = $("#interview-card");
+    if (!card) return; // Card will be created in HTML
+    card.hidden = false;
+    $("#result-card").hidden = true;
+
+    const q = task.current_question;
+    if (!q) return;
+
+    $("#interview-turn").textContent = `问题 ${q.turn_number} / 最多 ${q.max_turns} 轮`;
+    $("#interview-question").textContent = q.question;
+    $("#interview-slots").innerHTML = q.slot_ids.map(id => `<span class="slot-chip">${escapeText(id)}</span>`).join("");
+
+    // Show history
+    const history = task.interview_history || [];
+    const historyHTML = history.map((h, i) => `
+      <div class="qa-pair">
+        <div class="qa-question"><strong>问题 ${i + 1}:</strong> ${escapeText(h.question)}</div>
+        <div class="qa-answer"><strong>回答:</strong> ${escapeText(h.answer)}</div>
+      </div>
+    `).join("");
+    $("#interview-history").innerHTML = historyHTML;
+
+    $("#interview-answer").value = "";
+    $("#interview-answer").disabled = false;
+    $("#interview-submit").disabled = false;
+    $("#interview-submit").onclick = () => submitAnswer(task.id, q.turn_id);
+  }
+
+  async function submitAnswer(taskId, turnId) {
+    const answer = $("#interview-answer").value.trim();
+    if (!answer) {
+      toast("请输入回答");
+      return;
+    }
+
+    $("#interview-answer").disabled = true;
+    $("#interview-submit").disabled = true;
+
+    try {
+      await api(`/api/tasks/${taskId}/answer`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({turn_id: turnId, answer})
+      });
+      toast("回答已提交");
+      pollTimer = setTimeout(refreshTask, 500);
+    } catch (error) {
+      toast(error.message);
+      $("#interview-answer").disabled = false;
+      $("#interview-submit").disabled = false;
+    }
+  }
+
+  function showBaselineConfirmation(task) {
+    const card = $("#baseline-card");
+    if (!card) return;
+    card.hidden = false;
+    $("#interview-card").hidden = true;
+    $("#result-card").hidden = true;
+
+    const b = task.baseline;
+    if (!b) return;
+
+    $("#baseline-summary").textContent = b.refined_summary;
+    $("#baseline-requirements").innerHTML = b.requirements.map(r => `<li>${escapeText(r)}</li>`).join("");
+    $("#baseline-acceptance").innerHTML = b.acceptance_criteria.map(c => `<li>${escapeText(c)}</li>`).join("");
+    $("#baseline-constraints").innerHTML = b.constraints.map(c => `<li>${escapeText(c)}</li>`).join("") || "<li>无</li>";
+    $("#baseline-excluded").innerHTML = b.excluded_scope.map(e => `<li>${escapeText(e)}</li>`).join("") || "<li>无</li>";
+    $("#baseline-assumptions").innerHTML = b.assumptions.map(a => `<li>${escapeText(a)}</li>`).join("") || "<li>无</li>";
+    $("#baseline-unresolved").innerHTML = b.unresolved_items.map(u => `<li>${escapeText(u)}</li>`).join("") || "<li>无</li>";
+
+    $("#baseline-confirm-btn").disabled = false;
+    $("#baseline-confirm-btn").onclick = () => confirmBaseline(task.id);
+  }
+
+  async function confirmBaseline(taskId) {
+    $("#baseline-confirm-btn").disabled = true;
+
+    try {
+      await api(`/api/tasks/${taskId}/confirm`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({})
+      });
+      toast("需求已确认，开始编码");
+      $("#baseline-card").hidden = true;
+      pollTimer = setTimeout(refreshTask, 500);
+    } catch (error) {
+      toast(error.message);
+      $("#baseline-confirm-btn").disabled = false;
+    }
+  }
+
   async function showResult(task) {
     const card = $("#result-card"); card.hidden = false;
     const isSubmitted = task.stop_reason === "submitted";
