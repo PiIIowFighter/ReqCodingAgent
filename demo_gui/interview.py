@@ -1,18 +1,51 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Sensitive content patterns
+_SENSITIVE_PATTERN = re.compile(
+    r"(?i)(?:[a-z]:[\\/]|/)(?:[^\s]+[\\/])+[^\s]+|"  # Absolute paths
+    r"\b(api[_-]?key|auth(?:entication)?[_-]?token|password|secret|bearer)\b\s*[:=]\s*\S+|"  # Credentials
+    r"reasoning|encrypted_content",  # Model internal content
+    re.IGNORECASE
+)
+
+
+def _sanitize_text(text: str, max_length: int = 2000) -> str:
+    """Sanitize text by removing sensitive information."""
+    if not text:
+        return text
+
+    # Check for suspected credentials
+    if re.search(r"\b(sk-[a-zA-Z0-9]{20,}|Bearer\s+[a-zA-Z0-9+/=]{20,})", text):
+        raise ValueError("Text contains suspected API key or token. Do not submit credentials.")
+
+    sanitized = _SENSITIVE_PATTERN.sub("[redacted]", text)
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length - 1] + "…"
+    return sanitized
 
 
 def _load_ontology() -> dict[str, Any]:
     """Load the frozen requirement ontology."""
     ontology_path = PROJECT_ROOT / "configs/frozen/baseline-v3/requirement-ontology.json"
     return json.loads(ontology_path.read_text(encoding="utf-8"))
+
+
+def _get_all_slots(ontology: dict[str, Any]) -> set[str]:
+    """Extract all valid slot IDs from ontology."""
+    slots = set()
+    for category_slots in ontology["ontology"].values():
+        slots.update(category_slots)
+    return slots
 
 
 def _build_ontology_context(ontology: dict[str, Any]) -> str:
@@ -28,6 +61,13 @@ def _system_prompt() -> str:
     """Load the interview system prompt."""
     prompt_path = PROJECT_ROOT / "prompts/demo/requirement-interview.txt"
     return prompt_path.read_text(encoding="utf-8")
+
+
+class ModelAdapter(Protocol):
+    """Protocol for model adapters."""
+    def complete(self, request: Any) -> Any:
+        """Complete a model request."""
+        ...
 
 
 @dataclass
@@ -54,18 +94,18 @@ class RequirementBaseline:
     assumptions: list[str]
     unresolved_items: list[str]
     slot_states: dict[str, dict[str, Any]]
-    confirmed_at: float = field(default_factory=time.time)
+    confirmed_at: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "original_request": self.original_request,
-            "refined_summary": self.refined_summary,
-            "requirements": self.requirements,
-            "acceptance_criteria": self.acceptance_criteria,
-            "constraints": self.constraints,
-            "excluded_scope": self.excluded_scope,
-            "assumptions": self.assumptions,
-            "unresolved_items": self.unresolved_items,
+            "original_request": _sanitize_text(self.original_request),
+            "refined_summary": _sanitize_text(self.refined_summary),
+            "requirements": [_sanitize_text(r, 500) for r in self.requirements],
+            "acceptance_criteria": [_sanitize_text(c, 500) for c in self.acceptance_criteria],
+            "constraints": [_sanitize_text(c, 500) for c in self.constraints],
+            "excluded_scope": [_sanitize_text(e, 500) for e in self.excluded_scope],
+            "assumptions": [_sanitize_text(a, 500) for a in self.assumptions],
+            "unresolved_items": [_sanitize_text(u, 500) for u in self.unresolved_items],
             "slot_states": self.slot_states,
             "confirmed_at": self.confirmed_at,
         }
@@ -101,198 +141,221 @@ class RequirementBaseline:
 class InterviewSession:
     """Manages an interactive requirement interview session."""
 
-    def __init__(self, original_request: str, client, model: str, ontology_version: str):
+    def __init__(self, original_request: str, adapter: ModelAdapter, ontology_version: str):
         """
         Initialize an interview session.
 
         Args:
             original_request: The original vague user request
-            client: OpenAI client instance
-            model: Model name to use (e.g., gpt-4o-mini)
+            adapter: A ModelAdapter instance (e.g., OpenAIResponsesAdapter)
             ontology_version: Version hash of the frozen ontology being used
         """
-        self.original_request = original_request
-        self.client = client
-        self.model = model
+        self.original_request = _sanitize_text(original_request)
+        self.adapter = adapter
         self.ontology_version = ontology_version
         self.ontology = _load_ontology()
+        self.valid_slots = _get_all_slots(self.ontology)
         self.turns: list[InterviewTurn] = []
         self.baseline: RequirementBaseline | None = None
         self.max_turns = 3
         self.min_turns = 2
-        self.actual_model: str | None = None
+        self.actual_models: list[str] = []
+        self.used_call_ids: set[str] = set()
 
-        # Build system message with ontology context
+        # Build messages for ModelRequest
         system_content = _system_prompt() + "\n\n" + _build_ontology_context(self.ontology)
 
-        # Wire history for Responses protocol
-        self.instructions = system_content
-        self.wire_input: list[dict[str, Any]] = []
-
-        # Add initial user message
-        initial_message = f"Original user request: {original_request}\n\nBegin the requirement interview. Ask your first clarifying question."
-        self.wire_input.append({"role": "user", "content": initial_message})
-
-    def _tool_schemas(self) -> list[dict[str, Any]]:
-        """Define the tools available to the interview agent."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "ask_clarification",
-                    "description": "Ask one clarifying question targeting specific ontology slots",
-                    "strict": True,
-                    "parameters": {
-                        "type": "object",
-                        "required": ["question", "slot_ids", "selection_reason"],
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "Natural language question for the user"
-                            },
-                            "slot_ids": {
-                                "type": "array",
-                                "description": "Ontology slot IDs this question explores",
-                                "items": {"type": "string"}
-                            },
-                            "selection_reason": {
-                                "type": "string",
-                                "description": "Brief explanation of why these slots are valuable now"
-                            }
-                        },
-                        "additionalProperties": False
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "finish_interview",
-                    "description": "Synthesize the confirmed requirement baseline (call after 2-3 turns)",
-                    "strict": True,
-                    "parameters": {
-                        "type": "object",
-                        "required": ["original_request", "refined_summary", "requirements", "acceptance_criteria",
-                                   "constraints", "excluded_scope", "assumptions", "unresolved_items", "slot_states"],
-                        "properties": {
-                            "original_request": {"type": "string"},
-                            "refined_summary": {"type": "string"},
-                            "requirements": {"type": "array", "items": {"type": "string"}},
-                            "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
-                            "constraints": {"type": "array", "items": {"type": "string"}},
-                            "excluded_scope": {"type": "array", "items": {"type": "string"}},
-                            "assumptions": {"type": "array", "items": {"type": "string"}},
-                            "unresolved_items": {"type": "array", "items": {"type": "string"}},
-                            "slot_states": {
-                                "type": "object",
-                                "description": "Map of slot_id to {state, value, evidence}",
-                                "additionalProperties": {
-                                    "type": "object",
-                                    "required": ["state"],
-                                    "properties": {
-                                        "state": {"type": "string", "enum": ["confirmed", "rejected", "unresolved", "unexplored"]},
-                                        "value": {"type": "string"},
-                                        "evidence": {"type": "string"}
-                                    },
-                                    "additionalProperties": False
-                                }
-                            }
-                        },
-                        "additionalProperties": False
-                    }
-                }
-            }
+        from reqagent.model import ModelMessage
+        self.messages: list[ModelMessage] = [
+            ModelMessage(role="system", text=system_content),
+            ModelMessage(role="user", text=f"Original user request: {self.original_request}\n\nBegin the requirement interview. Ask your first clarifying question.")
         ]
 
-    def generate_next_question(self) -> InterviewTurn:
-        """Generate the next clarifying question."""
+    def _tool_schemas(self) -> tuple:
+        """Define the tools available to the interview agent based on current turn count."""
+        from reqagent.model import ToolDefinition
+
+        tools = []
+
+        # Only allow ask_clarification if we haven't completed 3 turns
+        if len(self.turns) < self.max_turns:
+            tools.append(ToolDefinition(
+                name="ask_clarification",
+                description="Ask one clarifying question targeting specific ontology slots",
+                input_schema={
+                    "type": "object",
+                    "required": ["question", "slot_ids", "selection_reason"],
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "Natural language question for the user"
+                        },
+                        "slot_ids": {
+                            "type": "array",
+                            "description": "Ontology slot IDs this question explores",
+                            "items": {"type": "string"},
+                            "minItems": 1
+                        },
+                        "selection_reason": {
+                            "type": "string",
+                            "description": "Brief explanation of why these slots are valuable now"
+                        }
+                    },
+                    "additionalProperties": False
+                }
+            ))
+
+        # Allow finish_interview if we've completed at least 2 turns
+        if len(self.turns) >= self.min_turns:
+            tools.append(ToolDefinition(
+                name="finish_interview",
+                description="Synthesize the confirmed requirement baseline (call after 2-3 turns)",
+                input_schema={
+                    "type": "object",
+                    "required": ["original_request", "refined_summary", "requirements", "acceptance_criteria",
+                               "constraints", "excluded_scope", "assumptions", "unresolved_items", "slot_states"],
+                    "properties": {
+                        "original_request": {"type": "string"},
+                        "refined_summary": {"type": "string"},
+                        "requirements": {"type": "array", "items": {"type": "string"}},
+                        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                        "constraints": {"type": "array", "items": {"type": "string"}},
+                        "excluded_scope": {"type": "array", "items": {"type": "string"}},
+                        "assumptions": {"type": "array", "items": {"type": "string"}},
+                        "unresolved_items": {"type": "array", "items": {"type": "string"}},
+                        "slot_states": {
+                            "type": "object",
+                            "description": "Map of slot_id to {state, value, evidence}",
+                            "additionalProperties": {
+                                "type": "object",
+                                "required": ["state"],
+                                "properties": {
+                                    "state": {"type": "string", "enum": ["confirmed", "rejected", "unresolved", "unexplored"]},
+                                    "value": {"type": "string"},
+                                    "evidence": {"type": "string"}
+                                },
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "additionalProperties": False
+                }
+            ))
+
+        return tuple(tools)
+
+    def generate_next_question(self) -> InterviewTurn | None:
+        """Generate the next clarifying question. Returns None if interview is complete."""
         if len(self.turns) > self.max_turns:
             raise ValueError("Maximum interview turns exceeded")
 
-        # Call the model using Responses protocol
+        # Build ModelRequest
+        from reqagent.model import ModelRequest
+
+        request = ModelRequest(
+            messages=tuple(self.messages),
+            tools=self._tool_schemas(),
+            max_output_tokens=4000,
+            timeout_seconds=300
+        )
+
+        # Call the adapter
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                input=list(self.wire_input),
-                instructions=self.instructions,
-                tools=self._tool_schemas(),
-                tool_choice="required",
-                store=False
-            )
+            response = self.adapter.complete(request)
         except Exception as exc:
             raise ValueError(f"Model request failed: {exc}") from exc
 
         # Record actual model
-        self.actual_model = getattr(response, "model", None)
+        if response.actual_model:
+            self.actual_models.append(response.actual_model)
 
-        # Extract output
-        output = getattr(response, "output", [])
-        if not output:
-            raise ValueError("Model did not return any output")
+        # Verify exactly one tool call
+        if len(response.tool_calls) != 1:
+            raise ValueError(f"Expected exactly 1 tool call, got {len(response.tool_calls)}")
 
-        # Preserve full wire output for continuity
-        self.wire_input.extend([self._item_to_wire(item) for item in output])
+        tool_call = response.tool_calls[0]
 
-        # Find tool call
-        tool_call = None
-        for item in output:
-            item_type = getattr(item, "type", None)
-            if item_type == "function_call":
-                tool_call = item
-                break
+        # Check for duplicate call_id
+        if tool_call.call_id in self.used_call_ids:
+            raise ValueError(f"Duplicate call_id: {tool_call.call_id}")
+        self.used_call_ids.add(tool_call.call_id)
 
-        if not tool_call:
-            raise ValueError("Model did not call a tool")
+        # Add assistant message to history
+        from reqagent.model import ModelMessage
+        self.messages.append(ModelMessage(
+            role="assistant",
+            text=response.text,
+            tool_calls=(tool_call,)
+        ))
 
-        tool_name = getattr(tool_call, "name", None)
-        arguments_json = getattr(tool_call, "arguments", "{}")
-        call_id = getattr(tool_call, "call_id", "")
+        if tool_call.name == "ask_clarification":
+            # Validate slot_ids
+            slot_ids = tool_call.arguments.get("slot_ids", [])
+            if not slot_ids:
+                raise ValueError("ask_clarification requires at least one slot_id")
 
-        try:
-            tool_input = json.loads(arguments_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Tool arguments are not valid JSON") from exc
+            invalid_slots = [sid for sid in slot_ids if sid not in self.valid_slots]
+            if invalid_slots:
+                raise ValueError(f"Invalid slot IDs: {invalid_slots}. Must be from frozen ontology.")
 
-        if tool_name == "ask_clarification":
+            # Sanitize question and reason
+            question = _sanitize_text(tool_call.arguments["question"], 500)
+            selection_reason = _sanitize_text(tool_call.arguments["selection_reason"], 300)
+
             turn = InterviewTurn(
-                turn_id=call_id,
-                question=tool_input["question"],
-                selected_slot_ids=tool_input["slot_ids"],
-                selection_reason=tool_input["selection_reason"]
+                turn_id=tool_call.call_id,
+                question=question,
+                selected_slot_ids=slot_ids,
+                selection_reason=selection_reason
             )
             self.turns.append(turn)
             return turn
 
-        elif tool_name == "finish_interview":
+        elif tool_call.name == "finish_interview":
             if len(self.turns) < self.min_turns:
                 raise ValueError(f"Cannot finish interview before {self.min_turns} turns")
 
-            # Create baseline
+            # Validate original_request matches
+            if tool_call.arguments["original_request"] != self.original_request:
+                raise ValueError("original_request in baseline does not match session original_request")
+
+            # Validate slot_states
+            slot_states = tool_call.arguments.get("slot_states", {})
+            invalid_slots = [sid for sid in slot_states.keys() if sid not in self.valid_slots]
+            if invalid_slots:
+                raise ValueError(f"Invalid slot IDs in slot_states: {invalid_slots}")
+
+            # Validate list lengths and total size
+            args = tool_call.arguments
+            for key in ["requirements", "acceptance_criteria", "constraints", "excluded_scope", "assumptions", "unresolved_items"]:
+                items = args.get(key, [])
+                if not isinstance(items, list):
+                    raise ValueError(f"{key} must be a list")
+                if len(items) > 50:
+                    raise ValueError(f"{key} too long: {len(items)} items")
+
+            total_chars = sum(len(str(v)) for v in args.values())
+            if total_chars > 50000:
+                raise ValueError(f"Baseline too large: {total_chars} characters")
+
+            # Create baseline (not confirmed yet - user must explicitly confirm)
             self.baseline = RequirementBaseline(
-                original_request=tool_input["original_request"],
-                refined_summary=tool_input["refined_summary"],
-                requirements=tool_input["requirements"],
-                acceptance_criteria=tool_input["acceptance_criteria"],
-                constraints=tool_input["constraints"],
-                excluded_scope=tool_input["excluded_scope"],
-                assumptions=tool_input["assumptions"],
-                unresolved_items=tool_input["unresolved_items"],
-                slot_states=tool_input["slot_states"]
+                original_request=self.original_request,
+                refined_summary=_sanitize_text(args["refined_summary"], 500),
+                requirements=[_sanitize_text(r, 500) for r in args["requirements"]],
+                acceptance_criteria=[_sanitize_text(c, 500) for c in args["acceptance_criteria"]],
+                constraints=[_sanitize_text(c, 500) for c in args["constraints"]],
+                excluded_scope=[_sanitize_text(e, 500) for e in args["excluded_scope"]],
+                assumptions=[_sanitize_text(a, 500) for a in args["assumptions"]],
+                unresolved_items=[_sanitize_text(u, 500) for u in args["unresolved_items"]],
+                slot_states=slot_states,
+                confirmed_at=None  # Not confirmed yet
             )
 
             return None  # Signals completion
 
         else:
-            raise ValueError(f"Unknown tool: {tool_name}")
-
-    @staticmethod
-    def _item_to_wire(item: Any) -> dict[str, Any]:
-        """Convert response output item to wire format."""
-        if isinstance(item, dict):
-            return dict(item)
-        if hasattr(item, "model_dump"):
-            return item.model_dump(exclude_none=True)
-        return {key: getattr(item, key) for key in dir(item) if not key.startswith("_") and not callable(getattr(item, key))}
+            raise ValueError(f"Unknown tool: {tool_call.name}")
 
     def submit_answer(self, turn_id: str, answer: str) -> InterviewTurn | None:
         """
@@ -313,23 +376,30 @@ class InterviewSession:
         if turn.answer is not None:
             raise ValueError(f"Turn {turn_id} already answered")
 
+        # Sanitize and validate answer
+        answer = answer.strip()
+        if not answer:
+            raise ValueError("Answer cannot be empty")
+
+        answer = _sanitize_text(answer, 2000)
+
         # Record answer
         turn.answer = answer
 
-        # Add tool result to wire input
-        self.wire_input.append({
-            "type": "function_call_output",
-            "call_id": turn_id,
-            "output": answer
-        })
+        # Add tool result to messages
+        from reqagent.model import ModelMessage
+        self.messages.append(ModelMessage(
+            role="tool",
+            tool_results=({"call_id": turn_id, "output": answer},)
+        ))
 
         # Force finish after max turns
         if len(self.turns) >= self.max_turns:
             # Add instruction to finish
-            self.wire_input.append({
-                "role": "user",
-                "content": f"You have completed {self.max_turns} clarification rounds. Now call finish_interview to synthesize the requirement baseline."
-            })
+            self.messages.append(ModelMessage(
+                role="user",
+                text=f"You have completed {self.max_turns} clarification rounds. Now call finish_interview to synthesize the requirement baseline."
+            ))
 
         # Generate next question or finish
         return self.generate_next_question()
@@ -337,15 +407,15 @@ class InterviewSession:
     def to_transcript(self) -> dict[str, Any]:
         """Export interview transcript for artifact storage."""
         return {
-            "original_request": self.original_request,
+            "original_request": _sanitize_text(self.original_request),
             "ontology_version": self.ontology_version,
             "turns": [
                 {
                     "turn_id": t.turn_id,
-                    "question": t.question,
+                    "question": _sanitize_text(t.question, 500),
                     "selected_slot_ids": t.selected_slot_ids,
-                    "selection_reason": t.selection_reason,
-                    "answer": t.answer,
+                    "selection_reason": _sanitize_text(t.selection_reason, 300),
+                    "answer": _sanitize_text(t.answer, 2000) if t.answer else None,
                     "slot_updates": t.slot_updates,
                     "timestamp": t.timestamp
                 }

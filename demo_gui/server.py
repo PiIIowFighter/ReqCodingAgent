@@ -201,35 +201,24 @@ class TaskManager:
     def _start_interview(self, record: TaskRecord) -> None:
         """Start an interactive requirement interview."""
         from demo_gui.interview import InterviewSession
-        from openai import OpenAI
+        from reqagent.config import AgentConfig
+        from reqagent.openai_responses import OpenAIResponsesAdapter
 
         with self.lock:
             record.status = "interviewing"
             record.started_at = _now()
 
         try:
-            # Load config to get model and credentials
-            config_data = json.loads(self.config.read_text(encoding="utf-8"))
-            model_cfg = config_data.get("model", {})
-            base_url_env = model_cfg.get("base_url_env", "OPENAI_BASE_URL")
-            api_key_env = model_cfg.get("api_key_env", "OPENAI_API_KEY")
-            model_name = model_cfg.get("model", "gpt-4o-mini")
-
-            base_url = os.environ.get(base_url_env)
-            api_key = os.environ.get(api_key_env)
-            if not base_url or not api_key:
-                raise ValueError(f"Missing environment variables: {base_url_env}, {api_key_env}")
-
-            # Create OpenAI client
-            client = OpenAI(base_url=base_url, api_key=api_key, timeout=300.0, max_retries=0)
+            # Load config and create adapter
+            cfg = AgentConfig.load(self.config)
+            adapter = OpenAIResponsesAdapter(cfg)
 
             # Load ontology version
             ontology_path = PROJECT_ROOT / ONTOLOGY_SOURCE
-            ontology_data = json.loads(ontology_path.read_text(encoding="utf-8"))
             ontology_version = hashlib.sha256(ontology_path.read_bytes()).hexdigest()
 
             # Create interview session
-            session = InterviewSession(record.task, client, model_name, ontology_version)
+            session = InterviewSession(record.task, adapter, ontology_version)
 
             with self.lock:
                 record.interview_session = session
@@ -305,6 +294,11 @@ class TaskManager:
                 raise ValueError(f"Task is not awaiting confirmation (status: {record.status})")
             if not record.baseline:
                 raise ValueError("No baseline to confirm")
+            if record.process is not None:
+                raise ValueError("Coding agent already started")
+
+            # Mark baseline as confirmed
+            record.baseline.confirmed_at = time.time()
 
             # Save interview artifacts
             self.artifact_root.mkdir(parents=True, exist_ok=True)
@@ -320,8 +314,8 @@ class TaskManager:
             baseline_path = interview_dir / "confirmed-requirement-baseline.json"
             baseline_data = record.baseline.to_dict()
             baseline_data["ontology_version"] = record.interview_session.ontology_version
-            baseline_data["configured_model"] = record.interview_session.model
-            baseline_data["actual_model"] = record.interview_session.actual_model
+            baseline_data["configured_model"] = record.interview_session.adapter.config.model["model"]
+            baseline_data["actual_models"] = record.interview_session.actual_models
             baseline_path.write_text(json.dumps(baseline_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
             # Create task file
@@ -334,14 +328,26 @@ class TaskManager:
         threading.Thread(target=self._run_coding_agent, args=(record, task_file), daemon=True).start()
 
         return {"status": "running"}
+
+    def _run_coding_agent(self, record: TaskRecord, task_file: Path | None = None) -> None:
+        """Run the coding agent subprocess."""
         with self.lock:
             record.status, record.started_at = "running", _now()
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         before = {p.name for p in self.artifact_root.iterdir() if p.is_dir()}
+
+        # Build command
         argv = [self.python, "-m", "reqagent.cli", "run", "--workspace", str(self.workspace),
-                "--task", record.task, "--config", str(self.config), "--artifact-root", str(self.artifact_root)]
+                "--config", str(self.config), "--artifact-root", str(self.artifact_root)]
+
+        if task_file:
+            argv.extend(["--task-file", str(task_file)])
+        else:
+            argv.extend(["--task", record.task])
+
         if self.in_place:
             argv.append("--in-place")
+
         capture_dir = tempfile.mkdtemp(prefix="reqagent-demo-capture-")
         stdout_path = Path(capture_dir) / "stdout.txt"
         stderr_path = Path(capture_dir) / "stderr.txt"
