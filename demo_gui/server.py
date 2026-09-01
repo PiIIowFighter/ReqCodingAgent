@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,69 +10,120 @@ from urllib.parse import unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GUI_ROOT = Path(__file__).resolve().parent
-FROZEN_RELATIVE = Path("configs/frozen/baseline-v3")
+STATIC_ROOT = GUI_ROOT / "static"
+ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
+BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")
+ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
 
 
 class FrozenDataError(RuntimeError):
-    """Raised when frozen input cannot be verified safely."""
+    """Raised when the read-only presentation data is malformed."""
 
 
-def load_frozen_data(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
-    frozen_root = project_root / FROZEN_RELATIVE
-    ontology_path = frozen_root / "requirement-ontology.json"
-    baseline_path = frozen_root / "baseline.json"
+def _read_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise FrozenDataError(f"Unable to read {path.name}") from error
+    if not isinstance(value, dict):
+        raise FrozenDataError(f"Invalid object in {path.name}")
+    return value
+
+
+def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
+    ontology_path = project_root / ONTOLOGY_SOURCE
+    baseline_path = project_root / BASELINE_SOURCE
     try:
         ontology_bytes = ontology_path.read_bytes()
+    except OSError as error:
+        raise FrozenDataError("Unable to read requirement-ontology.json") from error
+    try:
         ontology = json.loads(ontology_bytes)
-        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise FrozenDataError("Frozen ontology inputs are unavailable or invalid") from error
-
-    actual = hashlib.sha256(ontology_bytes).hexdigest()
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise FrozenDataError("Invalid requirement-ontology.json") from error
+    baseline = _read_json(baseline_path)
     expected = baseline.get("requirement_ontology_sha256")
-    if not isinstance(expected, str) or actual != expected:
-        raise FrozenDataError("Frozen ontology SHA-256 verification failed")
+    actual = hashlib.sha256(ontology_bytes).hexdigest()
+    verified = isinstance(expected, str) and actual == expected
 
-    source_tree = ontology.get("ontology")
-    version = ontology.get("version")
+    response: dict[str, object] = {
+        "baseline": baseline.get("name", "baseline-v3"),
+        "version": ontology.get("version") if isinstance(ontology, dict) else None,
+        "source": ONTOLOGY_SOURCE.as_posix(),
+        "expected_sha256": expected,
+        "actual_sha256": actual,
+        "verified": verified,
+        "category_count": 0,
+        "slot_count": 0,
+        "tree": None,
+        "annotations": None,
+    }
+    if not verified:
+        response["integrity_error"] = "Frozen ontology integrity verification failed. Tree content is unavailable."
+        return response
+
+    source_tree = ontology.get("ontology") if isinstance(ontology, dict) else None
+    version = ontology.get("version") if isinstance(ontology, dict) else None
     if not isinstance(source_tree, dict) or not isinstance(version, str):
         raise FrozenDataError("Frozen ontology structure is invalid")
-    tree = []
-    for label, keys in source_tree.items():
-        if not isinstance(label, str) or not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
+
+    annotations = _read_json(ANNOTATION_SOURCE)
+    category_notes = annotations.get("categories")
+    slot_notes = annotations.get("slots")
+    if not isinstance(category_notes, dict) or not isinstance(slot_notes, dict):
+        raise FrozenDataError("Ontology annotations are invalid")
+
+    normalized = []
+    expected_slots: set[str] = set()
+    for category_id, slots in source_tree.items():
+        if not isinstance(category_id, str) or not isinstance(slots, list) or not all(isinstance(slot, str) for slot in slots):
             raise FrozenDataError("Frozen ontology structure is invalid")
-        tree.append({"label": label, "children": [{"key": key} for key in keys]})
-    return {"version": version, "sha256": actual, "tree": tree}
+        if category_id not in category_notes:
+            raise FrozenDataError("Ontology category annotations do not match the frozen tree")
+        children = []
+        for slot_id in slots:
+            expected_slots.add(slot_id)
+            if slot_id not in slot_notes:
+                raise FrozenDataError("Ontology slot annotations do not match the frozen tree")
+            children.append({"id": slot_id, "type": "slot"})
+        normalized.append({"id": category_id, "type": "category", "children": children})
+    if set(category_notes) != set(source_tree) or set(slot_notes) != expected_slots:
+        raise FrozenDataError("Ontology annotations do not correspond exactly to the frozen tree")
 
-
-def load_annotations() -> dict[str, object]:
-    try:
-        payload = json.loads((GUI_ROOT / "annotation.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise FrozenDataError("Annotation data is unavailable or invalid") from error
-    if not isinstance(payload.get("disclaimer"), str) or not isinstance(payload.get("annotations"), dict):
-        raise FrozenDataError("Annotation data is invalid")
-    return payload
+    response.update({
+        "category_count": len(normalized),
+        "slot_count": len(expected_slots),
+        "tree": {
+            "id": "coding-requirement-ontology",
+            "type": "root",
+            "children": normalized,
+        },
+        "annotations": annotations,
+    })
+    return response
 
 
 class DemoServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], ontology: dict[str, object], annotations: dict[str, object]):
+    def __init__(self, address: tuple[str, int], ontology: dict[str, object]):
         super().__init__(address, DemoHandler)
         self.ontology = ontology
-        self.annotations = annotations
 
 
 class DemoHandler(BaseHTTPRequestHandler):
-    server_version = "LocalViewer"
+    server_version = "ReqCodingAgentDemo"
     sys_version = ""
     static_files = {
         "/": ("index.html", "text/html; charset=utf-8"),
         "/settings": ("index.html", "text/html; charset=utf-8"),
-        "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-        "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+        "/settings/general": ("index.html", "text/html; charset=utf-8"),
+        "/settings/agent": ("index.html", "text/html; charset=utf-8"),
+        "/settings/runtime": ("index.html", "text/html; charset=utf-8"),
+        "/settings/ontology": ("index.html", "text/html; charset=utf-8"),
+        "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
+        "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
     }
 
     def log_message(self, format: str, *args: object) -> None:
@@ -83,45 +133,38 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
         path = unquote(parsed.path)
-        if parsed.query:
+        if parsed.query or ".." in Path(path).parts:
             self._not_found()
             return
         if path == "/api/health":
-            self._json({"status": "ok", "data": "verified", "read_only": True})
+            verified = bool(self.server.ontology.get("verified"))
+            self._json({"status": "ok" if verified else "integrity_failure", "read_only": True, "ontology_verified": verified}, HTTPStatus.OK if verified else HTTPStatus.CONFLICT)
         elif path == "/api/ontology":
-            self._json(self.server.ontology)
-        elif path == "/api/annotations":
-            self._json(self.server.annotations)
+            status = HTTPStatus.OK if self.server.ontology.get("verified") else HTTPStatus.CONFLICT
+            self._json(self.server.ontology, status)
         elif path in self.static_files:
             filename, content_type = self.static_files[path]
-            self._bytes((GUI_ROOT / filename).read_bytes(), content_type)
+            self._bytes((STATIC_ROOT / filename).read_bytes(), content_type)
         else:
             self._not_found()
 
     def do_HEAD(self) -> None:
         self._method_not_allowed()
 
-    def do_POST(self) -> None:
-        self._method_not_allowed()
-
-    def do_PUT(self) -> None:
-        self._method_not_allowed()
-
-    def do_PATCH(self) -> None:
-        self._method_not_allowed()
-
-    def do_DELETE(self) -> None:
-        self._method_not_allowed()
+    do_POST = do_HEAD
+    do_PUT = do_HEAD
+    do_PATCH = do_HEAD
+    do_DELETE = do_HEAD
 
     def _json(self, payload: object, status: int = HTTPStatus.OK) -> None:
-        self._bytes(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), "application/json; charset=utf-8", status)
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self._bytes(body, "application/json; charset=utf-8", status)
 
     def _bytes(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
         self.send_response(status)
@@ -144,25 +187,20 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 
 def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT) -> DemoServer:
-    ontology = load_frozen_data(project_root)
-    annotations = load_annotations()
-    ontology_keys = {child["key"] for group in ontology["tree"] for child in group["children"]}
-    if set(annotations["annotations"]) != ontology_keys:
-        raise FrozenDataError("Annotations do not correspond exactly to the frozen ontology")
-    return DemoServer((host, port), ontology, annotations)
+    return DemoServer((host, port), load_ontology(project_root))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Serve the read-only local requirement explorer")
-    parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1",), help="loopback host")
-    parser.add_argument("--port", default=8765, type=int, help="local TCP port")
+    parser = argparse.ArgumentParser(description="Serve the ReqCodingAgent read-only demo GUI")
+    parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1",))
+    parser.add_argument("--port", default=8765, type=int)
     args = parser.parse_args(argv)
     try:
         server = create_server(args.host, args.port)
     except FrozenDataError as error:
-        print(f"Cannot start: {error}", file=sys.stderr)
+        print(f"Cannot start: {error}")
         return 1
-    print(f"Requirement Explorer available at http://{args.host}:{args.port}")
+    print(f"ReqCodingAgent demo available at http://{args.host}:{args.port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

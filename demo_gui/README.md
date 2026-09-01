@@ -1,22 +1,21 @@
-# Local Requirement Explorer
+# ReqCodingAgent local demo GUI
 
-A dependency-free, read-only desktop-style viewer for the frozen requirement ontology.
+A dependency-free, read-only desktop workspace and Requirement Ontology viewer.
 
-## Run
-
-Python 3.11 or newer is required.
+## Start
 
 ```sh
-python -m demo_gui.server
+python demo_gui/server.py
 ```
 
-Open `http://127.0.0.1:8765`. Use `--port` to select another port.
+Open:
 
-The server verifies the ontology SHA-256 against `configs/frozen/baseline-v3/baseline.json` before listening. A mismatch stops startup. It serves only an explicit static allowlist and three GET-only JSON endpoints; it does not execute requests or write project data.
+- `http://127.0.0.1:8765/`
+- `http://127.0.0.1:8765/settings/ontology`
 
-## Check
+The server binds only to `127.0.0.1`. It verifies the ontology SHA-256 against the frozen `baseline-v3` metadata before exposing the tree, serves an explicit static allowlist, and provides only two read-only APIs:
 
-```sh
-python -m unittest tests.test_demo_gui -v
-python -m py_compile demo_gui/server.py
-```
+- `GET /api/health`
+- `GET /api/ontology`
+
+This stage does not connect an Agent runtime, execute commands, or display evaluation results.
