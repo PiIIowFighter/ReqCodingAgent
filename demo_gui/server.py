@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -182,22 +184,28 @@ class TaskManager:
         before = {p.name for p in self.artifact_root.iterdir() if p.is_dir()}
         argv = [self.python, "-m", "reqagent.cli", "run", "--workspace", str(self.workspace),
                 "--task", record.task, "--config", str(self.config), "--artifact-root", str(self.artifact_root)]
+        capture_dir = tempfile.mkdtemp(prefix="reqagent-demo-capture-")
+        stdout_path = Path(capture_dir) / "stdout.txt"
+        stderr_path = Path(capture_dir) / "stderr.txt"
         try:
             environment = os.environ.copy()
             source_root = str(self.project_root / "src")
             environment["PYTHONPATH"] = source_root + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
-            process = subprocess.Popen(argv, cwd=self.project_root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       text=True, encoding="utf-8", errors="replace")
-            with self.lock:
-                record.process = process
-            while process.poll() is None:
-                if record.run_id is None:
-                    created = sorted((p for p in self.artifact_root.iterdir() if p.is_dir() and p.name not in before), key=lambda p: p.stat().st_mtime)
-                    if created:
-                        with self.lock:
-                            record.run_id = created[-1].name
-                time.sleep(0.05)
-            stdout, _ = process.communicate()
+            with open(stdout_path, "w", encoding="utf-8", errors="replace") as stdout_fp, open(
+                stderr_path, "w", encoding="utf-8", errors="replace"
+            ) as stderr_fp:
+                process = subprocess.Popen(argv, cwd=self.project_root, env=environment, stdout=stdout_fp, stderr=stderr_fp)
+                with self.lock:
+                    record.process = process
+                while process.poll() is None:
+                    if record.run_id is None:
+                        created = sorted((p for p in self.artifact_root.iterdir() if p.is_dir() and p.name not in before), key=lambda p: p.stat().st_mtime)
+                        if created:
+                            with self.lock:
+                                record.run_id = created[-1].name
+                    time.sleep(0.05)
+                returncode = process.returncode
+            stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
             try:
                 payload = json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else None
             except (json.JSONDecodeError, IndexError):
@@ -208,14 +216,17 @@ class TaskManager:
                 run_id = created[-1].name if created else None
             with self.lock:
                 record.run_id = run_id
-                if process.returncode == 0 and isinstance(payload, dict):
+                if returncode == 0 and isinstance(payload, dict):
                     record.result, record.status = payload, "completed"
                 else:
-                    record.status, record.error = "failed", f"Agent process exited with code {process.returncode}."
+                    detail = _safe_text((stderr_path.read_text(encoding="utf-8", errors="replace").splitlines() or [""])[-1], 160)
+                    record.status = "failed"
+                    record.error = f"Agent process exited with code {returncode}." + (f" {detail}" if detail else "")
         except (OSError, subprocess.SubprocessError):
             with self.lock:
                 record.status, record.error = "failed", "Agent process could not be started or completed."
         finally:
+            shutil.rmtree(capture_dir, ignore_errors=True)
             with self.lock:
                 record.process, record.finished_at = None, _now()
                 if self.active_id == record.id:

@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import importlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -164,6 +165,41 @@ class DemoGuiTests(unittest.TestCase):
             payload = self.module.load_ontology(root)
             self.assertFalse(payload["verified"])
             self.assertIsNone(payload["tree"])
+
+
+class SubprocessCaptureTests(unittest.TestCase):
+    def test_large_stdout_does_not_block_with_file_redirect(self):
+        script = Path(tempfile.mkdtemp()) / "verbose_agent.py"
+        try:
+            script.write_text(
+                "import json, sys\n"
+                "sys.stdout.write('x' * 131072)\n"
+                "sys.stdout.write('\\n')\n"
+                "print(json.dumps({'run_id': 'capture-test', 'stop_reason': 'submitted', 'submitted': {'summary': 'ok'}, 'patch': {'files': 0, 'additions': 0, 'deletions': 0, 'bytes': 0}}))\n",
+                encoding="utf-8",
+            )
+            capture_dir = tempfile.mkdtemp(prefix="reqagent-demo-capture-test-")
+            stdout_path = Path(capture_dir) / "stdout.txt"
+            stderr_path = Path(capture_dir) / "stderr.txt"
+            try:
+                with open(stdout_path, "w", encoding="utf-8", errors="replace") as stdout_fp, open(
+                    stderr_path, "w", encoding="utf-8", errors="replace"
+                ) as stderr_fp:
+                    process = subprocess.Popen([sys.executable, str(script)], stdout=stdout_fp, stderr=stderr_fp)
+                    deadline = time.monotonic() + 15
+                    while process.poll() is None:
+                        if time.monotonic() > deadline:
+                            process.kill()
+                            self.fail("subprocess blocked on large stdout")
+                        time.sleep(0.05)
+                    self.assertEqual(process.returncode, 0)
+                stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+                payload = json.loads(stdout.strip().splitlines()[-1])
+                self.assertEqual(payload["run_id"], "capture-test")
+            finally:
+                shutil.rmtree(capture_dir, ignore_errors=True)
+        finally:
+            shutil.rmtree(script.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":
