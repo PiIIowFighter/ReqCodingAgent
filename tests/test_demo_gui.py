@@ -225,6 +225,19 @@ class DemoGuiTests(unittest.TestCase):
         self.assertIn(b"+VALUE = 2", download)
         self.assertEqual((self.workspace / "hello.py").read_text(encoding="utf-8"), "VALUE = 1\n")
 
+    def test_stop_endpoint_releases_active_task(self):
+        task_id = "f" * 32
+        record = self.module.TaskRecord(task_id, "interview task", status="awaiting_user")
+        with self.httpd.tasks.lock:
+            self.httpd.tasks.tasks[task_id] = record
+            self.httpd.tasks.active_id = task_id
+        status, _, body = self.request("POST", f"/api/tasks/{task_id}/stop", {})
+        self.assertEqual(status, 202)
+        self.assertEqual(json.loads(body), {"status": "stopped"})
+        self.assertEqual(self.httpd.tasks.get(task_id).status, "stopped")
+        self.assertFalse(json.loads(self.request("GET", "/api/runtime")[2])["active"])
+        self.assertEqual(self.request("POST", f"/api/tasks/{task_id}/stop", {})[0], 400)
+
     def test_task_input_security_and_methods(self):
         self.assertEqual(self.request("POST", "/api/tasks", {"task": "", "workspace": "x"})[0], 400)
         self.assertEqual(self.request("POST", "/api/workspace", {"path": ""})[0], 400)
@@ -243,7 +256,7 @@ class DemoGuiTests(unittest.TestCase):
         for text in ("Evaluation", "General", "Model &amp; Runtime"):
             self.assertNotIn(text, html)
         script = self.request("GET", "/static/app.js")[2].decode("utf-8")
-        for hook in ("localStorage", "history.pushState", "ArrowDown", "aria-expanded", "/api/tasks", "/api/workspace", "next_offset"):
+        for hook in ("localStorage", "history.pushState", "ArrowDown", "aria-expanded", "/api/tasks", "/api/workspace", "/stop", "next_offset"):
             self.assertIn(hook, script)
         self.assertIn('role="tree"', html)
         self.assertNotIn("cdn.", html.lower())

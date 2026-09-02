@@ -153,6 +153,14 @@
     badge.textContent = statusMap[status] || status[0].toUpperCase() + status.slice(1);
     badge.className = "task-status " + status;
   }
+  function updateStopButton(task) {
+    const button = $("#stop-task");
+    if (!button) return;
+    const active = !["completed", "failed", "stopped"].includes(task.status);
+    button.hidden = !active;
+    button.disabled = false;
+    button.textContent = "停止任务";
+  }
   const PHASES = [["需求识别", "intake"], ["主动澄清", "refinement"], ["需求基线", "baseline"], ["仓库调查", "investigation"], ["代码修改", "implementation"], ["验证", "verification"], ["完成", "complete"]];
   const PHASE_LABELS = Object.fromEntries(PHASES.map(([label, key]) => [key, label]));
   const REASON_LABELS = {
@@ -228,7 +236,7 @@
         api(`/api/tasks/${activeTask}`),
         api(`/api/tasks/${activeTask}/events?after=${eventOffset}`)
       ]);
-      setStatus(task.status); renderPhases(task, feed.events); renderInitialRoute(task);
+      setStatus(task.status); updateStopButton(task); renderPhases(task, feed.events); renderInitialRoute(task);
       feed.events.forEach(event => {
         if (event.kind === "route_decision" && routeShown && !seenPhases.has("baseline")) return;
         addEvent(event);
@@ -244,8 +252,11 @@
         showBaselineConfirmation(task);
         return;
       } else if (["completed", "failed", "stopped"].includes(task.status)) {
+        await showResult(task);
+        activeTask = null;
         updateComposerState();
-        await showResult(task); return;
+        updateStopButton(task);
+        return;
       }
 
       pollTimer = setTimeout(refreshTask, 700);
@@ -367,6 +378,22 @@
     }
     card.scrollIntoView({behavior: "smooth", block: "nearest"});
   }
+  async function stopTask() {
+    if (!activeTask) return;
+    const button = $("#stop-task");
+    if (button) { button.disabled = true; button.textContent = "正在停止…"; }
+    try {
+      await api(`/api/tasks/${activeTask}/stop`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})
+      });
+      toast("已请求停止任务");
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(refreshTask, 150);
+    } catch (error) {
+      toast(error.message);
+      if (button) { button.disabled = false; button.textContent = "停止任务"; }
+    }
+  }
   async function submitTask() {
     if (!workspaceReady) { openWorkspaceDialog("submit"); return; }
     const task = $("#task-input").value.trim();
@@ -383,6 +410,7 @@
     }
   }
   $("#send-task").addEventListener("click", submitTask);
+  $("#stop-task").addEventListener("click", stopTask);
   $("#task-input").addEventListener("keydown", event => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submitTask(); }
   });

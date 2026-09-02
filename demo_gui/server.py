@@ -165,6 +165,8 @@ class TaskRecord:
     run_id: str | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+    stop_reason: str | None = None
+    cancel_requested: bool = False
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
     # Interview fields
     interview_session: Any | None = field(default=None, repr=False)  # InterviewSession instance
@@ -246,6 +248,8 @@ class TaskManager:
         from reqagent.config import AgentConfig
 
         with self.lock:
+            if record.cancel_requested:
+                return
             record.status = "interviewing"
             record.started_at = _now()
 
@@ -272,6 +276,8 @@ class TaskManager:
             turn = session.generate_next_question()
 
             with self.lock:
+                if record.cancel_requested:
+                    return
                 record.current_turn = turn
                 record.status = "awaiting_user"
 
@@ -307,9 +313,15 @@ class TaskManager:
     def _process_answer(self, record: TaskRecord, turn_id: str, answer: str) -> None:
         """Process user answer and generate next question or baseline."""
         try:
+            with self.lock:
+                if record.cancel_requested:
+                    return
             session = record.interview_session
             next_turn = session.submit_answer(turn_id, answer)
 
+            with self.lock:
+                if record.cancel_requested:
+                    return
             if next_turn is None:
                 # Interview complete, baseline formed
                 with self.lock:
@@ -323,6 +335,8 @@ class TaskManager:
 
         except Exception as exc:
             with self.lock:
+                if record.cancel_requested:
+                    return
                 record.status = "failed"
                 record.error = f"Interview processing failed: {_safe_text(str(exc), 200)}"
                 record.finished_at = _now()
@@ -374,9 +388,35 @@ class TaskManager:
 
         return {"status": "running"}
 
+    def stop(self, task_id: str) -> dict[str, Any]:
+        """Stop an active interview or coding-agent task."""
+        with self.lock:
+            record = self.tasks.get(task_id)
+            if not record:
+                raise ValueError("Unknown task")
+            if record.status in TERMINAL_STATES:
+                raise ValueError(f"Task is already finished (status: {record.status})")
+            record.cancel_requested = True
+            record.stop_reason = "user_stopped"
+            record.status = "stopped"
+            record.error = "Task stopped by user."
+            record.finished_at = _now()
+            if self.active_id == record.id:
+                self.active_id = None
+            process = record.process
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        return {"status": "stopped"}
+
     def _run_coding_agent(self, record: TaskRecord, task_file: Path | None = None) -> None:
         """Run the coding agent subprocess."""
         with self.lock:
+            if record.cancel_requested:
+                return
             record.status, record.started_at = "running", _now()
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         before = {p.name for p in self.artifact_root.iterdir() if p.is_dir()}
@@ -425,8 +465,12 @@ class TaskManager:
                 run_id = created[-1].name if created else None
             with self.lock:
                 record.run_id = run_id
-                if returncode == 0 and isinstance(payload, dict):
+                if record.cancel_requested:
+                    record.status = "stopped"
+                    record.stop_reason = "user_stopped"
+                elif returncode == 0 and isinstance(payload, dict):
                     record.status = status_for_stop_reason(payload.get("stop_reason"))
+                    record.stop_reason = payload.get("stop_reason") if isinstance(payload.get("stop_reason"), str) else None
                     record.result = payload
                 else:
                     detail = _safe_text((stderr_path.read_text(encoding="utf-8", errors="replace").splitlines() or [""])[-1], 160)
@@ -438,7 +482,9 @@ class TaskManager:
         finally:
             shutil.rmtree(capture_dir, ignore_errors=True)
             with self.lock:
-                record.process, record.finished_at = None, _now()
+                record.process = None
+                if record.finished_at is None:
+                    record.finished_at = _now()
                 if self.active_id == record.id:
                     self.active_id = None
 
@@ -449,7 +495,7 @@ class TaskManager:
         verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
         response = {
             "id": record.id, "task": record.task, "status": record.status, "created_at": record.created_at,
-            "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": result.get("stop_reason"),
+            "started_at": record.started_at, "finished_at": record.finished_at, "stop_reason": record.stop_reason or result.get("stop_reason"),
             "summary": _safe_text(submitted.get("summary"), 1200) if submitted else None,
             "limitations": _safe_text(submitted.get("limitations"), 600) if submitted else None,
             "patch": {key: patch.get(key, 0) for key in ("files", "additions", "deletions", "bytes")},
@@ -697,7 +743,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             self._set_workspace(); return
 
         # Check for interview endpoints
-        if match := re.fullmatch(r"/api/tasks/([a-f0-9]{32})/(answer|confirm)", parsed.path):
+        if match := re.fullmatch(r"/api/tasks/([a-f0-9]{32})/(answer|confirm|stop)", parsed.path):
             self._interview_action(match.group(1), match.group(2)); return
 
         if parsed.path != "/api/tasks":
@@ -798,6 +844,11 @@ class DemoHandler(BaseHTTPRequestHandler):
                 if payload:  # Confirm should have empty body
                     self._json({"error": "body must be empty for confirm"}, 400); return
                 result = self.server.tasks.confirm_baseline(task_id)
+                self._json(result, 202)
+            elif action == "stop":
+                if payload:
+                    self._json({"error": "body must be empty for stop"}, 400); return
+                result = self.server.tasks.stop(task_id)
                 self._json(result, 202)
         except ValueError as error:
             self._json({"error": str(error)}, 400); return
