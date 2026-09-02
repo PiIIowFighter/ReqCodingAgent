@@ -161,6 +161,13 @@
     button.disabled = false;
     button.textContent = "停止任务";
   }
+  function stageLabel(task, events) {
+    if (["completed", "failed", "stopped"].includes(task.status)) return "已结束";
+    if (task.status === "awaiting_user" || task.status === "interviewing") return "需求澄清";
+    if (task.status === "awaiting_confirmation") return "需求基线待确认";
+    const latest = [...events].reverse().find(event => event.phase);
+    return latest ? (PHASE_LABELS[latest.phase] || latest.phase) : (task.status === "running" ? "执行中" : "准备中");
+  }
   const PHASES = [["需求识别", "intake"], ["主动澄清", "refinement"], ["需求基线", "baseline"], ["仓库调查", "investigation"], ["代码修改", "implementation"], ["验证", "verification"], ["完成", "complete"]];
   const PHASE_LABELS = Object.fromEntries(PHASES.map(([label, key]) => [key, label]));
   const REASON_LABELS = {
@@ -180,17 +187,8 @@
   };
 
   function renderPhases(task, events) {
-    seenPhases.add("intake");
-    if (task.route_decision?.mode === "refine") seenPhases.add("refinement");
-    if (["interviewing", "awaiting_user"].includes(task.status)) seenPhases.add("refinement");
-    if (task.status === "awaiting_confirmation") seenPhases.add("baseline");
     events.forEach(event => { if (event.phase) seenPhases.add(event.phase); });
-    const seen = seenPhases;
-    const done = task.status === "completed" || task.stop_reason === "submitted";
-    $("#phase-nav").innerHTML = PHASES.map(([label, key]) => {
-      const active = seen.has(key) || (key === "refinement" && ["interviewing", "awaiting_user", "awaiting_confirmation"].includes(task.status));
-      return `<li class="phase ${active ? "active" : ""} ${done && key === "complete" ? "active" : ""}"><span>${escapeText(label)}</span></li>`;
-    }).join("");
+    $("#task-stage").textContent = stageLabel(task, events);
   }
   function renderCoverage(target, coverage) {
     if (!coverage) { target.innerHTML = ""; return; }
@@ -242,8 +240,6 @@
         addEvent(event);
       });
       eventOffset = feed.next_offset;
-      if (task.requirement_coverage) { renderCoverage($("#coverage-panel"), task.requirement_coverage); renderCoverage($("#baseline-coverage"), task.requirement_coverage); }
-
       // Handle interview states
       if (task.status === "awaiting_user") {
         showInterviewQuestion(task);
