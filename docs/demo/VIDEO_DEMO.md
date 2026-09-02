@@ -21,7 +21,7 @@ Set `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the shell without displaying their
 
 ```powershell
 py -3.11 -m http.server 8088 --directory D:\ReqAgentDemo\stock-search-final
-py -3.11 demo_gui/server.py --host 127.0.0.1 --port 8765 --workspace D:\ReqAgentDemo\stock-search-final --config $recordingConfig --demo-scenario stock-search
+py -3.11 -m demo_gui.server --host 127.0.0.1 --port 8765 --workspace D:\ReqAgentDemo\stock-search-final --config $recordingConfig --demo-scenario stock-search
 ```
 
 Open `http://127.0.0.1:8088` and `http://127.0.0.1:8765` before recording. Do one private rehearsal first; use a newly prepared directory for the final take.

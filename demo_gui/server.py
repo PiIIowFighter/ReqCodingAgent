@@ -22,6 +22,15 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GUI_ROOT = Path(__file__).resolve().parent
+
+# Keep both supported entry points equivalent:
+#   python -m demo_gui.server
+#   python demo_gui/server.py
+# Direct script execution otherwise places only ``demo_gui/`` on sys.path, so
+# the deferred ``from demo_gui.interview`` import fails after a task is queued.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 STATIC_ROOT = GUI_ROOT / "static"
 ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
 BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")

@@ -7,13 +7,13 @@ A dependency-free local workspace for running the repository-native Coding Agent
 The workspace must be an existing clean Git repository:
 
 ```sh
-python demo_gui/server.py --workspace /path/to/clean/repository
+python -m demo_gui.server --workspace /path/to/clean/repository
 ```
 
 The default runtime configuration is `configs/agent/live-local-proxy.json`. For a deterministic offline run:
 
 ```sh
-python demo_gui/server.py --workspace /path/to/clean/repository --config configs/agent/offline-scripted.json
+python -m demo_gui.server --workspace /path/to/clean/repository --config configs/agent/offline-scripted.json
 ```
 
 Open `http://127.0.0.1:8765/`. The server binds only to loopback.

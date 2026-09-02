@@ -90,6 +90,22 @@ class DemoGuiTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail("task did not finish")
 
+    def test_direct_script_entrypoint_can_import_interview_package(self):
+        server_path = ROOT / "demo_gui/server.py"
+        command = (
+            "import runpy; "
+            f"runpy.run_path({str(server_path)!r}, run_name='direct_entrypoint_test'); "
+            "import demo_gui.interview"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", command],
+            cwd=self.temp.name,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_health_runtime_and_ontology(self):
         status, _, body = self.request("GET", "/api/health")
         self.assertEqual(status, 200)
