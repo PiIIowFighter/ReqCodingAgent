@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,3 +50,20 @@ def test_frozen_ontology_is_domain_neutral_and_presentation_profile_does_not_pre
     assert "stock-search" not in system_prompt
     assert "test_site.sh" not in system_prompt
     assert "do not prefill domain facts" in system_prompt
+
+
+def test_stock_demo_script_runs_directly():
+    result = subprocess.run(
+        [sys.executable, "demo_gui/stock_demo_offline.py"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["route"] == "refine"
+    assert payload["turns"] == 3
+    assert payload["stop_reason"] == "submitted"
+    assert payload["patch_nonempty"] is True
+    assert payload["test"] == "sh test_site.sh"

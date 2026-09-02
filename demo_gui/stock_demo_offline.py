@@ -7,7 +7,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from demo_gui.prepare_stock_demo import prepare
 from reqagent.adaptive import route_task
 from reqagent.config import AgentConfig
@@ -40,7 +42,7 @@ def run(target: Path | None = None) -> dict:
     with tempfile.TemporaryDirectory(prefix="stock-demo-offline-") as temp:
         project = target or Path(temp) / "project"
         prepare(project)
-        config = AgentConfig.load(Path(__file__).resolve().parents[1] / "configs/agent/offline-scripted.json")
+        config = AgentConfig.load(PROJECT_ROOT / "configs/agent/offline-scripted.json")
         workspace = GitWorkspace.create(project, in_place=True)
         registry = build_registry(workspace, config.raw, command_executor=LocalTestCommandExecutor(), artifact_dir=project / ".commands", requirement_refinement="auto", task=TASK)
         if route_task(TASK).mode != "refine":
