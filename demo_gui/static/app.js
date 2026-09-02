@@ -4,7 +4,7 @@
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
   const root = document.documentElement;
   let ontology = null, selectedId = "coding-requirement-ontology";
-  let activeTask = null, eventOffset = 0, pollTimer = null, seenPhases = new Set();
+  let activeTask = null, eventOffset = 0, pollTimer = null, seenPhases = new Set(), routeShown = false;
   let workspacePath = null, workspaceReady = false, workspaceDialogReason = "new-task";
   const escapeText = value => { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; };
 
@@ -127,7 +127,7 @@
   });
 
   function resetTask() {
-    activeTask = null; eventOffset = 0; seenPhases = new Set(); clearTimeout(pollTimer);
+    activeTask = null; eventOffset = 0; seenPhases = new Set(); routeShown = false; clearTimeout(pollTimer);
     $("#empty-state").hidden = false; $("#task-view").hidden = true; $("#result-card").hidden = true;
     $("#timeline").replaceChildren(); $("#patch-preview").textContent = "";
     $("#task-input").value = "";
@@ -141,20 +141,41 @@
   function setStatus(status) {
     const badge = $("#task-status");
     const statusMap = {
-      "queued": "Queued",
+      "queued": "排队中",
       "interviewing": "访谈中",
       "awaiting_user": "等待回答",
       "awaiting_confirmation": "待确认",
-      "running": "Running",
-      "completed": "Completed",
-      "failed": "Failed"
+      "running": "执行中",
+      "completed": "已完成",
+      "failed": "失败"
       ,"stopped": "已停止"
     };
     badge.textContent = statusMap[status] || status[0].toUpperCase() + status.slice(1);
     badge.className = "task-status " + status;
   }
   const PHASES = [["需求识别", "intake"], ["主动澄清", "refinement"], ["需求基线", "baseline"], ["仓库调查", "investigation"], ["代码修改", "implementation"], ["验证", "verification"], ["完成", "complete"]];
+  const PHASE_LABELS = Object.fromEntries(PHASES.map(([label, key]) => [key, label]));
+  const REASON_LABELS = {
+    weak_language: "表述较弱", abstract_behavior: "行为仍抽象", unresolved_reference: "存在未解析指代",
+    goal: "缺少明确目标", target: "缺少代码范围", observable_behavior: "缺少可观察行为", validation: "缺少验证方式",
+    detailed_behavior_contract: "任务已包含完整行为契约", task_is_actionable: "任务已可直接执行"
+  };
+  const SKILL_LABELS = {reference_resolution: "指代消解", specificity_expansion: "具体性扩展", omission_recovery: "缺失维度恢复"};
+  const TOOL_LABELS = {
+    list_files: "查看文件 · list_files", read_file: "读取文件 · read_file", search_text: "检索代码 · search_text",
+    record_requirement_brief: "记录需求基线 · record_requirement_brief", apply_patch: "应用补丁 · apply_patch",
+    run_command: "执行验证 · run_command", submit: "提交结果 · submit"
+  };
+  const SLOT_STATUS_LABELS = {
+    confirmed: "已确认", rejected: "已排除", unresolved: "待解决", unexplored: "未探索",
+    explicit: "用户明确", inferred: "仓库推断", defaulted: "安全默认"
+  };
+
   function renderPhases(task, events) {
+    seenPhases.add("intake");
+    if (task.route_decision?.mode === "refine") seenPhases.add("refinement");
+    if (["interviewing", "awaiting_user"].includes(task.status)) seenPhases.add("refinement");
+    if (task.status === "awaiting_confirmation") seenPhases.add("baseline");
     events.forEach(event => { if (event.phase) seenPhases.add(event.phase); });
     const seen = seenPhases;
     const done = task.status === "completed" || task.stop_reason === "submitted";
@@ -165,28 +186,39 @@
   }
   function renderCoverage(target, coverage) {
     if (!coverage) { target.innerHTML = ""; return; }
-    target.innerHTML = `<div class="coverage-heading"><strong>需求维度覆盖</strong><span>${coverage.covered} / ${coverage.total}</span></div><div class="coverage-grid">${coverage.categories.map(category => `<section><h4>${escapeText(category.name_zh)} <small>${category.slots.length}</small></h4>${category.slots.map(slot => `<div class="coverage-slot ${slot.status}"><span>${escapeText(slot.name_zh)}</span><code>${escapeText(slot.id)}</code><em>${escapeText(slot.status)}</em>${slot.selection_reason ? `<p>${escapeText(slot.selection_reason)}</p>` : ""}</div>`).join("")}</section>`).join("")}</div><p class="coverage-note">${escapeText(coverage.note)}</p>`;
+    target.innerHTML = `<div class="coverage-heading"><strong>需求维度覆盖</strong><span>${coverage.covered} / ${coverage.total}</span></div><div class="coverage-grid">${coverage.categories.map(category => `<section><h4>${escapeText(category.name_zh)} <small>${category.slots.length}</small></h4>${category.slots.map(slot => `<div class="coverage-slot ${slot.status}"><span>${escapeText(slot.name_zh)}</span><code>${escapeText(slot.id)}</code><em>${escapeText(SLOT_STATUS_LABELS[slot.status] || slot.status)}</em>${slot.selection_reason ? `<p>${escapeText(slot.selection_reason)}</p>` : ""}</div>`).join("")}</section>`).join("")}</div><p class="coverage-note">${escapeText(coverage.note)}</p>`;
   }
+
+  function renderInitialRoute(task) {
+    if (routeShown || !task.route_decision?.mode) return;
+    addEvent({...task.route_decision, kind: "route_decision", phase: "intake"});
+    routeShown = true;
+  }
+
   function addEvent(event) {
     const item = document.createElement("li");
     let label, detail;
     if (event.kind === "route_decision") {
-      label = event.mode === "refine" ? "需求细化已启动" : "快速执行模式";
-      const reasonsText = event.reasons.length ? event.reasons.join(", ") : "无";
-      const skillsText = event.selected_skills.length ? event.selected_skills.join(", ") : "无";
+      const afterBaseline = event.source !== "interactive_router" && seenPhases.has("baseline") && event.mode === "fast";
+      label = afterBaseline ? "需求基线已确认，进入执行" : (event.mode === "refine" ? "判断需要需求细化" : "判断可直接执行");
+      const reasons = event.reasons || [], skills = event.selected_skills || [];
+      const reasonsText = reasons.length ? reasons.map(reason => REASON_LABELS[reason] || reason).join("、") : "无";
+      const skillsText = skills.length ? skills.map(skill => SKILL_LABELS[skill] || skill).join("、") : "无";
       detail = `模式: ${event.mode}; 原因: ${reasonsText}; 选择技能: ${skillsText}`;
     } else if (event.kind === "requirement_brief_recorded") {
       label = "需求基线已形成";
       detail = "需求细化完成，进入代码实现阶段";
     } else if (event.kind === "tool_result") {
-      label = event.tool;
+      label = TOOL_LABELS[event.tool] || event.tool;
       detail = event.summary;
     } else {
-      label = "Model response";
-      detail = event.text || (event.tools.length ? "Requested " + event.tools.join(", ") : "Response completed.");
+      label = "模型响应";
+      detail = event.text || (event.tools.length
+        ? "请求调用：" + event.tools.map(tool => TOOL_LABELS[tool] || tool).join("、")
+        : "模型响应已完成。");
     }
     item.className = "timeline-item " + (event.ok === false ? "failed" : "");
-    item.innerHTML = `<span class="timeline-dot"></span><div><div class="timeline-meta"><strong>${escapeText(label)}</strong><span>${escapeText(event.phase || "")}</span></div><p>${escapeText(detail)}</p></div>`;
+    item.innerHTML = `<span class="timeline-dot"></span><div><div class="timeline-meta"><strong>${escapeText(label)}</strong><span>${escapeText(PHASE_LABELS[event.phase] || event.phase || "")}</span></div><p>${escapeText(detail)}</p></div>`;
     $("#timeline").append(item);
   }
   async function refreshTask() {
@@ -196,8 +228,12 @@
         api(`/api/tasks/${activeTask}`),
         api(`/api/tasks/${activeTask}/events?after=${eventOffset}`)
       ]);
-      setStatus(task.status); feed.events.forEach(addEvent); eventOffset = feed.next_offset;
-      renderPhases(task, feed.events);
+      setStatus(task.status); renderPhases(task, feed.events); renderInitialRoute(task);
+      feed.events.forEach(event => {
+        if (event.kind === "route_decision" && routeShown && !seenPhases.has("baseline")) return;
+        addEvent(event);
+      });
+      eventOffset = feed.next_offset;
       if (task.requirement_coverage) { renderCoverage($("#coverage-panel"), task.requirement_coverage); renderCoverage($("#baseline-coverage"), task.requirement_coverage); }
 
       // Handle interview states
@@ -315,17 +351,17 @@
   async function showResult(task) {
     const card = $("#result-card"); card.hidden = false;
     const isSubmitted = task.stop_reason === "submitted";
-    $("#result-title").textContent = isSubmitted ? "Agent finished" : (task.status === "completed" ? "Agent stopped" : "Agent failed");
+    $("#result-title").textContent = isSubmitted ? "Agent 已完成" : (task.status === "stopped" ? "Agent 已停止" : "Agent 执行失败");
     $("#stop-reason").textContent = task.stop_reason || task.status;
-    $("#result-summary").textContent = task.summary || task.error || "No final summary was produced.";
+    $("#result-summary").textContent = task.summary || task.error || "未生成最终摘要。";
     $("#result-limitations").textContent = task.limitations || "";
-    $("#result-evidence").innerHTML = `<div><dt>Steps / tool calls</dt><dd>${task.steps || 0} / ${task.tool_calls || 0}</dd></div><div><dt>已执行验证</dt><dd>${(task.submitted_tests || []).length ? task.submitted_tests.map(escapeText).join("; ") : "无"}</dd></div>${task.unverified_test_claims ? '<div><dt>Warning</dt><dd class="warning-text">存在未核验的测试声明</dd></div>' : ""}`;
+    $("#result-evidence").innerHTML = `<div><dt>步骤 / 工具调用</dt><dd>${task.steps || 0} / ${task.tool_calls || 0}</dd></div><div><dt>已执行验证</dt><dd>${(task.submitted_tests || []).length ? task.submitted_tests.map(escapeText).join("; ") : "无"}</dd></div>${task.unverified_test_claims ? '<div><dt>提醒</dt><dd class="warning-text">存在未核验的测试声明</dd></div>' : ""}`;
     const stats = task.patch || {};
     $("#patch-meta").textContent = `${stats.files || 0} files · +${stats.additions || 0} · −${stats.deletions || 0}`;
     $("#download-patch").href = `/api/tasks/${task.id}/patch/download`;
     try {
       const payload = await api(`/api/tasks/${task.id}/patch`);
-      $("#patch-preview").textContent = payload.patch || "No patch was generated.";
+      $("#patch-preview").textContent = payload.patch || "未生成补丁。";
     } catch (error) {
       $("#patch-preview").textContent = error.message;
     }
@@ -334,11 +370,11 @@
   async function submitTask() {
     if (!workspaceReady) { openWorkspaceDialog("submit"); return; }
     const task = $("#task-input").value.trim();
-    if (!task) { toast("Describe a task first."); return; }
+    if (!task) { toast("请先描述任务。"); return; }
     $("#send-task").disabled = true; $("#task-input").disabled = true;
     try {
       const record = await api("/api/tasks", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({task})});
-      activeTask = record.id; eventOffset = 0; seenPhases = new Set();
+      activeTask = record.id; eventOffset = 0; seenPhases = new Set(); routeShown = false;
       $("#empty-state").hidden = true; $("#task-view").hidden = false; $("#result-card").hidden = true;
       $("#timeline").replaceChildren(); $("#task-title").textContent = task; setStatus(record.status);
       refreshTask();
@@ -357,7 +393,7 @@
     return ontology.annotations.slots[node.id];
   }
   function nodeLabel(node) {
-    if (node.type === "root") return "Coding Requirement Ontology";
+    if (node.type === "root") return "通用编码需求本体";
     return `${annotationFor(node).name_zh} · ${node.id}`;
   }
   function allNodes() { return [ontology.tree, ...ontology.tree.children, ...ontology.tree.children.flatMap(category => category.children)]; }
@@ -373,10 +409,11 @@
   }
   function renderDetail(node) {
     const note = annotationFor(node); let body;
-    if (node.type === "root") body = `<dl><div><dt>Version</dt><dd><code>${escapeText(ontology.version)}</code></dd></div><div><dt>Baseline</dt><dd>${escapeText(ontology.baseline)}</dd></div><div><dt>Integrity</dt><dd class="success-text">Verified</dd></div><div><dt>Structure</dt><dd>${ontology.category_count} categories · ${ontology.slot_count} slots</dd></div></dl><h3>Role in ReqRefine</h3><p>${escapeText(note.purpose)}</p>`;
-    else if (node.type === "category") body = `<p class="node-id">${escapeText(node.id)}</p><p>${escapeText(note.purpose)}</p><dl><div><dt>Slots</dt><dd>${node.children.length}</dd></div></dl><h3>Role in refinement</h3><p>${escapeText(note.role)}</p>`;
-    else body = `<p class="node-id">${escapeText(node.id)}</p><p>${escapeText(note.definition)}</p><h3>Why it matters</h3><p>${escapeText(note.importance)}</p><h3>Recommended evidence</h3><div class="chips">${note.evidence.map(item => `<span>${escapeText(item)}</span>`).join("")}</div><h3>Example</h3><p class="example">${escapeText(note.example)}</p><h3>Supported states</h3><div class="chips mono">${ontology.annotations.statuses.map(item => `<span>${escapeText(item)}</span>`).join("")}</div>`;
-    $("#detail-panel").innerHTML = `<p class="eyebrow">${node.type === "slot" ? "Requirement slot" : node.type}</p><h2>${escapeText(nodeLabel(node))}</h2>${body}`;
+    if (node.type === "root") body = `<dl><div><dt>版本</dt><dd><code>${escapeText(ontology.version)}</code></dd></div><div><dt>冻结基线</dt><dd>${escapeText(ontology.baseline)}</dd></div><div><dt>完整性</dt><dd class="success-text">SHA-256 已验证</dd></div><div><dt>结构</dt><dd>${ontology.category_count} 类 · ${ontology.slot_count} 个槽位</dd></div></dl><h3>在需求细化中的作用</h3><p>${escapeText(note.purpose)}</p>`;
+    else if (node.type === "category") body = `<p class="node-id">${escapeText(node.id)}</p><p>${escapeText(note.purpose)}</p><dl><div><dt>槽位数</dt><dd>${node.children.length}</dd></div></dl><h3>细化作用</h3><p>${escapeText(note.role)}</p>`;
+    else body = `<p class="node-id">${escapeText(node.id)}</p><p>${escapeText(note.definition)}</p><h3>为什么重要</h3><p>${escapeText(note.importance)}</p><h3>推荐证据</h3><div class="chips">${note.evidence.map(item => `<span>${escapeText(item)}</span>`).join("")}</div><h3>跨场景示例</h3><p class="example">${escapeText(note.example)}</p><h3>支持的状态</h3><div class="chips mono">${ontology.annotations.statuses.map(item => `<span>${escapeText(SLOT_STATUS_LABELS[item] || item)}</span>`).join("")}</div>`;
+    const typeLabel = node.type === "slot" ? "需求槽位" : (node.type === "category" ? "需求维度" : "通用本体");
+    $("#detail-panel").innerHTML = `<p class="eyebrow">${typeLabel}</p><h2>${escapeText(nodeLabel(node))}</h2>${body}`;
   }
   function makeItem(node, level, expanded) {
     const item = document.createElement("div"); item.className = `tree-item ${node.type}`; item.role = "treeitem";
@@ -433,9 +470,15 @@
     if (!data.verified) throw new Error(data.integrity_error);
     ontology = data; $("#ontology-loading").hidden = true; $("#ontology-workspace").hidden = false;
     $("#ontology-source").textContent = data.source; $("#category-count").textContent = data.category_count;
-    $("#slot-count").textContent = data.slot_count; $("#annotation-disclaimer").textContent = data.annotations.disclaimer; renderTree();
+    $("#slot-count").textContent = data.slot_count; $("#annotation-disclaimer").textContent = data.annotations.disclaimer;
+    if (data.scenario) {
+      const banner = $("#scenario-overlay-note");
+      banner.hidden = false;
+      banner.innerHTML = `<strong>当前案例映射（只读）</strong><span>${escapeText(data.scenario.title)}：仅把任务信息映射到通用槽位，不新增槽位，也不改变路由或决策逻辑。</span>`;
+    }
+    renderTree();
   }).catch(error => {
     $("#ontology-loading").hidden = true; const panel = $("#ontology-error"); panel.hidden = false; panel.textContent = error.message;
-    const badge = $("#integrity-badge"); badge.className = "failed"; badge.textContent = "Integrity failure";
+    const badge = $("#integrity-badge"); badge.className = "failed"; badge.textContent = "完整性校验失败";
   });
 })();

@@ -1,5 +1,5 @@
 {
-  "disclaimer": "Descriptions are presentation annotations; the tree structure is loaded from the frozen baseline.",
+  "disclaimer": "本页中文说明仅用于展示；树结构、槽位 ID 与版本均来自冻结基线，任何演示案例都不能新增或改写本体节点。",
   "root": {"name_zh": "编码需求本体", "purpose": "ReqRefine 使用这套结构整理变更意图、代码范围、约束与验证信息，帮助形成可执行且可核验的需求描述。"},
   "categories": {
     "Change Intent": {"name_zh": "变更意图", "purpose": "说明为什么要改，以及当前与期望行为之间的差异。", "role": "为需求细化建立清晰的行为目标。"},
@@ -8,17 +8,17 @@
     "Validation": {"name_zh": "验证方式", "purpose": "定义可观察的完成标准与相关检查。", "role": "把抽象要求转化为可验证结果。"}
   },
   "slots": {
-    "goal": {"name_zh": "目标", "definition": "本次变更希望达成的最终结果。", "importance": "明确目标能避免只修复表面症状。", "evidence": ["用户任务", "公开接口契约"], "example": "让导出操作在没有数据时仍返回结构正确的文件。"},
-    "current_behavior_or_symptom": {"name_zh": "当前行为或症状", "definition": "变更前可观察到的行为或问题。", "importance": "它提供可复现的起点并帮助确认根因。", "evidence": ["现有实现", "失败日志", "相关测试"], "example": "空列表会触发异常，而不是生成空结果。"},
-    "expected_behavior": {"name_zh": "期望行为", "definition": "变更完成后应当观察到的行为。", "importance": "它把目标转化为具体的实现方向。", "evidence": ["用户任务", "API文档", "相邻实现"], "example": "空列表应生成只包含表头的结果。"},
-    "target_component": {"name_zh": "目标组件", "definition": "最可能需要修改的代码区域。", "importance": "限定组件有助于保持补丁聚焦。", "evidence": ["文件结构", "调用路径", "模块职责"], "example": "文件导出服务中的结果序列化模块。"},
-    "relevant_symbol_or_api": {"name_zh": "相关符号或API", "definition": "与需求直接相关的函数、类、接口或端点。", "importance": "精确符号能减少错误定位和无关修改。", "evidence": ["符号搜索", "公开API", "调用方"], "example": "负责构造导出内容的 build_export 函数。"},
-    "affected_consumers": {"name_zh": "受影响使用方", "definition": "可能感知行为变化的调用者或用户。", "importance": "识别使用方有助于评估兼容性和回归风险。", "evidence": ["调用点", "集成测试", "使用文档"], "example": "调用导出接口的后台任务与管理页面。"},
-    "compatibility": {"name_zh": "兼容性", "definition": "变更后仍需保持的既有行为或接口。", "importance": "兼容性约束可防止修复破坏正常路径。", "evidence": ["通过中的测试", "版本契约", "公共文档"], "example": "非空数据的导出格式保持不变。"},
-    "boundary_and_error_semantics": {"name_zh": "边界与错误语义", "definition": "极限值、无效输入和失败条件下的预期行为。", "importance": "边界规则决定实现是否稳健且可预测。", "evidence": ["错误处理代码", "边界测试", "API约定"], "example": "缺少必填字段时返回明确的校验错误。"},
-    "excluded_scope": {"name_zh": "排除范围", "definition": "与问题相关但本次明确不处理的工作。", "importance": "排除范围可以控制变更规模并避免顺手重构。", "evidence": ["用户约束", "组件边界", "变更计划"], "example": "本次不调整导出页面的视觉样式。"},
-    "acceptance_criteria": {"name_zh": "验收标准", "definition": "判断实现完成的可观察条件。", "importance": "明确标准使完成状态可以客观判断。", "evidence": ["用户任务", "行为契约", "测试断言"], "example": "空数据导出成功，文件可打开且包含正确表头。"},
-    "relevant_tests_or_checks": {"name_zh": "相关测试或检查", "definition": "能够验证目标与回归约束的聚焦检查。", "importance": "针对性验证为补丁正确性提供直接证据。", "evidence": ["现有测试模块", "静态检查", "手工复现步骤"], "example": "运行导出服务测试并新增空数据回归用例。"}
+    "goal": {"name_zh": "目标", "definition": "本次变更希望达成的最终结果。", "importance": "明确目标能避免只修复表面症状。", "evidence": ["用户任务", "公开接口契约"], "example": "为配置加载器增加环境变量覆盖能力，同时保持原有配置文件行为。"},
+    "current_behavior_or_symptom": {"name_zh": "当前行为或症状", "definition": "变更前可观察到的行为或问题。", "importance": "它提供可复现的起点并帮助确认根因。", "evidence": ["现有实现", "失败日志", "相关测试"], "example": "搜索接口收到空白关键字时返回 500，而不是可解释的空结果。"},
+    "expected_behavior": {"name_zh": "期望行为", "definition": "变更完成后应当观察到的行为。", "importance": "它把目标转化为具体的实现方向。", "evidence": ["用户任务", "API文档", "相邻实现"], "example": "无匹配项时返回空列表和明确提示，正常查询行为保持不变。"},
+    "target_component": {"name_zh": "目标组件", "definition": "最可能需要修改的代码区域。", "importance": "限定组件有助于保持补丁聚焦。", "evidence": ["文件结构", "调用路径", "模块职责"], "example": "命令行参数解析模块及其配置合并逻辑。"},
+    "relevant_symbol_or_api": {"name_zh": "相关符号或API", "definition": "与需求直接相关的函数、类、接口或端点。", "importance": "精确符号能减少错误定位和无关修改。", "evidence": ["符号搜索", "公开API", "调用方"], "example": "负责校验并归一化输入的 parse_options 函数。"},
+    "affected_consumers": {"name_zh": "受影响使用方", "definition": "可能感知行为变化的调用者或用户。", "importance": "识别使用方有助于评估兼容性和回归风险。", "evidence": ["调用点", "集成测试", "使用文档"], "example": "调用公共 SDK 的后台服务、命令行用户与集成测试。"},
+    "compatibility": {"name_zh": "兼容性", "definition": "变更后仍需保持的既有行为或接口。", "importance": "兼容性约束可防止修复破坏正常路径。", "evidence": ["通过中的测试", "版本契约", "公共文档"], "example": "保持公开函数签名、既有返回字段和旧配置文件兼容。"},
+    "boundary_and_error_semantics": {"name_zh": "边界与错误语义", "definition": "极限值、无效输入和失败条件下的预期行为。", "importance": "边界规则决定实现是否稳健且可预测。", "evidence": ["错误处理代码", "边界测试", "API约定"], "example": "空输入、重复项和超时场景都有稳定且可解释的行为。"},
+    "excluded_scope": {"name_zh": "排除范围", "definition": "与问题相关但本次明确不处理的工作。", "importance": "排除范围可以控制变更规模并避免顺手重构。", "evidence": ["用户约束", "组件边界", "变更计划"], "example": "本次不重构无关模块，也不增加新的运行时依赖。"},
+    "acceptance_criteria": {"name_zh": "验收标准", "definition": "判断实现完成的可观察条件。", "importance": "明确标准使完成状态可以客观判断。", "evidence": ["用户任务", "行为契约", "测试断言"], "example": "目标行为可复现、边界输入有断言、原有正常路径继续通过。"},
+    "relevant_tests_or_checks": {"name_zh": "相关测试或检查", "definition": "能够验证目标与回归约束的聚焦检查。", "importance": "针对性验证为补丁正确性提供直接证据。", "evidence": ["现有测试模块", "静态检查", "手工复现步骤"], "example": "运行聚焦单元测试、静态检查，并复现用户描述的关键路径。"}
   },
   "statuses": ["explicit", "inferred", "defaulted", "unresolved"]
 }

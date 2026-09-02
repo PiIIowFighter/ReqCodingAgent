@@ -196,19 +196,30 @@ class InterviewSession:
         self.baseline: RequirementBaseline | None = None
         self.max_turns = 3
         self.min_turns = 2
-        if scenario == "stock-search":
-            self.min_turns = self.max_turns = 3
+        if scenario:
+            if not re.fullmatch(r"[a-z0-9-]{1,64}", scenario):
+                raise ValueError("Invalid presentation scenario")
+            scenario_path = PROJECT_ROOT / "demo_gui/ontology_scenarios" / f"{scenario}.json"
+            try:
+                scenario_data = json.loads(scenario_path.read_text(encoding="utf-8"))
+                min_turns = int(scenario_data["min_turns"])
+                max_turns = int(scenario_data["max_turns"])
+            except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                raise ValueError("Invalid presentation scenario configuration") from error
+            if not 2 <= min_turns <= max_turns <= 3:
+                raise ValueError("Presentation scenario turn limits must be between 2 and 3")
+            self.min_turns, self.max_turns = min_turns, max_turns
         self.actual_models: list[str] = []
         self.used_call_ids: set[str] = set()
 
         # Build messages for ModelRequest
         system_content = _system_prompt() + "\n\n" + _build_ontology_context(self.ontology)
-        if scenario == "stock-search":
+        if scenario:
             system_content += (
-                "\n\n# Demo scenario: stock-search\n"
-                "Use exactly three clarification turns for the static stock-search fixture. "
-                "Preserve the user's acceptance evidence: edits use apply_patch; run_command is for investigation or verification; "
-                "before completion run `sh test_site.sh`, and only a successful command may be listed as a submitted test."
+                "\n\n# Explicit presentation profile\n"
+                f"Use between {self.min_turns} and {self.max_turns} clarification turns as configured. "
+                "This profile controls presentation pacing only. Do not prefill domain facts, slot values, "
+                "implementation details, or validation commands; derive them from the user's answers and repository evidence."
             )
 
         from reqagent.model import ModelMessage

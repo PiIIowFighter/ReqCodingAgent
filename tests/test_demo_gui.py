@@ -192,6 +192,8 @@ class DemoGuiTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["stop_reason"], "submitted")
         self.assertEqual(result["patch"]["files"], 1)
+        self.assertEqual(result["route_decision"]["mode"], "fast")
+        self.assertEqual(result["route_decision"]["source"], "interactive_router")
         events = json.loads(self.request("GET", f"/api/tasks/{task_id}/events?after=0")[2])
         self.assertTrue(events["complete"])
         # Include route_decision event that now appears due to adaptive routing
@@ -220,7 +222,7 @@ class DemoGuiTests(unittest.TestCase):
         for path in ("/", "/settings/ontology", "/static/app.js", "/static/styles.css", "/static/task.css"):
             self.assertEqual(self.request("GET", path)[0], 200)
         html = self.request("GET", "/settings/ontology")[2].decode("utf-8")
-        for text in ("ReqCodingAgent", "New task", "Back to workspace", "Coding Requirement Ontology", "Download patch", "工作目录"):
+        for text in ("ReqCodingAgent", "新建任务", "返回工作区", "通用编码需求本体", "下载 Patch", "工作目录", "通用冻结层"):
             self.assertIn(text, html)
         for text in ("Evaluation", "General", "Model &amp; Runtime"):
             self.assertNotIn(text, html)
@@ -229,6 +231,31 @@ class DemoGuiTests(unittest.TestCase):
             self.assertIn(hook, script)
         self.assertIn('role="tree"', html)
         self.assertNotIn("cdn.", html.lower())
+
+    def test_presentation_event_phases_and_safe_validation_summary(self):
+        sanitize = self.module.TaskManager._sanitize_event
+        command = sanitize(json.dumps({
+            "kind": "tool_result", "phase": "main", "result": {
+                "ok": True, "tool": "run_command", "data": {"command": "sh test_site.sh"}
+            }
+        }), 0)
+        self.assertEqual(command["phase"], "verification")
+        self.assertEqual(command["summary"], "Command succeeded: sh test_site.sh")
+
+        patch = sanitize(json.dumps({
+            "kind": "tool_result", "phase": "main", "result": {
+                "ok": True, "tool": "apply_patch", "data": {"files": 2, "additions": 12, "deletions": 3}
+            }
+        }), 1)
+        self.assertEqual(patch["phase"], "implementation")
+        self.assertIn("2 files, +12, -3", patch["summary"])
+
+        investigation = sanitize(json.dumps({
+            "kind": "model_response", "phase": "main", "response": {
+                "tool_calls": [{"name": "read_file"}], "text": "", "finish_reason": "tool_calls"
+            }
+        }), 2)
+        self.assertEqual(investigation["phase"], "investigation")
 
     def test_security_headers_apply_to_success_and_errors(self):
         for method, path in (("GET", "/"), ("GET", "/missing"), ("POST", "/api/health")):

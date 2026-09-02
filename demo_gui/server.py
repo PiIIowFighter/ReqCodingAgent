@@ -162,6 +162,8 @@ class TaskRecord:
     current_turn: Any | None = field(default=None, repr=False)  # InterviewTurn instance
     baseline: Any | None = field(default=None, repr=False)  # RequirementBaseline instance
     route_mode: str | None = None  # "fast" or "refine"
+    route_reasons: tuple[str, ...] = ()
+    selected_skills: tuple[str, ...] = ()
 
 
 class TaskManager:
@@ -207,7 +209,13 @@ class TaskManager:
             from reqagent.adaptive import route_task
             decision = route_task(task)
 
-            record = TaskRecord(uuid.uuid4().hex, task, route_mode=decision.mode)
+            record = TaskRecord(
+                uuid.uuid4().hex,
+                task,
+                route_mode=decision.mode,
+                route_reasons=decision.reasons,
+                selected_skills=decision.selected_skills,
+            )
             self.tasks[record.id], self.active_id = record, record.id
 
             # Fast path: start coding immediately
@@ -441,7 +449,13 @@ class TaskManager:
             "submitted_tests": [_safe_text(item, 320) for item in (submitted.get("tests", []) if isinstance(submitted.get("tests"), list) else [])],
             "unverified_test_claims": bool(submitted and submitted.get("tests") and verification.get("all_passed") is not True),
             "error": record.error,
-            "route_mode": record.route_mode
+            "route_mode": record.route_mode,
+            "route_decision": {
+                "mode": record.route_mode,
+                "reasons": [_safe_text(item, 80) for item in record.route_reasons],
+                "selected_skills": [_safe_text(item, 80) for item in record.selected_skills],
+                "source": "interactive_router",
+            },
         }
 
         if self.scenario:
@@ -535,34 +549,63 @@ class TaskManager:
             return None
         if not isinstance(raw, dict):
             return None
-        phase = _safe_text(raw.get("phase") or "main", 32)
+        raw_phase = _safe_text(raw.get("phase") or "main", 32)
+
+        def presentation_phase(tools: list[str]) -> str:
+            if "submit" in tools:
+                return "complete"
+            if "run_command" in tools:
+                return "verification"
+            if "apply_patch" in tools:
+                return "implementation"
+            if any(tool in {"list_files", "read_file", "search_text"} for tool in tools):
+                return "investigation"
+            if "record_requirement_brief" in tools:
+                return "baseline"
+            if raw_phase == "refinement":
+                return "refinement"
+            if raw_phase == "main":
+                return "implementation"
+            return raw_phase
+
         if raw.get("kind") == "route_decision":
             mode = _safe_text(raw.get("mode"), 32)
             reasons = raw.get("reasons") if isinstance(raw.get("reasons"), list) else []
             selected_skills = raw.get("selected_skills") if isinstance(raw.get("selected_skills"), list) else []
-            return {"offset": offset, "kind": "route_decision", "phase": phase, "mode": mode,
+            return {"offset": offset, "kind": "route_decision", "phase": "intake", "mode": mode,
                     "reasons": [_safe_text(r, 80) for r in reasons],
                     "selected_skills": [_safe_text(s, 80) for s in selected_skills]}
         if raw.get("kind") == "requirement_brief_recorded":
-            return {"offset": offset, "kind": "requirement_brief_recorded", "phase": phase}
+            return {"offset": offset, "kind": "requirement_brief_recorded", "phase": "baseline"}
         if raw.get("kind") == "model_response":
             response = raw.get("response") if isinstance(raw.get("response"), dict) else {}
             calls = response.get("tool_calls") if isinstance(response.get("tool_calls"), list) else []
             tools = [_safe_text(c.get("name"), 64) for c in calls if isinstance(c, dict) and c.get("name")]
-            return {"offset": offset, "kind": "model_response", "phase": phase, "sequence": raw.get("sequence"),
+            return {"offset": offset, "kind": "model_response", "phase": presentation_phase(tools), "sequence": raw.get("sequence"),
                     "text": _safe_text(response.get("text"), 700), "tools": tools,
                     "finish_reason": _safe_text(response.get("finish_reason"), 40)}
         if raw.get("kind") == "tool_result":
             result = raw.get("result") if isinstance(raw.get("result"), dict) else {}
             error = result.get("error") if isinstance(result.get("error"), dict) else {}
+            data = result.get("data") if isinstance(result.get("data"), dict) else {}
+            tool = _safe_text(result.get("tool") or "tool", 64)
             ok = result.get("ok") is True
             summary = "Completed successfully."
             if not ok:
                 summary = f"Failed: {_safe_text(error.get('kind') or 'tool_error', 80)}."
             elif result.get("truncated"):
                 summary = "Completed successfully; output was truncated."
-            return {"offset": offset, "kind": "tool_result", "phase": phase, "sequence": raw.get("sequence"),
-                    "tool": _safe_text(result.get("tool") or "tool", 64), "ok": ok, "summary": summary}
+            elif tool == "run_command" and data.get("command"):
+                summary = f"Command succeeded: {_safe_text(data.get('command'), 180)}"
+            elif tool == "apply_patch":
+                files = data.get("files") if isinstance(data.get("files"), int) else 0
+                additions = data.get("additions") if isinstance(data.get("additions"), int) else 0
+                deletions = data.get("deletions") if isinstance(data.get("deletions"), int) else 0
+                summary = f"Patch applied: {files} files, +{additions}, -{deletions}."
+            elif tool == "submit":
+                summary = "Completion submitted."
+            return {"offset": offset, "kind": "tool_result", "phase": presentation_phase([tool]), "sequence": raw.get("sequence"),
+                    "tool": tool, "ok": ok, "summary": summary}
         return None
 
     def patch(self, record: TaskRecord) -> tuple[str, dict[str, object]]:

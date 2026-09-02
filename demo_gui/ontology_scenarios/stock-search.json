@@ -1,6 +1,9 @@
 {
   "id": "stock-search",
   "title": "股票搜索示例",
+  "layer": "presentation_overlay",
+  "ontology_effect": "none",
+  "description": "把当前任务实例映射到冻结槽位，仅用于展示，不参与本体定义或路由决策。",
   "task": "为这个现有的静态前端项目增加股票搜索功能",
   "min_turns": 3,
   "max_turns": 3,
