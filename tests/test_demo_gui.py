@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import importlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -119,6 +120,18 @@ class DemoGuiTests(unittest.TestCase):
         self.assertEqual(ontology["expected_sha256"], baseline["requirement_ontology_sha256"])
         self.assertEqual(ontology["actual_sha256"], hashlib.sha256(source.read_bytes()).hexdigest())
         self.assertEqual((ontology["category_count"], ontology["slot_count"]), (4, 11))
+
+    def test_live_environment_preflight_checks_names_without_values(self):
+        config = self.module.PROJECT_ROOT / "configs/agent/demo-openai.json"
+        original = dict(os.environ)
+        try:
+            os.environ.pop("OPENAI_BASE_URL", None)
+            os.environ.pop("OPENAI_API_KEY", None)
+            with self.assertRaisesRegex(RuntimeError, "OPENAI_BASE_URL, OPENAI_API_KEY"):
+                self.module._validate_live_env(config)
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
 
     def test_stop_reason_status_semantics(self):
         self.assertEqual(self.module.status_for_stop_reason("submitted"), "completed")

@@ -913,12 +913,18 @@ def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path 
     return DemoServer((host, port), load_ontology(root, scenario), tasks)
 
 
-def _apply_provider_env(config: Path) -> None:
-    if config.resolve() != (PROJECT_ROOT / "configs/agent/demo-openai.json").resolve():
+def _validate_live_env(config: Path) -> None:
+    """Fail fast when a live config cannot read its required environment."""
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
-        print("Warning: OPENAI_API_KEY is not set; live Agent tasks will fail until it is configured.")
+    if data.get("mode") != "live" or not isinstance(data.get("model"), dict):
+        return
+    required = [data["model"].get(key) for key in ("base_url_env", "api_key_env")]
+    missing = [name for name in required if isinstance(name, str) and not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Live configuration is missing environment variables: " + ", ".join(missing))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -932,7 +938,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Enable an explicit deterministic presentation scenario.")
     args = parser.parse_args(argv)
     config = args.config.expanduser().resolve()
-    _apply_provider_env(config)
+    try:
+        _validate_live_env(config)
+    except RuntimeError as error:
+        print(f"Cannot start: {error}")
+        return 1
     try:
         server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root,
                                scenario=args.demo_scenario)
