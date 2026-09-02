@@ -1,5 +1,0 @@
-{
-  "base_commit": "4b29bef0b5d809a9cdcdb71def4899483fcffa14",
-  "python": "3.11.4",
-  "scope": "immutable-evidence-checkpoint"
-}

@@ -35,8 +35,7 @@ STATIC_ROOT = GUI_ROOT / "static"
 ONTOLOGY_SOURCE = Path("configs/frozen/baseline-v3/requirement-ontology.json")
 BASELINE_SOURCE = Path("configs/frozen/baseline-v3/baseline.json")
 ANNOTATION_SOURCE = GUI_ROOT / "ontology_annotations.json"
-SCENARIO_ROOT = GUI_ROOT / "ontology_scenarios"
-DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/demo-openai.json"
+DEFAULT_CONFIG = PROJECT_ROOT / "configs/agent/openai-responses.json"
 DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts/runs/demo-gui"
 MAX_TASK_BYTES = 16_384
 MAX_ANSWER_BYTES = 8_192
@@ -71,7 +70,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_ontology(project_root: Path = PROJECT_ROOT, scenario: str | None = None) -> dict[str, object]:
+def load_ontology(project_root: Path = PROJECT_ROOT) -> dict[str, object]:
     ontology_path = project_root / ONTOLOGY_SOURCE
     try:
         ontology_bytes = ontology_path.read_bytes()
@@ -116,15 +115,6 @@ def load_ontology(project_root: Path = PROJECT_ROOT, scenario: str | None = None
     response.update({"category_count": len(normalized), "slot_count": len(expected_slots),
                      "tree": {"id": "coding-requirement-ontology", "type": "root", "children": normalized},
                      "annotations": annotations})
-    if scenario:
-        scenario_path = SCENARIO_ROOT / f"{scenario}.json"
-        scenario_data = _read_json(scenario_path)
-        overlay = scenario_data.get("slots")
-        if not isinstance(overlay, dict) or not set(overlay).issubset(expected_slots):
-            raise FrozenDataError("Ontology scenario must reference frozen slots only")
-        response["scenario"] = {key: value for key, value in scenario_data.items() if key != "slots"}
-        response["scenario"]["slots"] = overlay
-        response["scenario"]["slot_ids"] = sorted(overlay)
     return response
 
 
@@ -178,7 +168,7 @@ class TaskRecord:
 
 
 class TaskManager:
-    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True, interview_adapter_factory=None, scenario: str | None = None):
+    def __init__(self, workspace: Path | None, config: Path, artifact_root: Path, *, project_root: Path = PROJECT_ROOT, python: str = sys.executable, in_place: bool = True, interview_adapter_factory=None):
         self.workspace = validate_workspace(workspace) if workspace is not None else None
         self.config = config.expanduser().resolve()
         self.in_place = in_place
@@ -193,7 +183,6 @@ class TaskManager:
         self.tasks: dict[str, TaskRecord] = {}
         self.lock, self.active_id = threading.RLock(), None
         self.interview_adapter_factory = interview_adapter_factory
-        self.scenario = scenario
 
     def runtime(self) -> dict[str, object]:
         with self.lock:
@@ -267,7 +256,7 @@ class TaskManager:
             ontology_version = hashlib.sha256(ontology_path.read_bytes()).hexdigest()
 
             # Create interview session
-            session = InterviewSession(record.task, adapter, ontology_version, scenario=self.scenario)
+            session = InterviewSession(record.task, adapter, ontology_version)
 
             with self.lock:
                 record.interview_session = session
@@ -512,9 +501,6 @@ class TaskManager:
                 "source": "interactive_router",
             },
         }
-
-        if self.scenario:
-            response["scenario"] = self.scenario
 
         session = record.interview_session
         if session:
@@ -902,15 +888,12 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 def create_server(host: str = "127.0.0.1", port: int = 8765, project_root: Path = PROJECT_ROOT, *,
                   workspace: Path | None = None, config: Path | None = None,
-                  artifact_root: Path | None = None, python: str = sys.executable, in_place: bool = True,
-                  scenario: str | None = None) -> DemoServer:
+                  artifact_root: Path | None = None, python: str = sys.executable, in_place: bool = True) -> DemoServer:
     root = project_root.resolve()
     task_kwargs = {"project_root": root, "python": python, "in_place": in_place}
-    if scenario is not None:
-        task_kwargs["scenario"] = scenario
-    tasks = TaskManager(workspace, config or root / "configs/agent/demo-openai.json",
+    tasks = TaskManager(workspace, config or root / "configs/agent/openai-responses.json",
                         artifact_root or root / "artifacts/runs/demo-gui", **task_kwargs)
-    return DemoServer((host, port), load_ontology(root, scenario), tasks)
+    return DemoServer((host, port), load_ontology(root), tasks)
 
 
 def _validate_live_env(config: Path) -> None:
@@ -934,8 +917,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default=None, type=Path)
     parser.add_argument("--config", default=DEFAULT_CONFIG, type=Path)
     parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, type=Path)
-    parser.add_argument("--demo-scenario", choices=("stock-search",), default=None,
-                        help="Enable an explicit deterministic presentation scenario.")
     args = parser.parse_args(argv)
     config = args.config.expanduser().resolve()
     try:
@@ -944,8 +925,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cannot start: {error}")
         return 1
     try:
-        server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root,
-                               scenario=args.demo_scenario)
+        server = create_server(args.host, args.port, workspace=args.workspace, config=config, artifact_root=args.artifact_root)
     except (FrozenDataError, WorkspaceError) as error:
         print(f"Cannot start: {error}"); return 1
     print(f"ReqCodingAgent demo available at http://{args.host}:{args.port}/")

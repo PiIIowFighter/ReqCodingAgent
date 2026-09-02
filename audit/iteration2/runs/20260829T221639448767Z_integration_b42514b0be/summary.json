@@ -1,9 +1,0 @@
-{
-  "config_hash": "b42514b0be",
-  "run_id": "20260829T221639448767Z_integration_b42514b0be",
-  "run_type": "integration",
-  "status": "failed",
-  "supersedes": [
-    "20260829T221030629846Z_integration_5a09c15e39"
-  ]
-}

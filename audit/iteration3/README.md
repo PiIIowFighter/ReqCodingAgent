@@ -1,7 +1,7 @@
-# Iteration three final results
+# 迭代三：需求增强 Agent
 
-`final-results.json` is the stable, read-only entry point assembled from the committed baseline-v3 report and source run summaries. It reports 24 active cells: `variant=full` resolved 10/12 and `variant=fuzzy` resolved 10/12. The unresolved cases are T-R2 and T-S4 for each variant.
+`final-results.json` 是稳定的最终入口：baseline-v3 在完整与模糊需求上均解决 10/12，未解决项均为 T-R2 与 T-S4。`reports/baseline-v3.json` 保留逐任务结果，`reports/comparison-v1-v3.json` 给出 v1→v3 对比；哈希见 `final-results.sha256`。
 
-Labels are intentionally explicit: the original experiment specification called E3=fuzzy and E4=full, while the executed frozen baseline-v3 plan labels E3=full and E4=fuzzy. Public summaries use the variant names and retain both labels here.
+原实验规范把 E3/E4 标为 fuzzy/full，实际冻结计划标为 full/fuzzy，因此公开结果使用无歧义的 `full`、`fuzzy` 名称，并在 manifest 中同时保留两套标签。baseline-v1 的规范结果为 full 9/12、fuzzy 8/12。
 
-Canonical baseline-v1 remains full 9/12 and fuzzy 8/12. Hashes and source paths are recorded in the manifest; the frozen ontology SHA256 is unchanged.
+逐次运行和中间 baseline-v2 报告已归档于 Git 历史提交 `a4eac341ae1f59d04b24d992d3df50fc7a7ddb00`；本目录保留最终报告、索引、环境、隔离与测试凭据。

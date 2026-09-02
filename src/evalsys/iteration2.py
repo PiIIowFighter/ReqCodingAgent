@@ -265,7 +265,7 @@ def _tool_schemas(project_root: Path, config: dict[str, Any]) -> list[dict[str, 
         _git(source, "add", "README")
         _git(source, "commit", "-qm", "schema")
         workspace = GitWorkspace.create(source)
-        agent_config = AgentConfig(json.loads(json.dumps(config)), project_root / "configs/agent/live-local-proxy.json")
+        agent_config = AgentConfig(json.loads(json.dumps(config)), project_root / "configs/agent/openai-responses.json")
         registry = build_registry(workspace, agent_config.raw)
         try:
             return [definition.__dict__ for definition in registry.definitions]

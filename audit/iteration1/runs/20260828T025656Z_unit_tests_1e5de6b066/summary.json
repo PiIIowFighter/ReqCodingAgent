@@ -1,9 +1,0 @@
-{
-  "config_hash": "1e5de6b066",
-  "run_id": "20260828T025656Z_unit_tests_1e5de6b066",
-  "run_type": "unit_tests",
-  "status": "passed",
-  "supersedes": [
-    "20260828T025522Z_unit_tests_e59537bbab"
-  ]
-}

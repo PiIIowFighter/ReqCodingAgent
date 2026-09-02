@@ -1,6 +1,0 @@
-{
-  "docker": false,
-  "network": false,
-  "selector": "not integration",
-  "suite": "default-fast"
-}

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reqcodingagent-evalsys"
 version = "0.1.0"
-description = "Frozen reproducible SWE-bench evaluation environment"
+description = "Requirement-engineering-driven Coding Agent and reproducible evaluation system"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "anthropic>=0.105,<0.106",
@@ -14,20 +14,9 @@ dependencies = [
   "pyarrow>=17,<20",
 ]
 
-[project.optional-dependencies]
-test = ["pytest>=8.3,<9"]
-
 [project.scripts]
 evalsys = "evalsys.cli:main"
 reqagent = "reqagent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.pytest.ini_options]
-addopts = "-ra"
-testpaths = ["tests"]
-pythonpath = [".", "src"]
-markers = [
-  "integration: requires external benchmark data or Docker",
-]

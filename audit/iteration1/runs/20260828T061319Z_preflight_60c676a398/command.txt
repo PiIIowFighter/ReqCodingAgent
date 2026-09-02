@@ -1,1 +1,0 @@
-py -3.11 -m evalsys.cli prove-isolation --task-repo <ABSOLUTE_PATH> --public-case <ABSOLUTE_PATH> --workspace <ABSOLUTE_PATH> --output <ABSOLUTE_PATH>

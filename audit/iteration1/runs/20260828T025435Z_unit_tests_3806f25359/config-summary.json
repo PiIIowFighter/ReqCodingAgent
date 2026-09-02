@@ -1,6 +1,0 @@
-{
-  "platform": "windows",
-  "python": "3.11.4",
-  "recorder": "utf8-bytes-v2",
-  "scope": "final-cross-platform-fix"
-}

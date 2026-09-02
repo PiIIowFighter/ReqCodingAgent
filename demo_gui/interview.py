@@ -90,7 +90,7 @@ def _build_ontology_context(ontology: dict[str, Any]) -> str:
 
 def _system_prompt() -> str:
     """Load the interview system prompt."""
-    prompt_path = PROJECT_ROOT / "prompts/demo/requirement-interview.txt"
+    prompt_path = PROJECT_ROOT / "prompts/requirement-interview.txt"
     return prompt_path.read_text(encoding="utf-8")
 
 
@@ -177,7 +177,7 @@ class RequirementBaseline:
 class InterviewSession:
     """Manages an interactive requirement interview session."""
 
-    def __init__(self, original_request: str, adapter: ModelAdapter, ontology_version: str, *, scenario: str | None = None):
+    def __init__(self, original_request: str, adapter: ModelAdapter, ontology_version: str):
         """
         Initialize an interview session.
 
@@ -189,39 +189,17 @@ class InterviewSession:
         self.original_request = _sanitize_text(original_request)
         self.adapter = adapter
         self.ontology_version = ontology_version
-        self.scenario = scenario
         self.ontology = _load_ontology()
         self.valid_slots = _get_all_slots(self.ontology)
         self.turns: list[InterviewTurn] = []
         self.baseline: RequirementBaseline | None = None
         self.max_turns = 3
         self.min_turns = 2
-        if scenario:
-            if not re.fullmatch(r"[a-z0-9-]{1,64}", scenario):
-                raise ValueError("Invalid presentation scenario")
-            scenario_path = PROJECT_ROOT / "demo_gui/ontology_scenarios" / f"{scenario}.json"
-            try:
-                scenario_data = json.loads(scenario_path.read_text(encoding="utf-8"))
-                min_turns = int(scenario_data["min_turns"])
-                max_turns = int(scenario_data["max_turns"])
-            except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-                raise ValueError("Invalid presentation scenario configuration") from error
-            if not 2 <= min_turns <= max_turns <= 3:
-                raise ValueError("Presentation scenario turn limits must be between 2 and 3")
-            self.min_turns, self.max_turns = min_turns, max_turns
         self.actual_models: list[str] = []
         self.used_call_ids: set[str] = set()
 
         # Build messages for ModelRequest
         system_content = _system_prompt() + "\n\n" + _build_ontology_context(self.ontology)
-        if scenario:
-            system_content += (
-                "\n\n# Explicit presentation profile\n"
-                f"Use between {self.min_turns} and {self.max_turns} clarification turns as configured. "
-                "This profile controls presentation pacing only. Do not prefill domain facts, slot values, "
-                "implementation details, or validation commands; derive them from the user's answers and repository evidence."
-            )
-
         from reqagent.model import ModelMessage
         self.messages: list[ModelMessage] = [
             ModelMessage(role="system", text=system_content),
@@ -538,7 +516,6 @@ class InterviewSession:
         """Export interview transcript for artifact storage."""
         return {
             "original_request": _sanitize_text(self.original_request),
-            "scenario": self.scenario,
             "ontology_version": self.ontology_version,
             "turns": [
                 {

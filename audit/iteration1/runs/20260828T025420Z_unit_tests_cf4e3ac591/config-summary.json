@@ -1,6 +1,0 @@
-{
-  "platform": "ubuntu-wsl2",
-  "python": "3.11.16",
-  "recorder": "utf8-bytes-v2",
-  "scope": "evidence-lf-verdict-regression"
-}

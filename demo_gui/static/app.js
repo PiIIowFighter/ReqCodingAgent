@@ -495,11 +495,6 @@
     ontology = data; $("#ontology-loading").hidden = true; $("#ontology-workspace").hidden = false;
     $("#ontology-source").textContent = data.source; $("#category-count").textContent = data.category_count;
     $("#slot-count").textContent = data.slot_count; $("#annotation-disclaimer").textContent = data.annotations.disclaimer;
-    if (data.scenario) {
-      const banner = $("#scenario-overlay-note");
-      banner.hidden = false;
-      banner.innerHTML = `<strong>当前案例映射（只读）</strong><span>${escapeText(data.scenario.title)}：仅把任务信息映射到通用槽位，不新增槽位，也不改变路由或决策逻辑。</span>`;
-    }
     renderTree();
   }).catch(error => {
     $("#ontology-loading").hidden = true; const panel = $("#ontology-error"); panel.hidden = false; panel.textContent = error.message;

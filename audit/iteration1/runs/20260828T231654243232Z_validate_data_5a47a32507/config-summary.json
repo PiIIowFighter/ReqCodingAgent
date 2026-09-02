@@ -1,8 +1,0 @@
-{
-  "data_version": "frozen-v1.3.1",
-  "docker": false,
-  "metadata_revision": "removed two cross-type unit_tests-to-validate_data supersedes edges",
-  "network": false,
-  "operation": "validate-data",
-  "scope": "static-15-pairs"
-}

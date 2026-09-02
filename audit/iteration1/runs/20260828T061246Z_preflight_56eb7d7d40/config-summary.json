@@ -1,6 +1,0 @@
-{
-  "bind_path": "chinese-and-space",
-  "operation": "preflight",
-  "platform": "windows-wsl2",
-  "python": "3.11.4"
-}

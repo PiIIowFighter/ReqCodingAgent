@@ -11,7 +11,7 @@ if (-not $env:OPENAI_BASE_URL -or -not $env:OPENAI_API_KEY) {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
-if (-not $Config) { $Config = Join-Path $Root 'configs/agent/demo-openai.json' }
+if (-not $Config) { $Config = Join-Path $Root 'configs/agent/openai-responses.json' }
 
 Push-Location -LiteralPath $Root
 try {
