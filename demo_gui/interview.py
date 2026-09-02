@@ -375,7 +375,18 @@ class InterviewSession:
 
         if response is None:
             # Both attempts failed
-            safe_error = _sanitize_text(str(last_error), 200) if last_error else "Unknown error"
+            if last_error is not None:
+                category = getattr(last_error, "category", None)
+                status_code = getattr(last_error, "status_code", None)
+                if isinstance(category, str):
+                    suffix = f" ({category}"
+                    if isinstance(status_code, int):
+                        suffix += f", HTTP {status_code}"
+                    safe_error = suffix + ")"
+                else:
+                    safe_error = _sanitize_text(str(last_error), 200)
+            else:
+                safe_error = "Unknown error"
             raise ValueError(f"Interview processing failed: {safe_error}")
 
         # Validate response completely before modifying Session state

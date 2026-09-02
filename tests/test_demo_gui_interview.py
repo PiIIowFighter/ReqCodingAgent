@@ -82,6 +82,20 @@ def test_interview_starts_with_first_question():
     assert session.actual_models == ["gpt-4o-mini"]
 
 
+def test_interview_error_exposes_only_safe_model_category_and_status():
+    from demo_gui.interview import InterviewSession
+    from reqagent.model import ModelError
+
+    class RejectingAdapter:
+        def complete(self, request):
+            raise ModelError("request", "response body contains secret", status_code=400)
+
+    session = InterviewSession("需要细化的任务", RejectingAdapter(), "test")
+    with pytest.raises(ValueError, match=r"request, HTTP 400") as caught:
+        session.generate_next_question()
+    assert "secret" not in str(caught.value)
+
+
 def test_interview_requires_at_least_two_turns():
     """Test that interview cannot finish before minimum turns."""
     from demo_gui.interview import InterviewSession
